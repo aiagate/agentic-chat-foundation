@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import Any
 
-from app.domain.interfaces.event_bus import EventHandler, IEventBus
+from app.contracts.ports.event_bus import EventHandler, IEventBus
 
 logger = logging.getLogger(__name__)
 

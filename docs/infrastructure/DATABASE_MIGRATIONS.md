@@ -10,6 +10,7 @@
 
 - [概要](#概要)
 - [マイグレーション作成の基本フロー](#マイグレーション作成の基本フロー)
+- [現在状態とdrift確認](#現在状態とdrift確認)
 - [マイグレーションパターン](#マイグレーションパターン)
 - [よくあるケース](#よくあるケース)
 - [トラブルシューティング](#トラブルシューティング)
@@ -67,13 +68,13 @@ class UserORM(SQLModel, table=True):
 ### 2. マイグレーションファイルの生成
 
 ```bash
-uv run alembic revision -m "変更内容の説明"
+uv run --frozen alembic revision -m "変更内容の説明"
 ```
 
 例:
 
 ```bash
-uv run alembic revision -m "rename user name to display name"
+uv run --frozen alembic revision -m "rename user name to display name"
 ```
 
 生成されるファイル:
@@ -100,24 +101,74 @@ def downgrade() -> None:
 
 ```bash
 # 現在の状態を確認
-uv run alembic current
+uv run --frozen alembic current
+
+# リポジトリ上のheadを確認
+uv run --frozen alembic heads
+
+# ORMモデルとmigrationの差分を確認
+uv run --frozen alembic check
 
 # マイグレーションを実行
-uv run alembic upgrade head
+uv run --frozen alembic upgrade head
 
 # マイグレーション履歴を確認
-uv run alembic history
+uv run --frozen alembic history
 ```
 
 ### 5. ロールバックのテスト
 
 ```bash
 # 1つ前にロールバック
-uv run alembic downgrade -1
+uv run --frozen alembic downgrade -1
 
 # 再度アップグレード
-uv run alembic upgrade head
+uv run --frozen alembic upgrade head
 ```
+
+---
+
+## 現在状態とdrift確認
+
+マイグレーション関連の作業前後では、次の順で確認します。
+
+```bash
+# DBが現在どのrevisionか確認
+uv run --frozen alembic current
+
+# リポジトリにある最新headを確認
+uv run --frozen alembic heads
+
+# DBを最新headまで適用
+uv run --frozen alembic upgrade head
+
+# ORMモデルとmigrationのdriftを検出
+uv run --frozen alembic check
+```
+
+`current` と `heads` が一致していない場合は、まず `upgrade head` でローカルDBを
+最新化します。その後に `check` を実行し、ORMモデル変更に対して未作成の
+マイグレーションが残っていないことを確認します。
+
+### migration drift がある場合
+
+`uv run --frozen alembic check` が差分を検出した場合は、既存のmigrationを編集せず、
+follow-up migrationを新規作成します。
+
+```bash
+uv run --frozen alembic revision --autogenerate -m "describe detected schema drift"
+```
+
+生成後は以下を必ず行います。
+
+1. `upgrade()` と `downgrade()` が意図した差分だけを含むか確認する。
+2. SQLite互換性が必要な操作は手動で安全な手順に修正する。
+3. `uv run --frozen alembic upgrade head` を実行する。
+4. `uv run --frozen alembic check` が差分なしになることを確認する。
+5. 必要に応じて `uv run --frozen alembic downgrade -1` から再度 `upgrade head` する。
+
+既に共有・適用済みのmigrationはimmutableとして扱います。過去revisionの誤りを
+見つけた場合も、そのファイルを書き換えず、新しいrevisionで補正します。
 
 ---
 
@@ -275,7 +326,7 @@ def downgrade() -> None:
 3. マイグレーションを生成:
 
    ```bash
-   uv run alembic revision -m "add teams table"
+   uv run --frozen alembic revision -m "add teams table"
    ```
 
 4. 生成されたファイルを確認・編集
@@ -287,7 +338,7 @@ def downgrade() -> None:
 2. マイグレーションを生成:
 
    ```bash
-   uv run alembic revision -m "add phone column to users"
+   uv run --frozen alembic revision -m "add phone column to users"
    ```
 
 3. `upgrade()` と `downgrade()` を実装
@@ -299,7 +350,7 @@ def downgrade() -> None:
 2. マイグレーションを生成:
 
    ```bash
-   uv run alembic revision -m "rename user name to display name"
+   uv run --frozen alembic revision -m "rename user name to display name"
    ```
 
 3. SQLite対応のリネームパターンを実装（上記参照）
@@ -318,13 +369,13 @@ def downgrade() -> None:
 1. 現在のデータベーススキーマを確認:
 
    ```bash
-   uv run python -c "import sqlite3; conn = sqlite3.connect('bot.db'); cursor = conn.cursor(); cursor.execute('PRAGMA index_list(users)'); print(cursor.fetchall()); conn.close()"
+   uv run --frozen python -c "import sqlite3; conn = sqlite3.connect('bot.db'); cursor = conn.cursor(); cursor.execute('PRAGMA index_list(users)'); print(cursor.fetchall()); conn.close()"
    ```
 
 2. マイグレーションを条件付きにするか、`alembic stamp` でマイグレーション履歴をマーク:
 
    ```bash
-   uv run alembic stamp head
+   uv run --frozen alembic stamp head
    ```
 
 ### エラー: "no such column"
@@ -336,20 +387,20 @@ def downgrade() -> None:
 1. 現在のテーブル構造を確認:
 
    ```bash
-   uv run python -c "import sqlite3; conn = sqlite3.connect('bot.db'); cursor = conn.cursor(); cursor.execute('PRAGMA table_info(users)'); print(cursor.fetchall()); conn.close()"
+   uv run --frozen python -c "import sqlite3; conn = sqlite3.connect('bot.db'); cursor = conn.cursor(); cursor.execute('PRAGMA table_info(users)'); print(cursor.fetchall()); conn.close()"
    ```
 
 2. マイグレーション順序を確認:
 
    ```bash
-   uv run alembic history
+   uv run --frozen alembic history
    ```
 
 3. 必要に応じてデータベースをリセット:
 
    ```bash
    rm bot.db
-   uv run alembic upgrade head
+   uv run --frozen alembic upgrade head
    ```
 
 ### マイグレーション履歴の不整合
@@ -359,24 +410,47 @@ def downgrade() -> None:
 1. 現在の状態を確認:
 
    ```bash
-   uv run alembic current
-   uv run alembic heads
+   uv run --frozen alembic current
+   uv run --frozen alembic heads
    ```
 
-2. 特定のリビジョンにマーク:
+2. 未適用のmigrationがある場合は最新化:
 
    ```bash
-   uv run alembic stamp <revision_id>
+   uv run --frozen alembic upgrade head
    ```
+
+3. ORMモデルとmigrationのdriftを確認:
+
+   ```bash
+   uv run --frozen alembic check
+   ```
+
+4. 特定のリビジョンにマーク:
+
+   ```bash
+   uv run --frozen alembic stamp <revision_id>
+   ```
+
+`stamp` はDBスキーマを変更せず履歴だけを更新するため、実際のスキーマが対象revision
+と一致していると確認できる場合にだけ使用します。
 
 ### 開発中にスキーマが手動で変更された
 
 **対処法**:
-マイグレーション履歴をデータベースの実際の状態に合わせる:
+原則として手動変更を正とせず、ORMモデルとmigrationで再現可能な状態に戻します。
+手動変更が必要な差分だった場合は、follow-up migrationとして記録します。
 
 ```bash
-uv run alembic stamp head
+uv run --frozen alembic current
+uv run --frozen alembic heads
+uv run --frozen alembic upgrade head
+uv run --frozen alembic check
+uv run --frozen alembic revision --autogenerate -m "reconcile manual schema change"
 ```
+
+生成されたmigrationを確認・修正したうえで `upgrade head` と `check` を再実行します。
+`stamp head` は、DB実体が既にheadと一致していると確認できる復旧時に限って使います。
 
 ---
 
@@ -416,9 +490,9 @@ uv run --frozen pytest
 
 ```bash
 # マイグレーションをテスト
-uv run alembic upgrade head
-uv run alembic downgrade -1
-uv run alembic upgrade head
+uv run --frozen alembic upgrade head
+uv run --frozen alembic downgrade -1
+uv run --frozen alembic upgrade head
 
 # テストを実行
 uv run --frozen pytest
@@ -431,10 +505,26 @@ uv run --frozen ruff check . --fix
 ### 7. マイグレーションファイルの管理
 
 - **既存のマイグレーションファイルは絶対に変更しない**
-- 修正が必要な場合は新しいマイグレーションを作成する
+- 共有済み・適用済みのmigrationはimmutableとして扱う
+- 修正が必要な場合は新しいfollow-up migrationを作成する
+- drift修正も過去revisionの編集ではなく、新規revisionで補正する
 - マイグレーションファイルはバージョン管理に含める
 
-### 8. 命名規則
+### 8. drift確認
+
+マイグレーションを追加・修正したら、次の確認を行う:
+
+```bash
+uv run --frozen alembic current
+uv run --frozen alembic heads
+uv run --frozen alembic upgrade head
+uv run --frozen alembic check
+```
+
+`check` が差分を検出する場合は、ORMモデル変更に対応するmigrationが不足している。
+既存migrationを編集せず、新規revisionを作成して差分を解消する。
+
+### 9. 命名規則
 
 マイグレーションメッセージは明確で簡潔に:
 

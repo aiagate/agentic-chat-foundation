@@ -75,7 +75,6 @@
 │   ├── bot/                       # Discord Bot層
 │   │   ├── __main__.py            # Botエントリーポイント (start-bot)
 │   │   └── cogs/                  # Cogモジュール
-│   ├── core/                      # アプリケーションコア (Result, Mediatorなど)
 │   ├── container.py               # DIコンテナ設定
 │   ├── domain/                    # ドメイン層
 │   │   ├── aggregates/            # ドメイン集約 (user.py, team.py)

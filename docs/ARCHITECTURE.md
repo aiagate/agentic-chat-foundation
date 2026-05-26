@@ -1,852 +1,332 @@
 # アーキテクチャ設計ドキュメント
 
-最終更新日: 2025-11-28
+最終更新日: 2026-05-24
 
-このドキュメントは、Discord Bot テンプレートのアーキテクチャ設計と実装パターンを詳細に説明します。
+このドキュメントは、現行実装に合わせた `discord-bot-template` の
+アーキテクチャ境界、プロセス構成、イベント連携、テスト方針を説明します。
 
 ---
 
 ## アーキテクチャ概要
 
-このプロジェクトは **クリーンアーキテクチャ（Clean Architecture）** に基づいて設計されています。
+このプロジェクトはクリーンアーキテクチャを基調にしつつ、外部プロセス間の
+連携を `EventBus` で行います。HTTP API、Discord Bot、LINE Webhook、Worker は
+同じアプリケーション層を Mediator 経由で呼び出し、永続化や外部サービス連携は
+インフラ層に閉じ込めます。
 
-### レイヤー構造
-
-```
-┌─────────────────────────────────────────────┐
-│  Presentation Layer                         │  外部インターフェース
-│  (Discord Bot, Cogs)                        │  - ユーザーからの入力受付
-│  - src/app/__main__.py                      │  - 出力のフォーマット
-│  - src/app/presentation/bot/cogs/*.py       │
-├─────────────────────────────────────────────┤
-│  Application Layer                          │  ユースケース
-│  (Use Cases, Mediator)                      │  - ビジネスフロー制御
-│  - src/app/usecases/                        │  - DTOでの入出力
-│  - flow-med (External Library)              │  - Result型でのエラーハンドリング
-├─────────────────────────────────────────────┤
-│  Domain Layer                               │  ビジネスルール
-│  (Aggregates, Entities, Value Objects)      │  - 純粋なPythonオブジェクト
-│  - src/app/domain/aggregates/               │  - フレームワーク非依存
-│  - src/app/domain/repositories/             │  - ビジネスロジックの検証
-├─────────────────────────────────────────────┤
-│  Infrastructure Layer                       │  技術的詳細
-│  (Database, ORM, External Services)         │  - データベースアクセス
-│  - src/app/infrastructure/database.py       │  - 外部API呼び出し
-│  - src/app/infrastructure/orm_models/       │  - ファイルシステムアクセス
-│  - src/app/infrastructure/repositories/     │
-│  - src/app/infrastructure/unit_of_work.py   │
-│  - src/app/container.py (DI)                │
-└─────────────────────────────────────────────┘
-```
-
-### 依存関係の方向
-
-```
-Presentation ──▶ Application ──▶ Domain ◀── Infrastructure
-                                    ▲
-                                    │
-                            依存性の逆転原理
-                          (Dependency Inversion)
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ Presentation Layer                                          │
+│ src/app/presentation/api     FastAPI API                    │
+│ src/app/presentation/bot     Discord Bot / Cogs / sender    │
+│ src/app/presentation/line    LINE webhook / sender          │
+│ src/app/presentation/worker  Event handlers / scheduled job │
+├─────────────────────────────────────────────────────────────┤
+│ Application Layer                                           │
+│ src/app/usecases            Commands / Queries / Handlers   │
+│ flow-med Mediator           UseCase dispatch boundary       │
+├─────────────────────────────────────────────────────────────┤
+│ Contracts Layer                                             │
+│ src/app/contracts/ports     Cross-layer interfaces          │
+│ src/app/contracts/messages  DTOs / event topics / payloads  │
+├─────────────────────────────────────────────────────────────┤
+│ Domain Layer                                                │
+│ src/app/domain              Aggregates / Value Objects      │
+│ src/app/domain/repositories Repository and UoW contracts    │
+├─────────────────────────────────────────────────────────────┤
+│ Infrastructure Layer                                        │
+│ src/app/infrastructure      DB / ORM / repositories         │
+│                             AI / memory / EventBus impls    │
+│ src/app/container.py        Dependency injection bindings   │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**重要な原則**:
+依存方向は、実装を置く前に必ず確認します。
 
-- 上位層は下位層に依存可能
-- **下位層は上位層に依存してはならない**
-- **ドメイン層は最も独立しており、他のどの層にも依存しない**
-- インフラ層はドメイン層のインターフェースに依存（依存性逆転）
+```text
+presentation ──▶ usecases ──▶ domain
+      │              │           ▲
+      │              │           │
+      └────────────▶ contracts ◀─┘
+                     ▲
+                     │
+              infrastructure
+```
+
+重要な原則:
+
+- `presentation` は入力の受け取り、出力形式、外部SDKの呼び出しを担当する。
+- `presentation` は DB や Unit of Work を直接触らず、Mediator で UseCase を呼ぶ。
+- `usecases` はビジネスフロー、トランザクション境界、イベント発行を担当する。
+- `domain` は集約と値オブジェクトのルールに集中し、外部技術詳細を知らない。
+- `infrastructure` は DB、ORM、AI、メモリ、EventBus 実装を担当する。
+- `contracts` は複数レイヤーから参照される境界契約を置く。
+- 検索は memory ではなく workflow として扱う。検索要求・検索完了・再推論は
+  `contracts/messages` のイベントと短期ストアでつなぎ、`memory_service` には
+  raw 検索結果を渡さない。
 
 ---
 
-## 各レイヤーの詳細
+## Contracts Layer
 
-### 1. Domain Layer（ドメイン層）
+`src/app/contracts` は、ドメイン名や DTO 名ではなく依存方向で配置を決める
+共有境界層です。
 
-**責務**: ビジネスルールとビジネスロジックの実装
+### ports
 
-**特徴**:
+`src/app/contracts/ports` には、アプリケーション境界のインターフェースを置きます。
 
-- 純粋なPythonコード（dataclass、関数）
-- フレームワーク非依存
-- データベース、Web、UIに関する知識を持たない
-- 他のどのレイヤーにも依存しない
+- `ai_service.py`: `IAIService.generate_content(...)`
+- `event_bus.py`: `IEventBus.publish/subscribe/start/stop`
+- `memory_service.py`: 会話生成で使うメモリ取得・保存境界
+- `memory_store.py`, `memory_index.py`, `memory_consolidation.py`,
+  `embedding_service.py`: メモリ基盤の抽象
 
-#### 構成要素
+`IAIService` や `IEventBus` は `domain/interfaces` ではなく `contracts/ports` に
+置きます。これらは純粋なドメインルールではなく、UseCase、Infrastructure、
+Presentation の境界で共有されるアプリケーション契約だからです。
 
-##### 1.1 Aggregates（集約）
+### messages
 
-`src/app/domain/aggregates/user.py`:
+`src/app/contracts/messages` には、複数レイヤーが共有するDTO、イベントトピック、
+ペイロードビルダーを置きます。
 
-```python
-from app.domain.value_objects import Email, UserId
+- `generated_content.py`: AI 生成結果の構造化DTO `GeneratedContent`
+- `chat_events.py`: `chat.discord.saved`, `chat.line.saved`,
+  `chat.discord.reply_ready`, `chat.line.reply_ready`,
+  `chat.search.requested`, `chat.search.completed` と payload builder
+- `memory_context.py`: メモリコンテキストの受け渡しDTO
+- `tool_use.py`: LLM の tool request と web search 引数
+- `retrieved_context.py`: 検索結果の再投入用 DTO
 
-@dataclass
-class User:
-    """User aggregate root."""
-
-    id: UserId
-    name: str
-    email: Email
-
-    def __post_init__(self) -> None:
-        # ドメインルールの検証
-        if not self.name:
-            raise ValueError("User name cannot be empty.")
-
-    def change_email(self, new_email: Email) -> "User":
-        """ビジネスロジック: メールアドレス変更"""
-        self.email = new_email
-        return self
-```
-
-**ポイント**:
-
-- ビジネスルールを `__post_init__` で検証
-- **Value Objects** (`UserId`, `Email`) を使用して型安全性を向上
-- リッチドメインモデル（データだけでなく振る舞いを持つ）
-
-##### 1.2 Repository Interfaces（リポジトリインターフェース）
-
-`src/app/domain/repositories/interfaces.py`:
-
-```python
-from abc import ABC, abstractmethod
-from flow_res import Result
-
-class IRepository[T](ABC):
-    """基本リポジトリインターフェース（追加・削除操作）"""
-
-    @abstractmethod
-    async def add(self, entity: T) -> Result[T, RepositoryError]:
-        pass
-
-    @abstractmethod
-    async def delete(self, entity: T) -> Result[None, RepositoryError]:
-        pass
-
-
-class IRepositoryWithId[T, K](IRepository[T], ABC):
-    """ID検索機能付きリポジトリインターフェース"""
-
-    @abstractmethod
-    async def get_by_id(self, id: K) -> Result[T, RepositoryError]:
-        pass
-```
-
-**ポイント**:
-
-- ドメイン層でインターフェースを定義
-- 実装はインフラ層が担当（依存性逆転）
-- Result型で型安全なエラーハンドリング
-
-**設計判断: Protocol から ABC への移行**:
-
-当初は `Protocol` ベースの設計を採用していましたが、DI（依存性注入）による
-インターフェース分離が実現されているため、`Protocol` の構造的型付けの柔軟性は
-不要であることが判明しました。
-
-`ABC` ベースの明示的継承により、以下の利点が得られます:
-
-- 型安全性の向上（クラス定義時にエラー検出）
-- IDEサポートの改善（自動補完、リファクタリング）
-- 開発者の意図の明確化
-- インターフェースと実装の乖離防止
-
-なお、`IValueObject` などのドメイン層インターフェースは、ランタイム型チェックが
-必要なため、引き続き `Protocol` を使用します。
-
-##### 1.3 Result Type（結果型）
-
-`src/app/core/result.py`:
-
-```python
-@dataclass(frozen=True)
-class Ok[T]:
-    """成功結果"""
-    value: T
-
-@dataclass(frozen=True)
-class Err[E]:
-    """失敗結果"""
-    error: E
-
-Result = Ok[T] | Err[E]
-```
-
-**ポイント**:
-
-- Rust の Result型にインスパイア
-- 例外ではなく値でエラーを表現
-- `map`, `and_then`, `unwrap` などのメソッドチェーンで安全な処理を実現
-
-**使用例**:
-
-```python
-# teams_cog.py の例
-message = await (
-    Mediator.send_async(CreateTeamCommand(name=name))
-    .and_then(lambda r: Mediator.send_async(GetTeamQuery(r.team_id)))
-    .map(lambda v: f"Team Created: ID: {v.team.id}, Name: {v.team.name}")
-    .unwrap()
-)
-```
+UseCase 固有の入出力型は `src/app/usecases` に残します。複数レイヤーにまたがる型は
+`contracts/messages` に上げ、`usecases` を共有DTO置き場にしません。
 
 ---
 
-### 2. Application Layer（アプリケーション層）
+## Presentation Layer
 
-**責務**: ユースケースの実装、ビジネスフローの制御
+現行のプレゼンテーション層は4つの入口に分かれています。
 
-**特徴**:
+### api
 
-- ドメインオブジェクトを操作してビジネスフローを実現
-- DTOで入出力を定義
-- トランザクション境界の管理（Unit of Work）
+`src/app/presentation/api` は FastAPI の管理APIです。
 
-#### 構成要素
+- `__main__.py` の lifespan で DB、DI、Mediator を初期化する。
+- `routers/users.py`, `routers/teams.py` は HTTP リクエストを UseCase の
+  Command/Query に変換する。
+- UseCase の `Result` が失敗した場合は HTTP 例外へ変換する。
 
-##### 2.1 Use Cases（ユースケース）
+### bot
 
-各ユースケースは以下の3要素で構成:
+`src/app/presentation/bot` は Discord Bot プロセスです。
 
-1. **Query/Command クラス**: リクエスト
-2. **Result クラス**: レスポンス
-3. **Handler クラス**: 処理ロジック
+- `__main__.py` で DB、DI、Mediator、EventBus を初期化する。
+- `cogs/*.py` は Discord イベントやコマンドを受け取り、Mediator で UseCase を呼ぶ。
+- `dm_response_cog.py` は DM を `SaveDiscordChatCommand` として保存する。
+- `discord_reply_sender.py` は `chat.discord.reply_ready` の payload を Discord へ送る。
 
-**重要な設計原則**: Create系のユースケースは作成したエンティティのIDのみを返し、詳細情報の取得はGet系のユースケースに委譲します。これにより以下のSOLID原則がより厳密に守られます：
+Bot プロセスは保存済みメッセージから直接返信を生成しません。返信生成は Worker の
+イベントハンドラーに委譲し、Bot 側は返信準備完了イベントを購読して送信します。
 
-- **単一責任の原則（SRP）**: Createは「エンティティの作成」、Getは「エンティティの詳細取得」という明確な単一責任を持つ
-- **開放閉鎖の原則（OCP）**: 表示ロジックをGetに一元化することで、表示形式の変更時に既存のCreateコードを変更する必要がない
-- **インターフェース分離の原則（ISP）**: Createは最小限の情報（ID）のみを返し、クライアントに不要な情報を公開しない
+### line
 
-`src/app/usecases/users/get_user.py`:
+`src/app/presentation/line` は LINE Webhook 用 FastAPI プロセスです。
 
-```python
-# 1. Query（リクエスト）- IDはstringで受け取る
-class GetUserQuery(Request[Result[GetUserResult, UseCaseError]]):
-    def __init__(self, user_id: str) -> None:
-        self.user_id = user_id
+- `__main__.py` の lifespan で DB、DI、Mediator、EventBus を初期化する。
+- `/callback` で LINE 署名を検証し、テキストメッセージを
+  `SaveLineChatCommand` に変換する。
+- `line_reply_sender.py` は `chat.line.reply_ready` の payload を LINE へ送る。
 
-# 2. Result（レスポンス）
-class GetUserResult:
-    def __init__(self, user: UserDTO) -> None:
-        self.user = user
+LINE も Discord と同じく、保存と返信生成を分離します。Webhook は保存までを
+UseCase に渡し、返信送信は返信準備完了イベントを購読する送信アダプターが担当します。
 
-# 3. Handler（処理ロジック）
-class GetUserHandler(RequestHandler[GetUserQuery, Result[GetUserResult, UseCaseError]]):
-    @inject
-    def __init__(self, uow: IUnitOfWork) -> None:
-        self._uow = uow
+### worker
 
-    async def handle(self, request: GetUserQuery) -> Result[GetUserResult, UseCaseError]:
-        # 文字列からValue Objectへの変換
-        user_id_result = UserId.from_primitive(request.user_id)
-        if is_err(user_id_result):
-            return Err(UseCaseError(type=ErrorType.VALIDATION_ERROR, ...))
+`src/app/presentation/worker` は非同期イベント処理と定期ジョブのプロセスです。
 
-        user_id = user_id_result.unwrap()
+- `registry.py` は `@event_handler` と `@scheduled_task` で handler を収集する。
+- `handlers.py` は保存済みチャットイベントを受けて `GenerateContentQuery` を実行する。
+- `handlers.py` は `RunMemorySleepCommand` を定期実行する。
+- `__main__.py` は DB、DI、Mediator、EventBus を初期化し、登録済み handler を
+  EventBus に subscribe する。
 
-        async with self._uow:
-            # リポジトリにはValue Objectでアクセス
-            user_repo = self._uow.GetRepository(User, UserId)
-            user_result = await user_repo.get_by_id(user_id)
-
-            match user_result:
-                case Ok(user):
-                    # Domain -> DTO への変換
-                    user_dto = UserDTO(
-                        id=user.id.to_primitive(),
-                        name=user.name,
-                        email=user.email.to_primitive()
-                    )
-                    return Ok(GetUserResult(user_dto))
-                case Err(repo_error):
-                    return Err(UseCaseError.from_repo_error(repo_error))
-
-```
-
-**ポイント**:
-
-- **CQRS パターン**: Query（読み取り）と Command（書き込み）を分離
-- **DTO（Data Transfer Object）**: プレゼンテーション層との境界
-- **依存性注入**: `@inject` デコレータで IUnitOfWork を注入
-- **トランザクション**: `async with self._uow` でトランザクション管理
-- **入力バリデーション**: Handler内で文字列をValue Objectに変換し、不正な値を弾く
-
-`src/app/usecases/users/create_user.py` (Command例):
-
-```python
-# 1. Command（リクエスト）
-class CreateUserCommand(Request[Result[CreateUserResult, UseCaseError]]):
-    def __init__(self, name: str, email: str) -> None:
-        self.name = name
-        self.email = email
-
-# 2. Result（レスポンス）- IDのみを返す
-class CreateUserResult:
-    def __init__(self, user_id: str) -> None:
-        self.user_id = user_id
-
-# 3. Handler（処理ロジック）
-class CreateUserHandler(RequestHandler[CreateUserCommand, Result[CreateUserResult, UseCaseError]]):
-    @inject
-    def __init__(self, uow: IUnitOfWork) -> None:
-        self._uow = uow
-
-    async def handle(self, request: CreateUserCommand) -> Result[CreateUserResult, UseCaseError]:
-        # Value Objectの生成とドメインルールの検証
-        user_result = Ok(User(
-            id=UserId.generate().unwrap(),
-            name=request.name,
-            email=Email.from_primitive(request.email).unwrap()
-        ))
-
-        if is_err(user_result):
-            return Err(UseCaseError(...)) # エラー処理
-
-        user = user_result.unwrap()
-
-        async with self._uow:
-            user_repo = self._uow.GetRepository(User)
-            save_result = await user_repo.add(user)
-
-            match save_result:
-                case Ok(saved_user):
-                    # IDのみを文字列で返す
-                    return Ok(CreateUserResult(saved_user.id.to_primitive()))
-                case Err(repo_error):
-                    return Err(UseCaseError.from_repo_error(repo_error))
-```
-
-**Createの設計パターン**: CreateユースケースはIDのみを返します。プレゼンテーション層（Cog）では、返されたIDを使ってGetユースケースを呼び出すことで、詳細情報を取得します。このフローは `Result` 型の `and_then` メソッドを使うことで、よりクリーンに実装できます。
-
-```python
-# src/app/presentation/bot/cogs/teams_cog.py
-@teams.command(name="create")
-async def teams_create(self, ctx: commands.Context[commands.Bot], name: str) -> None:
-    """Create new team. Usage: !teams create <name>"""
-    message = await (
-        # 1. Createを実行してIDを取得
-        Mediator.send_async(CreateTeamCommand(name=name))
-        # 2. 成功すれば、返されたIDでGetを実行
-        .and_then(
-            lambda result: Mediator.send_async(GetTeamQuery(result.team_id))
-        )
-        # 3. Getの成功結果をメッセージにフォーマット
-        .map(
-            lambda value: (
-                f"Team Created:\nID: {value.team.id}\nName: {value.team.name}"
-            )
-        )
-        # 4. 最終的な結果 (成功メッセージ or エラー) を取り出す
-        .unwrap()
-    )
-    await ctx.send(content=message)
-```
-
-この設計により：
-
-- Createは「作成してIDを返す」という単一責任に専念
-- Getは「詳細情報の取得と形式化」という単一責任に専念
-- 結果の表示形式を変更する場合、Getの実装のみを変更すればよい（OCP）
-- `and_then`でフローが明確になり、ネストが深くならない
-
-##### 2.2 Mediator Pattern（メディエーターパターン）
-
-`flow-med` ライブラリを使用しています。
-
-```python
-class Mediator:
-    """CQRS-style mediator for request/response."""
-
-    @classmethod
-    async def send_async[T, E: Exception](
-        cls, request: Request[Result[T, E]]
-    ) -> AwaitableResult[T, E]:
-        """Send request to handler and get response."""
-        # ...
-```
-
-**利点**:
-
-- プレゼンテーション層とアプリケーション層の疎結合
-- ハンドラーの自動登録（`__init_subclass__` 使用）
-- 一貫したリクエスト/レスポンスパターン
-- `AwaitableResult` によるメソッドチェーンのサポート
-
-**使用例**:
-
-```python
-# Discord Cog から
-query = GetUserQuery(user_id="01H...Z")
-result = await Mediator.send_async(query)
-```
-
-##### 2.3 DTOs（Data Transfer Objects）
-
-`src/app/usecases/users/user_dto.py`:
-
-```python
-@dataclass(frozen=True)
-class UserDTO:
-    """User Data Transfer Object."""
-    id: str  # ULID
-    name: str
-    email: str
-```
-
-**ポイント**:
-
-- イミュータブル（`frozen=True`）
-- ドメイン集約とは別物（表示用）
-- プレゼンテーション層に公開する情報はプリミティブ型（`str`, `int`など）
-- Value Objectは `to_primitive()` で変換されて格納される
+Worker はプロセス間連携の中心です。外部サービスへ直接返信するのではなく、
+返信生成後に `chat.*.reply_ready` を発行し、送信は bot/line 側に戻します。
 
 ---
 
-### 3. Infrastructure Layer（インフラストラクチャ層）
+## Multi-process EventBus
 
-**責務**: 技術的な詳細の実装（DB、外部API等）
+`IEventBus` は `src/app/contracts/ports/event_bus.py` に定義されています。
+実装は `src/app/infrastructure/messaging` にあります。
 
-**特徴**:
+- `InMemoryEventBus`: 単一プロセスやローカル開発向け。
+- `RedisEventBus`: Redis Pub/Sub による複数プロセス連携。
+- `PostgresEventBus`: PostgreSQL LISTEN/NOTIFY による複数プロセス連携。
+- `NullEventBus`: handler の単体テストや任意注入なしのフォールバック。
 
-- ドメイン層のインターフェースを実装
-- ORM、データベース接続、外部サービスとの通信
-- ドメイン集約とORMモデルの変換
+`src/app/container.py` の `MessagingModule` は `EVENT_BUS_PROVIDER` を見て実装を選びます。
+未指定の場合は `REDIS_URL` があれば Redis、PostgreSQL の `DATABASE_URL` なら Postgres、
+それ以外は memory を選択します。
 
-#### 構成要素
-
-##### 3.1 ORM Models
-
-`src/app/infrastructure/orm_models/user_orm.py`:
-
-```python
-from datetime import datetime
-from sqlalchemy import Column, DateTime, func
-from sqlmodel import Field, SQLModel
-
-class UserORM(SQLModel, table=True):
-    """User table ORM model."""
-    __tablename__ = "users"
-
-    id: str | None = Field(default=None, primary_key=True, max_length=26)
-    name: str = Field(max_length=255, index=True)
-    email: str = Field(max_length=255, unique=True, index=True)
-    created_at: datetime = Field(
-        sa_column=Column(DateTime(timezone=True), server_default=func.now())
-    )
-    updated_at: datetime = Field(
-        sa_column=Column(DateTime(timezone=True), server_default=func.now())
-    )
-```
-
-**ポイント**:
-
-- **ドメイン集約とは完全に分離**
-- データベーステーブルの表現
-- IDはULIDのため `str` 型、タイムスタンプは `datetime` 型
-
-##### 3.2 Generic Repository
-
-`src/app/infrastructure/repositories/generic_repository.py`:
-
-```python
-class GenericRepository[T, K](IRepositoryWithId[T, K]):
-    """汎用リポジトリ実装"""
-
-    def __init__(
-        self,
-        session: AsyncSession,
-        entity_type: type[T],
-    ) -> None:
-        self._session = session
-        self._entity_type = entity_type
-        self._orm_type = ORMMappingRegistry.get_orm_type(entity_type)
-
-    async def get_by_id(self, id: K) -> Result[T, RepositoryError]:
-        # Value Object をプリミティブ型に変換して検索
-        primitive_id = id.to_primitive() if isinstance(id, IValueObject) else id
-
-        statement = select(self._orm_type).where(self._orm_type.id == primitive_id)
-        result = await self._session.execute(statement)
-        orm_instance = result.scalar_one_or_none()
-
-        if orm_instance is None:
-            return Err(RepositoryError(type=RepositoryErrorType.NOT_FOUND, ...))
-
-        # ORM → Domain 自動変換
-        return Ok(ORMMappingRegistry.from_orm(orm_instance, self._entity_type))
-```
-
-**ポイント**:
-
-- 型安全な汎用実装（Generics使用）
-- ORM ↔ Domain の変換を `ORMMappingRegistry` に委譲
-- Result型でエラーハンドリング
-
-##### 3.3 ORM Mapping Registry
-
-ドメイン集約とORMモデル間の変換は、`ORMMappingRegistry` によって一元管理されます。
-
-`src/app/infrastructure/orm_mapping.py`:
-
-```python
-# registry_orm_mapping(DomainClass, ORMClass) でマッピングを登録
-# from_orm(orm_instance, domain_type) でORMからドメインへ変換
-# to_orm(domain_instance) でドメインからORMへ変換
-```
-
-このレジストリは、リフレクションと型ヒントを利用して、`IValueObject` を含むドメイン集約とORMモデル間の変換を自動的に行います。これにより、変換ロジックを都度記述する必要がなくなり、保守性が大幅に向上します。
-
-**利点**:
-
-- **型安全**: 型アノテーションベースで自動変換
-- **保守性向上**: 新しいValue Objectを追加しても変換コード不要
-- **依存性逆転**: ドメイン層がインフラ層に依存しない
-- **DRY原則**: 変換ロジックの重複を排除
-- **一元管理**: 全てのマッピングを `orm_registry.py` で集中管理
-
-##### 3.4 Unit of Work Pattern
-
-`src/app/infrastructure/unit_of_work.py`:
-
-```python
-class SQLAlchemyUnitOfWork(IUnitOfWork):
-    """トランザクション境界を管理"""
-
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
-        self._session_factory = session_factory
-        # ...
-
-    def GetRepository[T, K](...) -> IRepository[T, K]:
-        # リポジトリの取得（キャッシュ付き）
-        # ...
-
-    async def __aenter__(self) -> "SQLAlchemyUnitOfWork":
-        # ...
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        if exc_type is None:
-            await self.commit()  # 成功時はコミット
-        else:
-            await self.rollback()  # 例外時はロールバック
-        # ...
-```
-
-**ポイント**:
-
-- **トランザクション境界の明確化**
-- リポジトリのキャッシュ（同一トランザクション内で再利用）
-- 自動コミット/ロールバック（コンテキストマネージャー）
-
-##### 3.5 Dependency Injection Container
-
-`src/app/container.py`:
-
-```python
-from injector import Binder, Module, singleton
-from app.infrastructure.orm_registry import init_orm_mappings
-
-class AppModule(Module):
-    """DIコンテナの設定"""
-
-    def configure(self, binder: Binder) -> None:
-        # アプリケーション起動時に一度だけORMマッピングを初期化
-        init_orm_mappings()
-
-        # セッションファクトリをシングルトンでバインド
-        binder.bind(async_sessionmaker[AsyncSession], to=get_session_factory(), ...)
-
-        # UnitOfWork をリクエストごとに生成
-        binder.bind(IUnitOfWork, to=SQLAlchemyUnitOfWork)
-```
-
-**ポイント**:
-
-- `injector` ライブラリを使用
-- `init_orm_mappings()` をコンテナ設定時に呼び出し、マッピングを保証
-- テスト時のモック注入が容易
+複数プロセスで bot/line/worker を同時に動かす場合、`InMemoryEventBus` では
+プロセスをまたげません。`EVENT_BUS_PROVIDER=redis` または `postgres` を使います。
 
 ---
 
-### 4. Presentation Layer（プレゼンテーション層）
+## Chat Flow
 
-**責務**: ユーザーインターフェース、入出力の制御
+Discord DM と LINE は、保存、生成、送信をイベントで分離します。
 
-**特徴**:
+```text
+Discord DM
+  └─ presentation/bot/cogs/dm_response_cog.py
+      └─ Mediator.send_async(SaveDiscordChatCommand)
+          └─ usecases/chat/save_discord_chat.py
+              ├─ DB commit
+              └─ publish chat.discord.saved
 
-- Discord Bot のコマンド実装
-- 入力の受付とバリデーション
-- 出力のフォーマット
+LINE webhook
+  └─ presentation/line/__main__.py /callback
+      └─ Mediator.send_async(SaveLineChatCommand)
+          └─ usecases/chat/save_line_chat.py
+              ├─ DB commit
+              └─ publish chat.line.saved
 
-#### 構成要素
+worker
+  └─ handlers.py
+      └─ on_*_chat_saved
+          └─ Mediator.send_async(GenerateContentQuery)
+              └─ usecases/chat/generate_content.py
+                  ├─ recent history query
+                  ├─ RetrieveMemoryContextQuery
+                  ├─ IAIService.generate_content
+                  ├─ tool request 分岐時は chat.search.requested を発行
+                  ├─ DB commit assistant message
+                  └─ publish chat.*.reply_ready
 
-##### 4.1 Discord Bot Entry Point
+検索が必要な場合は Worker が `chat.search.requested` と `chat.search.completed`
+を介して `usecases/search/*` と `generate_content_with_retrieved_context.py`
+を起動し、`retrieved context` を組み込んだ再推論を行う。
 
-`src/app/__main__.py`:
-
-```python
-class MyBot(commands.Bot):
-    # ...
-    async def setup_hook(self) -> None:
-        await self._init_database()
-        await self.load_cogs()
-
-    async def _init_database(self) -> None:
-        # ... DIコンテナとMediatorの初期化
-        injector = Injector([container.configure])
-        Mediator.initialize(injector)
-
-    async def load_cogs(self) -> None:
-        # Cogモジュールをインポートしてロード
-        await self.load_extension(teams_cog.__name__)
-        await self.load_extension(users_cog.__name__)
-
-bot = MyBot()
-bot.run(token)
+sender
+  ├─ bot subscribes chat.discord.reply_ready -> send_discord_reply
+  └─ line subscribes chat.line.reply_ready -> send_line_reply
 ```
 
-##### 4.2 Discord Cogs
-
-`src/app/presentation/bot/cogs/users_cog.py`:
-
-```python
-class UsersCog(commands.Cog):
-    # ...
-    @users.command(name="get")
-    async def users_get(
-        self, ctx: commands.Context[commands.Bot], user_id: str
-    ) -> None:
-        """Get user by ID."""
-        query = GetUserQuery(user_id=user_id) # 文字列でQueryを作成
-        result = await Mediator.send_async(query)
-
-        match result:
-            case Ok(ok_value):
-                user = ok_value.user
-                await ctx.send(
-                    f"**User #{user.id}**\n"
-                    f"Name: {user.name}\n"
-                    f"Email: {user.email}"
-                )
-            case Err(err_value):
-                await ctx.send(f"❌ Error: {err_value.message}")
-```
-
-**ポイント**:
-
-- Mediator経由でユースケースを呼び出し
-- Result型でエラーハンドリング
-- Discord用のメッセージフォーマット
-- IDは文字列として受け取る
+UseCase は `EventBus` に payload を発行しますが、Discord/LINE SDK の送信処理は
+Presentation の sender に閉じます。これにより、アプリケーション層は外部SDKに
+依存しません。
 
 ---
 
-## データフロー
+## Application Layer
 
-### Query（読み取り）のフロー
+`src/app/usecases` は Command/Query と Handler を定義し、`flow-med` の Mediator で
+呼び出されます。
 
-```
-1. User: !users get 01H...
-   ↓
-2. UsersCog: GetUserQuery(user_id="01H...")
-   ↓
-3. Mediator -> GetUserHandler
-   ↓ UserId.from_primitive("01H...")
-4. UoW -> GenericRepository.get_by_id(UserId(...))
-   ↓ SELECT ... WHERE id = "01H..."
-5. Database -> UserORM
-   ↓ ORMMappingRegistry.from_orm()
-6. User (Domain) -> UserDTO
-   ↓ Ok(GetUserResult(UserDTO))
-7. UsersCog: formats message
-   ↓
-8. User: receives message
-```
+代表例:
 
-### Command（書き込み）のフロー
+- `usecases/chat/save_discord_chat.py`: Discord の受信メッセージを保存し、
+  `chat.discord.saved` を発行する。
+- `usecases/chat/save_line_chat.py`: LINE の受信メッセージを保存し、
+  `chat.line.saved` を発行する。
+- `usecases/chat/generate_content.py`: 履歴、メモリ、AI サービスを組み合わせて
+  assistant メッセージを保存し、返信準備完了イベントを発行する。
+- `usecases/chat/generate_content_with_retrieved_context.py`: 検索結果を
+  `retrieved context` として再投入し、再推論後の返信を発行する。
+- `usecases/search/*`: 検索要求イベントから検索実行と短期ストア保存を行う。
+- `usecases/memory/*`: メモリ取得、インデックス更新、睡眠処理を扱う。
 
-```
-1. User: !teams create "My Team"
-   ↓
-2. TeamsCog: CreateTeamCommand(name="My Team")
-   ↓
-3. Mediator -> CreateTeamHandler -> Team(id=TeamId.generate(), ...)
-   ↓ UoW -> GenericRepository.add()
-4. ORMMappingRegistry.to_orm() -> TeamORM
-   ↓ INSERT ...
-5. Database commits
-   ↓ Ok(CreateTeamResult(team_id="01H..."))
-6. TeamsCog: .and_then() is called
-   ↓ GetTeamQuery(team_id="01H...")
-7. (Queryフローと同様の処理)
-   ↓ Ok(GetTeamResult(TeamDTO))
-8. TeamsCog: .map() formats message
-   ↓
-9. User: receives success message
-```
-
-**重要**: Create操作は作成したエンティティのIDのみを返します。詳細情報の取得は必ずGet操作を経由することで、表示ロジックが一元化され、SOLID原則（特にSRPとOCP）が守られます。`and_then` を使ったフローにより、この処理が簡潔に表現されます。
+Presentation から DB や UoW を直接呼び出す実装は避けます。必要な処理は UseCase として
+追加し、Mediator 経由で呼び出します。
 
 ---
 
-## テスト戦略
+## Domain Layer
 
-### 1. ユニットテスト
+`src/app/domain` は集約、値オブジェクト、ドメイン寄りのリポジトリ/UoW 契約を持ちます。
 
-`tests/domain/aggregates/test_user.py`:
+- `aggregates`: `User`, `Team`, `Chat` などの集約。
+- `value_objects`: ID、メールアドレス、チャット種別、メッセージ内容など。
+- `repositories`: Repository と Unit of Work の抽象。
+
+ドメイン層はフレームワーク、DB、Discord、LINE、AI SDK、EventBus 実装を知りません。
+`domain/interfaces` をアプリケーション全体の契約置き場として再導入しないでください。
+
+---
+
+## Infrastructure Layer
+
+`src/app/infrastructure` は技術詳細を実装します。
+
+- `database.py`: SQLAlchemy/SQLModel の engine と session factory。
+- `orm_models`, `orm_mapping.py`, `orm_registry.py`: ORM と Domain の変換。
+- `repositories`, `unit_of_work.py`: Repository/UoW 実装。
+- `messaging`: `IEventBus` の Redis/Postgres/InMemory 実装。
+- `services`: AI provider、メモリストア、メモリインデックス、メモリ統合サービス。
+
+DI は `src/app/container.py` に集約します。新しい実装を追加する場合も、UseCase から
+直接具象クラスを import させず、必要な port と DI binding を先に確認します。
+
+---
+
+## Testing
+
+テストは `uv run --frozen pytest` で実行します。非同期テストは `pytest-asyncio` ではなく
+`anyio` を方針とします。
 
 ```python
 import pytest
 
-@pytest.mark.asyncio
-async def test_create_user_with_empty_name_raises_error() -> None:
-    with pytest.raises(ValueError, match="User name cannot be empty"):
-        User(id=UserId.generate().unwrap(), name="", email=Email.from_primitive("a@a.com").unwrap())
+
+@pytest.mark.anyio
+async def test_usecase() -> None:
+    ...
 ```
 
-### 2. 統合テスト
+`tests/conftest.py` の `anyio_backend` fixture は `asyncio` バックエンドを返します。
+これにより anyio の marker を使いながら、実行バックエンドは現在の asyncio 実装に
+合わせます。
 
-`tests/usecases/users/test_get_user.py`:
+テストの基本方針:
 
-```python
-import pytest
-from app.domain.value_objects import UserId, Email
+- 新機能にはテストを追加する。
+- バグ修正には回帰テストを追加する。
+- UseCase は mocked port または test UoW で境界を検証する。
+- EventBus 連携は payload、topic、subscribe の単位で検証する。
+- Presentation は外部SDK呼び出しを直接実行せず、sender や app state を mock する。
+- DB を使う統合テストは fixture の in-memory SQLite と UoW を使う。
 
-@pytest.mark.asyncio
-async def test_get_user_handler(uow: IUnitOfWork) -> None:
-    # Setup
-    user = User(id=UserId.generate().unwrap(), name="Bob", email=Email.from_primitive("bob@a.com").unwrap())
-    async with uow:
-        repo = uow.GetRepository(User, UserId)
-        await repo.add(user)
-        await uow.commit()
-
-    # Execute
-    handler = GetUserHandler(uow)
-    query = GetUserQuery(user_id=user.id.to_primitive())
-    result = await handler.handle(query)
-
-    # Assert
-    assert is_ok(result)
-    assert result.value.user.name == "Bob"
-```
-
-**特徴**:
-
-- テストには `@pytest.mark.asyncio` を使用
-- データベースを含む
-- トランザクション動作の検証
-
----
-
-## 依存関係管理
-
-### プロダクション依存関係
-
-```toml
-[project.dependencies]
-aiosqlite = ">=0.21.0"
-alembic = ">=1.17.2"
-discord-py = ">=2.5.2"
-injector = ">=0.22.0"
-python-dotenv = ">=1.2.1"
-python-ulid = ">=3.1.0"   # ULID生成
-sqlmodel = ">=0.0.24"
-```
-
-### 開発依存関係
-
-```toml
-[dependency-groups.dev]
-# anyio は pytest-asyncio の依存関係として導入されます
-pre-commit = ">=4.5.0"
-pyright = ">=1.1.407"
-pytest = ">=8.3.5"
-pytest-asyncio = ">=1.3.0" # 非同期テストランナー
-pytest-cov = ">=7.0.0"
-pytest-mock = ">=3.14.0"
-ruff = ">=0.14.6"
-```
-
----
-
-## 拡張方法
-
-### 新しい集約の追加
-
-1. **ドメイン集約とValue Objectを作成**
-
-```python
-# src/app/domain/aggregates/guild.py
-@dataclass
-class Guild:
-    id: GuildId
-    name: str
-```
-
-1. **ORMモデルを作成**
-
-```python
-# src/app/infrastructure/orm_models/guild_orm.py
-class GuildORM(SQLModel, table=True):
-    __tablename__ = "guilds"
-    id: str | None = Field(default=None, primary_key=True)
-    name: str
-```
-
-1. **マッピングを登録**
-
-```python
-# src/app/infrastructure/orm_registry.py
-from app.domain.aggregates.guild import Guild
-from app.infrastructure.orm_models.guild_orm import GuildORM
-
-def init_orm_mappings() -> None:
-    """Initialize all ORM mappings."""
-    register_orm_mapping(User, UserORM)
-    register_orm_mapping(Team, TeamORM)
-    register_orm_mapping(Guild, GuildORM) # ここに追加
-```
-
-`init_orm_mappings` はアプリ起動時に `src/app/container.py` から自動で呼び出されるため、ここの追加だけでマッピングは完了します。
-
-1. **ユースケースを作成**
-
-```python
-# src/app/usecases/guilds/get_guild.py
-# ... GetGuildQuery, GetGuildHandler などを実装
-```
-
-1. **Cogを作成**
-
-```python
-# src/app/presentation/bot/cogs/guilds_cog.py
-# ... Mediator経由でユースケースを呼び出すコマンドを実装
-```
-
-### データベースマイグレーション
+anyio marker が認識されない場合は、pytest plugin autoload を有効化して再実行します。
 
 ```bash
-# スキーマ変更後、マイグレーションを生成
-uv run alembic revision --autogenerate -m "Add guilds table"
+PYTEST_DISABLE_PLUGIN_AUTOLOAD="" uv run --frozen pytest
+```
 
-# マイグレーション適用
-uv run alembic upgrade head
+品質チェックの基本順序:
+
+```bash
+uv run --frozen ruff format .
+uv run --frozen pyright
+uv run --frozen ruff check .
+uv run --frozen pytest
 ```
 
 ---
 
-## 📚 参考資料
+## 変更時の配置判断
 
-- [Clean Architecture (Robert C. Martin)](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html)
-- [Domain-Driven Design](https://www.domainlanguage.com/ddd/)
-- [CQRS Pattern](https://martinfowler.com/bliki/CQRS.html)
-- [Repository Pattern](https://martinfowler.com/eaaCatalog/repository.html)
-- [Unit of Work Pattern](https://martinfowler.com/eaaCatalog/unitOfWork.html)
+新しい型やファイルを追加する前に、先に依存方向を明示します。
 
----
+- 外部SDKや DB の具象実装なら `infrastructure`。
+- Discord/LINE/FastAPI/Worker の入口や送信処理なら `presentation`。
+- Command/Query/Handler とビジネスフローなら `usecases`。
+- 集約や値オブジェクトのルールなら `domain`。
+- 複数レイヤーが共有するインターフェースなら `contracts/ports`。
+- 複数レイヤーが共有する DTO、イベント名、payload builder なら
+  `contracts/messages`。
 
-**ドキュメント作成者**: Claude Code
-**作成日**: 2025-11-26
-**バージョン**: 1.0
+名前だけで配置しないでください。たとえば `GeneratedContent` は DTO ですが、
+AI port、AI service 実装、UseCase が共有する境界型なので `contracts/messages` に置きます。
