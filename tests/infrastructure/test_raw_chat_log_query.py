@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.repositories import IUnitOfWork
 from app.domain.value_objects.chat_type import ChatType
-from app.infrastructure.orm_models import ChatORM, MemoryConsolidationRunORM
+from app.infrastructure.orm_models import ChatORM
 
 
 async def _seed_raw_chat_logs(
@@ -128,20 +128,3 @@ async def test_raw_chat_log_query_lists_distinct_user_ids(
         user_ids = result.value
 
         assert user_ids == ["u1", "u2"]
-
-
-def test_memory_consolidation_run_orm_defaults_are_safe() -> None:
-    """Test the memory consolidation run ORM shape."""
-    run = MemoryConsolidationRunORM(
-        run_key="memory-sleep:2026-05-21",
-        job_name="memory_sleep",
-    )
-
-    assert run.__tablename__ == "memory_consolidation_runs"
-    assert run.run_key == "memory-sleep:2026-05-21"
-    assert run.job_name == "memory_sleep"
-    assert run.status == "pending"
-    assert run.target_date is None
-    assert run.started_at is None
-    assert run.finished_at is None
-    assert run.result_json == {}

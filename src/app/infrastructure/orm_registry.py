@@ -10,9 +10,6 @@ from app.domain.aggregates.team_membership import TeamMembership
 from app.domain.aggregates.user import User
 from app.infrastructure.orm_mapping import register_orm_mapping
 from app.infrastructure.orm_models.chat_orm import ChatORM, DiscordChatORM, LineChatORM
-from app.infrastructure.orm_models.memory_consolidation_run_orm import (
-    MemoryConsolidationRunORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
-)
 from app.infrastructure.orm_models.team_membership_orm import TeamMembershipORM
 from app.infrastructure.orm_models.team_orm import TeamORM
 from app.infrastructure.orm_models.user_orm import UserORM

@@ -7,7 +7,6 @@ from typing import Any, Protocol
 
 from app.contracts.ports.memory_store import IMemoryStore
 from app.domain.queries.raw_chat_log_query import IRawChatLogQuery
-from app.domain.repositories import IMemoryConsolidationRunRepository
 
 
 class IMemoryConsolidationService(Protocol):
@@ -28,11 +27,8 @@ class IMemoryConsolidationService(Protocol):
         self,
         store: IMemoryStore,
         *,
-        run_key: str,
-        started_at: datetime,
         reference_time: datetime | None = None,
         raw_chat_log_query: IRawChatLogQuery | None = None,
-        run_repository: IMemoryConsolidationRunRepository | None = None,
     ) -> int:
         """Run the scheduled sleep job for all pending raw chat logs."""
         ...

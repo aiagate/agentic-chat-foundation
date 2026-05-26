@@ -11,10 +11,6 @@ from flow_res import Result, is_err
 
 from app.contracts.ports.memory_store import IMemoryStore
 from app.domain.queries.raw_chat_log_query import IRawChatLogQuery, RawChatLog
-from app.domain.repositories import (
-    IMemoryConsolidationRunRepository,
-    MemoryConsolidationRunStatus,
-)
 from app.domain.value_objects.chat_type import ChatType
 from app.infrastructure.services.memory_decay import (
     calculate_decay_score,
@@ -72,11 +68,8 @@ class DeterministicMemoryConsolidationService:
         self,
         store: IMemoryStore,
         *,
-        run_key: str,
-        started_at: datetime,
         reference_time: datetime | None = None,
         raw_chat_log_query: IRawChatLogQuery | None = None,
-        run_repository: IMemoryConsolidationRunRepository | None = None,
     ) -> int:
         """Consolidate all pending raw chat logs older than today."""
 
@@ -84,9 +77,6 @@ class DeterministicMemoryConsolidationService:
         query = raw_chat_log_query or self.raw_chat_log_query
         if query is None:
             raise RuntimeError("raw_chat_log_query is required for memory sleep")
-        repository = run_repository
-        if repository is None:
-            raise RuntimeError("run_repository is required for memory sleep")
 
         try:
             pending_targets = await _sql_pending_sleep_targets(
@@ -94,8 +84,6 @@ class DeterministicMemoryConsolidationService:
                 reference_time=now,
             )
             consolidated_count = 0
-            consolidated_raw_count = 0
-            consolidated_days: list[str] = []
             for user_id, day, raw_logs in pending_targets:
                 result = consolidate_daily_chat_logs(
                     store,
@@ -106,59 +94,8 @@ class DeterministicMemoryConsolidationService:
                 )
                 if result.processed_raw_ids:
                     consolidated_count += 1
-                    consolidated_raw_count += len(result.processed_raw_ids)
-                    consolidated_days.append(f"{user_id}:{day.isoformat()}")
-
-            if consolidated_count == 0:
-                await _finalize_memory_sleep_run(
-                    repository,
-                    run_key=run_key,
-                    status="skipped",
-                    finished_at=now,
-                    result_json={
-                        "job_name": "memory_sleep",
-                        "started_at": started_at.isoformat(),
-                        "run_key": run_key,
-                        "target_date": now.date().isoformat(),
-                        "consolidated_count": 0,
-                        "consolidated_raw_count": 0,
-                        "consolidated_days": [],
-                        "reason": "no_pending_targets",
-                    },
-                )
-                return 0
-
-            await _finalize_memory_sleep_run(
-                repository,
-                run_key=run_key,
-                status="complete",
-                finished_at=now,
-                result_json={
-                    "job_name": "memory_sleep",
-                    "started_at": started_at.isoformat(),
-                    "run_key": run_key,
-                    "target_date": now.date().isoformat(),
-                    "consolidated_count": consolidated_count,
-                    "consolidated_raw_count": consolidated_raw_count,
-                    "consolidated_days": consolidated_days,
-                },
-            )
             return consolidated_count
-        except Exception as exc:
-            await _finalize_memory_sleep_run(
-                repository,
-                run_key=run_key,
-                status="failed",
-                finished_at=now,
-                result_json={
-                    "job_name": "memory_sleep",
-                    "started_at": started_at.isoformat(),
-                    "run_key": run_key,
-                    "target_date": now.date().isoformat(),
-                    "status": "failed",
-                    "error": str(exc),
-                },
-            )
+        except Exception:
             raise
 
 
@@ -316,25 +253,6 @@ def _require_repository_result(result: Result[Any, Any]) -> Any:
         error = getattr(result, "error", None)
         raise RuntimeError(str(error) if error is not None else "Query failed")
     return cast(Any, result).value
-
-
-async def _finalize_memory_sleep_run(
-    repository: IMemoryConsolidationRunRepository,
-    *,
-    run_key: str,
-    status: MemoryConsolidationRunStatus,
-    finished_at: datetime,
-    result_json: dict[str, Any],
-) -> None:
-    """Persist the terminal state for a memory sleep run."""
-
-    result = await repository.set_run_result(
-        run_key=run_key,
-        status=status,
-        finished_at=finished_at,
-        result_json=result_json,
-    )
-    _require_repository_result(result)
 
 
 def _daily_body_from_raw_chat_logs(

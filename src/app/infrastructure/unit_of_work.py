@@ -7,7 +7,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.repositories import (
-    IMemoryConsolidationRunRepository,
     IRepository,
     IRepositoryWithId,
     IUnitOfWork,
@@ -21,9 +20,6 @@ from app.infrastructure.queries.raw_chat_log_query import (
     SQLAlchemyRawChatLogQuery,
 )
 from app.infrastructure.repositories.generic_repository import GenericRepository
-from app.infrastructure.repositories.memory_consolidation_run_repository import (
-    SQLAlchemyMemoryConsolidationRunRepository,
-)
 
 
 class SQLAlchemyUnitOfWork(IUnitOfWork):
@@ -35,9 +31,6 @@ class SQLAlchemyUnitOfWork(IUnitOfWork):
         self._repositories: dict[tuple[type, ...], Any] = {}
         self._chat_history_query: SQLAlchemyChatHistoryQuery | None = None
         self._raw_chat_log_query: SQLAlchemyRawChatLogQuery | None = None
-        self._memory_consolidation_run_repository: (
-            SQLAlchemyMemoryConsolidationRunRepository | None
-        ) = None
 
     @overload
     def GetRepository[T](self, entity_type: type[T]) -> IRepository[T]: ...
@@ -96,22 +89,6 @@ class SQLAlchemyUnitOfWork(IUnitOfWork):
 
         return self._raw_chat_log_query
 
-    def GetMemoryConsolidationRunRepository(
-        self,
-    ) -> IMemoryConsolidationRunRepository:
-        """Get the memory consolidation run repository."""
-        if self._session is None:
-            raise RuntimeError(
-                "UnitOfWork session not initialized. Use 'async with' context."
-            )
-
-        if self._memory_consolidation_run_repository is None:
-            self._memory_consolidation_run_repository = (
-                SQLAlchemyMemoryConsolidationRunRepository(self._session)
-            )
-
-        return self._memory_consolidation_run_repository
-
     async def commit(self) -> Result[None, RepositoryError]:
         """Commit the transaction."""
         if self._session is None:
@@ -151,4 +128,3 @@ class SQLAlchemyUnitOfWork(IUnitOfWork):
             self._repositories.clear()
             self._chat_history_query = None
             self._raw_chat_log_query = None
-            self._memory_consolidation_run_repository = None

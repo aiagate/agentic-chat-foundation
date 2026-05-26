@@ -69,7 +69,7 @@ SQL データベースは raw チャットメッセージの正本である。
 
 - 睡眠ジョブ用の raw ログ取得 Query
 - 1日以上前の chat row は記憶への昇華済みと判断（逆にその日のchat rawはコンテキストウインドウ以上肥大化しない限りコンテキストとして直接渡す想定）
-- 冪等なジョブ実行を記録する `memory_consolidation_runs` テーブル
+- `memory_sleep` は実行台帳を持たず、raw chat の再処理を許容する
 
 raw SQL ログは、抽象化された場合を除いて Markdown に二重保存しない。
 raw Timeline Markdown が残る場合も、legacy/manual/暫定データとして読み取り互換の範囲に閉じる。

@@ -1,9 +1,5 @@
 """Memory use cases."""
 
-from app.usecases.memory.append_memory_log import (
-    AppendMemoryLogCommand,
-    AppendMemoryLogHandler,
-)
 from app.usecases.memory.rebuild_memory_index import (
     RebuildMemoryIndexCommand,
     RebuildMemoryIndexHandler,
@@ -25,8 +21,6 @@ from app.usecases.memory.run_memory_sleep import (
 )
 
 __all__ = [
-    "AppendMemoryLogCommand",
-    "AppendMemoryLogHandler",
     "RebuildMemoryIndexCommand",
     "RebuildMemoryIndexHandler",
     "RebuildMemoryIndexResult",
