@@ -7,13 +7,23 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.repositories import (
+    IMemoryConsolidationRunRepository,
     IRepository,
     IRepositoryWithId,
     IUnitOfWork,
     RepositoryError,
     RepositoryErrorType,
 )
+from app.infrastructure.queries.chat_history_query import (
+    SQLAlchemyChatHistoryQuery,
+)
+from app.infrastructure.queries.raw_chat_log_query import (
+    SQLAlchemyRawChatLogQuery,
+)
 from app.infrastructure.repositories.generic_repository import GenericRepository
+from app.infrastructure.repositories.memory_consolidation_run_repository import (
+    SQLAlchemyMemoryConsolidationRunRepository,
+)
 
 
 class SQLAlchemyUnitOfWork(IUnitOfWork):
@@ -23,6 +33,11 @@ class SQLAlchemyUnitOfWork(IUnitOfWork):
         self._session_factory = session_factory
         self._session: AsyncSession | None = None
         self._repositories: dict[tuple[type, ...], Any] = {}
+        self._chat_history_query: SQLAlchemyChatHistoryQuery | None = None
+        self._raw_chat_log_query: SQLAlchemyRawChatLogQuery | None = None
+        self._memory_consolidation_run_repository: (
+            SQLAlchemyMemoryConsolidationRunRepository | None
+        ) = None
 
     @overload
     def GetRepository[T](self, entity_type: type[T]) -> IRepository[T]: ...
@@ -53,10 +68,49 @@ class SQLAlchemyUnitOfWork(IUnitOfWork):
         if cache_key in self._repositories:
             return self._repositories[cache_key]
 
-        # Create new repository
         repository = GenericRepository[T, K](self._session, entity_type, key_type)
         self._repositories[cache_key] = repository
         return repository
+
+    def GetChatHistoryQuery(self) -> SQLAlchemyChatHistoryQuery:
+        """Get the chat history query."""
+        if self._session is None:
+            raise RuntimeError(
+                "UnitOfWork session not initialized. Use 'async with' context."
+            )
+
+        if self._chat_history_query is None:
+            self._chat_history_query = SQLAlchemyChatHistoryQuery(self._session)
+
+        return self._chat_history_query
+
+    def GetRawChatLogQuery(self) -> SQLAlchemyRawChatLogQuery:
+        """Get the raw chat log query."""
+        if self._session is None:
+            raise RuntimeError(
+                "UnitOfWork session not initialized. Use 'async with' context."
+            )
+
+        if self._raw_chat_log_query is None:
+            self._raw_chat_log_query = SQLAlchemyRawChatLogQuery(self._session)
+
+        return self._raw_chat_log_query
+
+    def GetMemoryConsolidationRunRepository(
+        self,
+    ) -> IMemoryConsolidationRunRepository:
+        """Get the memory consolidation run repository."""
+        if self._session is None:
+            raise RuntimeError(
+                "UnitOfWork session not initialized. Use 'async with' context."
+            )
+
+        if self._memory_consolidation_run_repository is None:
+            self._memory_consolidation_run_repository = (
+                SQLAlchemyMemoryConsolidationRunRepository(self._session)
+            )
+
+        return self._memory_consolidation_run_repository
 
     async def commit(self) -> Result[None, RepositoryError]:
         """Commit the transaction."""
@@ -95,3 +149,6 @@ class SQLAlchemyUnitOfWork(IUnitOfWork):
             await self._session.__aexit__(exc_type, exc_val, exc_tb)
             self._session = None
             self._repositories.clear()
+            self._chat_history_query = None
+            self._raw_chat_log_query = None
+            self._memory_consolidation_run_repository = None

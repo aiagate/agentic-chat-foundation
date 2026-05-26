@@ -7,7 +7,7 @@ from typing import Any
 import redis.asyncio as redis
 from redis.asyncio.client import PubSub
 
-from app.domain.interfaces.event_bus import EventHandler, IEventBus
+from app.contracts.ports.event_bus import EventHandler, IEventBus
 
 logger = logging.getLogger(__name__)
 

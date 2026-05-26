@@ -6,7 +6,7 @@ from typing import Any
 
 import asyncpg
 
-from app.domain.interfaces.event_bus import EventHandler, IEventBus
+from app.contracts.ports.event_bus import EventHandler, IEventBus
 
 logger = logging.getLogger(__name__)
 

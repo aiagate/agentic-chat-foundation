@@ -4,7 +4,18 @@ import pytest
 from injector import Injector
 
 from app import container
+from app.contracts.ports.event_bus import IEventBus
+from app.contracts.ports.memory_consolidation import IMemoryConsolidationService
+from app.contracts.ports.memory_service import IMemoryService
+from app.contracts.ports.memory_store import IMemoryStore
 from app.domain.repositories import IUnitOfWork
+from app.infrastructure.messaging.in_memory_event_bus import InMemoryEventBus
+from app.infrastructure.messaging.redis_event_bus import RedisEventBus
+from app.infrastructure.services.memory_consolidation import (
+    DeterministicMemoryConsolidationService,
+)
+from app.infrastructure.services.memory_service import FilesystemMemoryService
+from app.infrastructure.services.memory_store import FilesystemMemoryStore
 from app.infrastructure.unit_of_work import SQLAlchemyUnitOfWork
 
 
@@ -15,5 +26,40 @@ async def test_di_container_bindings(test_db_engine: None) -> None:
 
     # Test that requesting the IUnitOfWork interface returns the correct implementation
     uow_instance = injector.get(IUnitOfWork)
+    memory_store = injector.get(IMemoryStore)
+    memory_consolidation_service = injector.get(IMemoryConsolidationService)
+    memory_service = injector.get(IMemoryService)
 
     assert isinstance(uow_instance, SQLAlchemyUnitOfWork)
+    assert isinstance(memory_store, FilesystemMemoryStore)
+    assert isinstance(
+        memory_consolidation_service,
+        DeterministicMemoryConsolidationService,
+    )
+    assert isinstance(memory_service, FilesystemMemoryService)
+
+
+@pytest.mark.anyio
+async def test_di_container_event_bus_defaults_to_memory(test_db_engine: None) -> None:
+    """Test that the container defaults to the in-memory event bus."""
+    import os
+
+    os.environ.pop("EVENT_BUS_PROVIDER", None)
+    os.environ.pop("REDIS_URL", None)
+    injector = Injector([container.configure])
+    event_bus = injector.get(IEventBus)
+
+    assert isinstance(event_bus, InMemoryEventBus)
+
+
+@pytest.mark.anyio
+async def test_di_container_event_bus_selects_redis(
+    test_db_engine: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that the container selects Redis when configured."""
+    monkeypatch.setenv("EVENT_BUS_PROVIDER", "redis")
+    injector = Injector([container.configure])
+    event_bus = injector.get(IEventBus)
+
+    assert isinstance(event_bus, RedisEventBus)

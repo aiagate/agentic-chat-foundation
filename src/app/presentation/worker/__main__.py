@@ -4,6 +4,7 @@ import os
 import signal
 import sys
 from collections.abc import Awaitable, Callable
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -11,8 +12,9 @@ from flow_med import Mediator
 from injector import Injector
 
 from app import container
-from app.domain.interfaces.event_bus import IEventBus
+from app.contracts.ports.event_bus import IEventBus
 from app.infrastructure.database import init_db
+from app.presentation.worker.registry import EventRegistry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,15 +37,81 @@ def load_environment() -> None:
 
 
 async def _run_periodic_task(
-    interval: int, func: Callable[[], Awaitable[None]]
+    interval: int,
+    func: Callable[[], Awaitable[None]],
+    *,
+    initial_delay_seconds: float = 0.0,
 ) -> None:
     """Run a function periodically with the given interval."""
+    if initial_delay_seconds > 0:
+        await asyncio.sleep(initial_delay_seconds)
     while True:
         try:
             await func()
         except Exception as e:
-            logger.error(f"Error in scheduled task {func.__name__}: {e}", exc_info=True)
+            logger.error(
+                "Error in scheduled task %s: %s",
+                func.__name__,
+                e,
+                exc_info=True,
+            )
         await asyncio.sleep(interval)
+
+
+def _initial_delay_until_run(
+    now: datetime,
+    run_time: time | None,
+) -> float:
+    """Return the delay until the next aligned run."""
+
+    if run_time is None:
+        return 0.0
+
+    scheduled_today = datetime.combine(now.date(), run_time, tzinfo=now.tzinfo)
+    if now <= scheduled_today:
+        return (scheduled_today - now).total_seconds()
+
+    scheduled_tomorrow = datetime.combine(
+        now.date() + timedelta(days=1),
+        run_time,
+        tzinfo=now.tzinfo,
+    )
+    return (scheduled_tomorrow - now).total_seconds()
+
+
+def _start_scheduled_tasks(
+    registry: EventRegistry,
+    *,
+    now: datetime | None = None,
+) -> list[asyncio.Task[None]]:
+    """Start all scheduled worker tasks registered by decorators."""
+
+    current_time = now or datetime.now().astimezone()
+    tasks: list[asyncio.Task[None]] = []
+    for interval, task_func in registry.scheduled_tasks:
+        schedule_run_time = getattr(task_func, "schedule_run_time", None)
+        if not isinstance(schedule_run_time, time):
+            schedule_run_time = None
+        # `current_time` is aligned to the host's local timezone here.
+        initial_delay_seconds = _initial_delay_until_run(
+            current_time,
+            schedule_run_time,
+        )
+        task = asyncio.create_task(
+            _run_periodic_task(
+                interval,
+                task_func,
+                initial_delay_seconds=initial_delay_seconds,
+            )
+        )
+        tasks.append(task)
+        logger.info(
+            "Started scheduled task: %s (interval: %ss, initial_delay: %ss)",
+            task_func.__name__,
+            interval,
+            initial_delay_seconds,
+        )
+    return tasks
 
 
 async def main() -> None:
@@ -69,17 +137,11 @@ async def main() -> None:
     import app.presentation.worker.handlers as _  # type: ignore[reportUnusedImport] # noqa: F401
     from app.presentation.worker.registry import registry
 
-    # イベントハンドラーの登録
     for topic, handler in registry.registered_handlers:
         await event_bus.subscribe(topic, handler)
-        logger.info(f"Registered event handler for topic: {topic}")
+        logger.info("Registered event handler for topic: %s", topic)
 
-    # 定期実行タスクの起動
-    for interval, task_func in registry.scheduled_tasks:
-        asyncio.create_task(_run_periodic_task(interval, task_func))
-        logger.info(
-            f"Started scheduled task: {task_func.__name__} (interval: {interval}s)"
-        )
+    _start_scheduled_tasks(registry)
 
     logger.info("Worker process initialized and listening for events.")
 
