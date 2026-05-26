@@ -1,19 +1,14 @@
 """Tests for the memory sleep use case."""
 
-from datetime import UTC, datetime
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
-from flow_res import Ok, is_err
+from flow_res import is_err
 
 from app.contracts.ports.memory_consolidation import IMemoryConsolidationService
 from app.contracts.ports.memory_store import IMemoryStore
-from app.domain.repositories import (
-    IUnitOfWork,
-    MemoryConsolidationRunClaim,
-    MemoryConsolidationRunRecord,
-)
+from app.domain.repositories import IUnitOfWork
 from app.usecases.memory.run_memory_sleep import (
     RunMemorySleepCommand,
     RunMemorySleepHandler,
@@ -27,34 +22,11 @@ async def test_run_memory_sleep_handler_invokes_consolidation_service(
     """Test that the sleep command delegates to the consolidation port."""
 
     memory_store = mocker.Mock(spec=IMemoryStore)
-    fixed_now = datetime(2026, 5, 19, 12, 0, tzinfo=UTC)
-    datetime_module = mocker.patch("app.usecases.memory.run_memory_sleep.datetime")
-    datetime_module.now.return_value = fixed_now
     uow = mocker.Mock(spec=IUnitOfWork)
     uow.__aenter__ = AsyncMock(return_value=uow)
     uow.__aexit__ = AsyncMock(return_value=None)
-    run_repository = mocker.Mock()
-    run_repository.claim_run = AsyncMock(
-        return_value=Ok(
-            MemoryConsolidationRunClaim(
-                record=MemoryConsolidationRunRecord(
-                    id="01J0RUN000000000000000001",
-                    run_key="memory-sleep:2026-05-19",
-                    job_name="memory_sleep",
-                    target_date=None,
-                    status="processing",
-                    started_at=None,
-                    finished_at=None,
-                    result_json={},
-                ),
-                acquired=True,
-            )
-        )
-    )
-    uow.GetMemoryConsolidationRunRepository = mocker.Mock(return_value=run_repository)
     raw_chat_log_query = mocker.Mock()
     uow.GetRawChatLogQuery = mocker.Mock(return_value=raw_chat_log_query)
-    uow.commit = AsyncMock(return_value=Ok(None))
     consolidation_service = mocker.Mock(spec=IMemoryConsolidationService)
     consolidation_service.run_memory_sleep = AsyncMock(return_value=2)
 
@@ -64,18 +36,13 @@ async def test_run_memory_sleep_handler_invokes_consolidation_service(
 
     assert not is_err(result)
     assert result.value.consolidated_count == 2
-    assert uow.GetMemoryConsolidationRunRepository.call_count == 2
     assert uow.GetRawChatLogQuery.call_count == 1
     consolidation_stub = cast(Any, consolidation_service.run_memory_sleep)
     consolidation_stub.assert_awaited_once()
     await_args = consolidation_stub.await_args
     assert await_args is not None
     assert await_args.args == (memory_store,)
-    assert await_args.kwargs["run_key"] == "memory-sleep:2026-05-19"
-    assert await_args.kwargs["started_at"] == fixed_now
     assert await_args.kwargs["raw_chat_log_query"] is raw_chat_log_query
-    assert await_args.kwargs["run_repository"] is run_repository
-    assert uow.commit.await_count == 2
 
 
 @pytest.mark.anyio
@@ -85,33 +52,10 @@ async def test_run_memory_sleep_handler_reports_failures(
     """Test that consolidation failures are surfaced as use case errors."""
 
     memory_store = mocker.Mock(spec=IMemoryStore)
-    fixed_now = datetime(2026, 5, 19, 12, 0, tzinfo=UTC)
-    datetime_module = mocker.patch("app.usecases.memory.run_memory_sleep.datetime")
-    datetime_module.now.return_value = fixed_now
     uow = mocker.Mock(spec=IUnitOfWork)
     uow.__aenter__ = AsyncMock(return_value=uow)
     uow.__aexit__ = AsyncMock(return_value=None)
-    run_repository = mocker.Mock()
-    run_repository.claim_run = AsyncMock(
-        return_value=Ok(
-            MemoryConsolidationRunClaim(
-                record=MemoryConsolidationRunRecord(
-                    id="01J0RUN000000000000000002",
-                    run_key="memory-sleep:2026-05-19",
-                    job_name="memory_sleep",
-                    target_date=None,
-                    status="processing",
-                    started_at=None,
-                    finished_at=None,
-                    result_json={},
-                ),
-                acquired=True,
-            )
-        )
-    )
     uow.GetRawChatLogQuery = mocker.Mock(return_value=mocker.Mock())
-    uow.GetMemoryConsolidationRunRepository = mocker.Mock(return_value=run_repository)
-    uow.commit = AsyncMock(return_value=Ok(None))
     consolidation_service = mocker.Mock(spec=IMemoryConsolidationService)
     consolidation_service.run_memory_sleep = AsyncMock(side_effect=RuntimeError("boom"))
 
@@ -120,45 +64,22 @@ async def test_run_memory_sleep_handler_reports_failures(
     result = await handler.handle(RunMemorySleepCommand())
 
     assert is_err(result)
-    assert uow.GetMemoryConsolidationRunRepository.call_count == 2
     assert uow.GetRawChatLogQuery.call_count == 1
-    assert uow.commit.await_count == 2
 
 
 @pytest.mark.anyio
-async def test_run_memory_sleep_handler_skips_duplicate_run(
+async def test_run_memory_sleep_handler_does_not_use_run_repository(
     mocker: Any,
 ) -> None:
-    """Test that an already claimed run does not execute twice."""
+    """Test that the handler no longer depends on a run repository."""
 
     memory_store = mocker.Mock(spec=IMemoryStore)
-    fixed_now = datetime(2026, 5, 19, 12, 0, tzinfo=UTC)
-    datetime_module = mocker.patch("app.usecases.memory.run_memory_sleep.datetime")
-    datetime_module.now.return_value = fixed_now
     uow = mocker.Mock(spec=IUnitOfWork)
     uow.__aenter__ = AsyncMock(return_value=uow)
     uow.__aexit__ = AsyncMock(return_value=None)
-    run_repository = mocker.Mock()
-    run_repository.claim_run = AsyncMock(
-        return_value=Ok(
-            MemoryConsolidationRunClaim(
-                record=MemoryConsolidationRunRecord(
-                    id="01J0RUN000000000000000003",
-                    run_key="memory-sleep:2026-05-19",
-                    job_name="memory_sleep",
-                    target_date=None,
-                    status="complete",
-                    started_at=None,
-                    finished_at=None,
-                    result_json={},
-                ),
-                acquired=False,
-            )
-        )
-    )
-    uow.GetMemoryConsolidationRunRepository = mocker.Mock(return_value=run_repository)
-    uow.commit = AsyncMock(return_value=Ok(None))
+    uow.GetRawChatLogQuery = mocker.Mock(return_value=mocker.Mock())
     consolidation_service = mocker.Mock(spec=IMemoryConsolidationService)
+    consolidation_service.run_memory_sleep = AsyncMock(return_value=0)
 
     handler = RunMemorySleepHandler(memory_store, uow, consolidation_service)
 
@@ -166,5 +87,4 @@ async def test_run_memory_sleep_handler_skips_duplicate_run(
 
     assert not is_err(result)
     assert result.value.consolidated_count == 0
-    consolidation_service.run_memory_sleep.assert_not_called()
-    uow.commit.assert_not_awaited()
+    consolidation_service.run_memory_sleep.assert_awaited_once()

@@ -211,10 +211,6 @@ async def test_run_memory_sleep_consolidates_sql_raw_logs_only_for_past_days(
 
     raw_chat_log_query = mocker.Mock(spec=IRawChatLogQuery)
     raw_chat_log_query.list_raw_chat_log_user_ids = AsyncMock(return_value=Ok(["u1"]))
-    run_repository = mocker.Mock()
-    run_repository.set_run_result = AsyncMock(return_value=Ok(None))
-    run_key = "memory-sleep:2026-05-19"
-    started_at = datetime(2026, 5, 19, 0, 0, tzinfo=UTC)
 
     async def _get_raw_chat_logs(
         user_id: str,
@@ -242,10 +238,7 @@ async def test_run_memory_sleep_consolidates_sql_raw_logs_only_for_past_days(
     consolidated_count = (
         await DeterministicMemoryConsolidationService().run_memory_sleep(
             store,
-            run_key=run_key,
-            started_at=started_at,
             raw_chat_log_query=raw_chat_log_query,
-            run_repository=run_repository,
             reference_time=datetime(2026, 5, 19, tzinfo=UTC),
         )
     )
@@ -273,11 +266,6 @@ async def test_run_memory_sleep_consolidates_sql_raw_logs_only_for_past_days(
     assert entity.front_matter["last_observed_at"] == "2026-05-18T11:00:00+00:00"
     assert raw_chat_log_query.list_raw_chat_log_user_ids.await_count == 1
     assert raw_chat_log_query.get_raw_chat_logs.await_count == 2
-    run_repository.set_run_result.assert_awaited_once()
-    finalize_args = run_repository.set_run_result.await_args
-    assert finalize_args is not None
-    assert finalize_args.kwargs["run_key"] == run_key
-    assert finalize_args.kwargs["status"] == "complete"
 
 
 @pytest.mark.anyio
@@ -291,25 +279,16 @@ async def test_run_memory_sleep_marks_skipped_when_no_targets(
     raw_chat_log_query = mocker.Mock(spec=IRawChatLogQuery)
     raw_chat_log_query.list_raw_chat_log_user_ids = AsyncMock(return_value=Ok([]))
     raw_chat_log_query.get_raw_chat_logs = AsyncMock()
-    run_repository = mocker.Mock()
-    run_repository.set_run_result = AsyncMock(return_value=Ok(None))
 
     consolidated_count = (
         await DeterministicMemoryConsolidationService().run_memory_sleep(
             store,
-            run_key="memory-sleep:2026-05-19",
-            started_at=datetime(2026, 5, 19, 0, 0, tzinfo=UTC),
             raw_chat_log_query=raw_chat_log_query,
-            run_repository=run_repository,
             reference_time=datetime(2026, 5, 19, tzinfo=UTC),
         )
     )
 
     assert consolidated_count == 0
-    run_repository.set_run_result.assert_awaited_once()
-    finalize_args = run_repository.set_run_result.await_args
-    assert finalize_args is not None
-    assert finalize_args.kwargs["status"] == "skipped"
 
 
 @pytest.mark.anyio
@@ -325,23 +304,13 @@ async def test_run_memory_sleep_marks_failed_when_query_errors(
         side_effect=RuntimeError("boom")
     )
     raw_chat_log_query.get_raw_chat_logs = AsyncMock()
-    run_repository = mocker.Mock()
-    run_repository.set_run_result = AsyncMock(return_value=Ok(None))
 
     with pytest.raises(RuntimeError, match="boom"):
         await DeterministicMemoryConsolidationService().run_memory_sleep(
             store,
-            run_key="memory-sleep:2026-05-19",
-            started_at=datetime(2026, 5, 19, 0, 0, tzinfo=UTC),
             raw_chat_log_query=raw_chat_log_query,
-            run_repository=run_repository,
             reference_time=datetime(2026, 5, 19, tzinfo=UTC),
         )
-
-    run_repository.set_run_result.assert_awaited_once()
-    finalize_args = run_repository.set_run_result.await_args
-    assert finalize_args is not None
-    assert finalize_args.kwargs["status"] == "failed"
 
 
 def _write_raw(

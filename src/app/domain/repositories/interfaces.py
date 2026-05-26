@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import date, datetime
 from enum import Enum, auto
-from typing import Any, Literal, overload
+from typing import Any, overload
 
 from flow_res import Result
 
@@ -29,73 +28,6 @@ class RepositoryError(Exception):
 
     type: RepositoryErrorType
     message: str
-
-
-MemoryConsolidationRunStatus = Literal[
-    "pending",
-    "processing",
-    "complete",
-    "failed",
-    "skipped",
-]
-
-
-@dataclass(frozen=True, slots=True)
-class MemoryConsolidationRunRecord:
-    """Persisted state for one memory consolidation run."""
-
-    id: str | None
-    run_key: str
-    job_name: str
-    target_date: date | None
-    status: MemoryConsolidationRunStatus
-    started_at: datetime | None
-    finished_at: datetime | None
-    result_json: dict[str, Any]
-
-
-@dataclass(frozen=True, slots=True)
-class MemoryConsolidationRunClaim:
-    """Result of claiming a memory consolidation run."""
-
-    record: MemoryConsolidationRunRecord
-    acquired: bool
-
-
-class IMemoryConsolidationRunRepository(ABC):
-    """Repository interface for memory consolidation run records."""
-
-    @abstractmethod
-    async def get_by_run_key(
-        self,
-        run_key: str,
-    ) -> Result[MemoryConsolidationRunRecord | None, RepositoryError]:
-        """Get a run record by its unique run key."""
-        pass
-
-    @abstractmethod
-    async def claim_run(
-        self,
-        *,
-        run_key: str,
-        job_name: str,
-        target_date: date | None,
-        started_at: datetime,
-    ) -> Result[MemoryConsolidationRunClaim, RepositoryError]:
-        """Claim a pending run and transition it to processing."""
-        pass
-
-    @abstractmethod
-    async def set_run_result(
-        self,
-        *,
-        run_key: str,
-        status: MemoryConsolidationRunStatus,
-        finished_at: datetime,
-        result_json: dict[str, Any],
-    ) -> Result[MemoryConsolidationRunRecord, RepositoryError]:
-        """Persist a terminal run result."""
-        pass
 
 
 class IRepository[T](ABC):
@@ -214,13 +146,6 @@ class IUnitOfWork(ABC):
     @abstractmethod
     def GetRawChatLogQuery(self) -> IRawChatLogQuery:
         """Get the raw chat log query."""
-        pass
-
-    @abstractmethod
-    def GetMemoryConsolidationRunRepository(
-        self,
-    ) -> IMemoryConsolidationRunRepository:
-        """Get the memory consolidation run repository."""
         pass
 
     @abstractmethod
