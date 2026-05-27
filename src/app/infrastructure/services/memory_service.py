@@ -21,6 +21,7 @@ from app.infrastructure.services.memory_index import (
     FilesystemMemoryIndex,
     MemoryIndexDocument,
     MemorySearchFilters,
+    MemorySearchResult,
 )
 from app.infrastructure.services.memory_markdown import (
     MemoryMarkdownDocument,
@@ -69,7 +70,13 @@ class FilesystemMemoryService(IMemoryService):
         self,
         root: Path | None = None,
         store: FilesystemMemoryStore | None = None,
-        index: IMemoryIndex | None = None,
+        index: IMemoryIndex[
+            StoredMemoryDocument,
+            MemoryIndexDocument,
+            MemorySearchResult,
+            MemorySearchFilters,
+        ]
+        | None = None,
     ) -> None:
         self._store = store or FilesystemMemoryStore(root or default_memory_root())
         self._index = index or FilesystemMemoryIndex(root=self._store.root)

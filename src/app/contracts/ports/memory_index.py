@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TypeVar
 
 from flow_res import Result
 
@@ -32,16 +32,22 @@ class MemoryIndexRecord:
     tags_json: str
 
 
-class IMemoryIndex(ABC):
+TStored = TypeVar("TStored")
+TDocument = TypeVar("TDocument")
+THit = TypeVar("THit")
+TFilters = TypeVar("TFilters")
+
+
+class IMemoryIndex[TStored, TDocument, THit, TFilters](ABC):
     """Interface for deterministic memory indexing and search."""
 
     @abstractmethod
     def index_document_from_stored(
         self,
-        stored: Any,
+        stored: TStored,
         *,
         root: Path,
-    ) -> Any:
+    ) -> TDocument:
         """Build an indexable document from a stored memory document."""
         ...
 
@@ -49,11 +55,11 @@ class IMemoryIndex(ABC):
     def search_memory_index(
         self,
         query: str,
-        documents: Sequence[Any],
-        filters: Any,
+        documents: Sequence[TDocument],
+        filters: TFilters,
         *,
         limit: int = 20,
-    ) -> list[Any]:
+    ) -> list[THit]:
         """Search documents and return ranked hits."""
         ...
 

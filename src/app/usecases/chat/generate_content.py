@@ -2,7 +2,7 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Protocol, cast, runtime_checkable
 from uuid import uuid4
 
 from flow_med import Mediator, Request, RequestHandler
@@ -28,6 +28,15 @@ from app.usecases.memory.retrieve_memory_context import RetrieveMemoryContextQue
 from app.usecases.result import ErrorType, UseCaseError
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class _SessionProtocol(Protocol):
+    """Subset of async session behavior needed by this use case."""
+
+    def add(self, instance: object) -> None: ...
+
+    async def flush(self) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -224,8 +233,8 @@ async def _save_generated_chat(
     user_id: str,
 ) -> Result[DiscordChat | LineChat, UseCaseError]:
     """Persist a generated assistant chat as raw SQL."""
-    session = cast(Any, getattr(uow, "_session", None))
-    if session is None:
+    session = getattr(uow, "_session", None)
+    if not isinstance(session, _SessionProtocol):
         return Err(
             UseCaseError(
                 type=ErrorType.UNEXPECTED,

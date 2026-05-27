@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Mapping
 
 from linebot.v3.messaging import AsyncMessagingApi, PushMessageRequest, TextMessage
 
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 async def send_line_reply(
     line_bot_api: AsyncMessagingApi,
-    payload: dict[str, Any],
+    payload: Mapping[str, object],
 ) -> None:
     """Send generated replies to a LINE destination."""
     contents = _normalize_contents(payload)
@@ -40,7 +40,7 @@ async def send_line_reply(
         )
 
 
-def _normalize_contents(payload: dict[str, Any]) -> list[str]:
+def _normalize_contents(payload: Mapping[str, object]) -> list[str]:
     contents = payload.get("contents")
     if isinstance(contents, list):
         return [str(content) for content in contents if content]

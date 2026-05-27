@@ -125,7 +125,14 @@ class MemoryIndexRow:
 
 
 @dataclass(frozen=True, slots=True)
-class FilesystemMemoryIndex(IMemoryIndex):
+class FilesystemMemoryIndex(
+    IMemoryIndex[
+        StoredMemoryDocument,
+        MemoryIndexDocument,
+        MemorySearchResult,
+        MemorySearchFilters,
+    ]
+):
     """Deterministic memory index backed by SQLite metadata rows."""
 
     root: Path | None = None

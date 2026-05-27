@@ -113,7 +113,12 @@ class SQLAlchemyUnitOfWork(IUnitOfWork):
         await self._session.__aenter__()
         return self
 
-    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object | None,
+    ) -> None:
         """Exit async context manager with auto-rollback."""
         if self._session is None:
             return

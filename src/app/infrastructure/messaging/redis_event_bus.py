@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any
+from collections.abc import Mapping
 
 import redis.asyncio as redis
 from redis.asyncio.client import PubSub
@@ -54,7 +54,7 @@ class RedisEventBus(IEventBus):
         if is_new_topic and self._running and self._pubsub:
             asyncio.create_task(self._subscribe_topic(topic))
 
-    async def publish(self, topic: str, payload: dict[str, Any]) -> None:
+    async def publish(self, topic: str, payload: Mapping[str, object]) -> None:
         if not self._redis:
             msg = f"Redis EventBus not started (redis_url={self.redis_url}), cannot publish event: {topic}"
             logger.warning(msg)
@@ -99,19 +99,24 @@ class RedisEventBus(IEventBus):
             if message["type"] in ("message", "pmessage"):
                 await self._process_message(message)
 
-    async def _process_message(self, message: dict[str, Any]) -> None:
+    async def _process_message(self, message: dict[str, object]) -> None:
         try:
             data = message["data"]
+            if not isinstance(data, (str, bytes, bytearray)):
+                logger.error("Unexpected Redis message payload type: %r", type(data))
+                return
             parsed_data = json.loads(data)
             topic_in_msg = parsed_data.get("topic")
             payload = parsed_data.get("payload", {})
+            if not isinstance(payload, dict):
+                payload = {}
 
-            if topic_in_msg:
+            if isinstance(topic_in_msg, str):
                 await self._dispatch(topic_in_msg, payload)
 
             if message["type"] == "pmessage":
                 matched_pattern = message["pattern"]
-                if matched_pattern and matched_pattern != topic_in_msg:
+                if isinstance(matched_pattern, str) and matched_pattern != topic_in_msg:
                     await self._dispatch(matched_pattern, payload)
 
         except json.JSONDecodeError:
@@ -132,7 +137,11 @@ class RedisEventBus(IEventBus):
             except asyncio.CancelledError:
                 pass
 
-    async def _dispatch(self, handler_key: str, payload: dict[str, Any]) -> None:
+    async def _dispatch(
+        self,
+        handler_key: str,
+        payload: Mapping[str, object],
+    ) -> None:
         if handlers := self._handlers.get(handler_key):
             # 複数ハンドラがある場合は並行実行する
             await asyncio.gather(

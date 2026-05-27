@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import NotRequired, Required, TypedDict
 
 from app.domain.value_objects.chat_type import ChatType
 
@@ -14,6 +14,69 @@ CHAT_SEARCH_REQUESTED_TOPIC = "chat.search.requested"
 CHAT_SEARCH_COMPLETED_TOPIC = "chat.search.completed"
 
 
+class DiscordChatSavedPayload(TypedDict):
+    """Payload for a saved Discord chat event."""
+
+    chat_id: str
+    user_id: str
+    guild_id: str
+    channel_id: str
+    content: str
+
+
+class LineChatSavedPayload(TypedDict):
+    """Payload for a saved LINE chat event."""
+
+    chat_id: str
+    user_id: str
+    content: str
+
+
+class ReplyReadyPayload(TypedDict):
+    """Payload for a generated reply event."""
+
+    chat_type: Required[str]
+    content: Required[str]
+    contents: Required[list[str]]
+    guild_id: NotRequired[str]
+    channel_id: NotRequired[str]
+    user_id: NotRequired[str]
+
+
+class ChatSearchRequestedPayload(TypedDict, total=False):
+    """Payload for a requested search event."""
+
+    search_session_id: str
+    source_request_id: str
+    chat_id: str
+    user_id: str
+    chat_type: str
+    prompt: str
+    query: str
+    tool_name: str
+    user_message: str
+    max_results: int
+    guild_id: str
+    channel_id: str
+
+
+class ChatSearchCompletedPayload(TypedDict, total=False):
+    """Payload for a completed search event."""
+
+    search_session_id: str
+    source_request_id: str
+    chat_id: str
+    chat_type: str
+    user_id: str | None
+    prompt: str
+    status: str
+    result_count: int
+    tool_name: str
+    error: str
+    guild_id: str
+    channel_id: str
+
+
 def build_discord_chat_saved_payload(
     *,
     chat_id: str,
@@ -21,7 +84,7 @@ def build_discord_chat_saved_payload(
     guild_id: str,
     channel_id: str,
     content: str,
-) -> dict[str, Any]:
+) -> DiscordChatSavedPayload:
     """Build a payload for a saved Discord chat event."""
     return {
         "chat_id": chat_id,
@@ -37,7 +100,7 @@ def build_line_chat_saved_payload(
     chat_id: str,
     user_id: str,
     content: str,
-) -> dict[str, Any]:
+) -> LineChatSavedPayload:
     """Build a payload for a saved LINE chat event."""
     return {
         "chat_id": chat_id,
@@ -53,14 +116,14 @@ def build_reply_ready_payload(
     guild_id: str | None = None,
     channel_id: str | None = None,
     user_id: str | None = None,
-) -> dict[str, Any]:
+) -> ReplyReadyPayload:
     """Build a payload for a generated reply event."""
     content = "\n".join(content for content in contents if content)
-    payload: dict[str, Any] = {
+    payload: ReplyReadyPayload = {
         "chat_type": chat_type.to_primitive(),
         "content": content,
+        "contents": contents,
     }
-    payload["contents"] = contents
     if guild_id is not None:
         payload["guild_id"] = guild_id
     if channel_id is not None:
@@ -84,9 +147,9 @@ def build_chat_search_requested_payload(
     max_results: int | None = None,
     guild_id: str | None = None,
     channel_id: str | None = None,
-) -> dict[str, Any]:
+) -> ChatSearchRequestedPayload:
     """Build a payload for a requested search event."""
-    payload: dict[str, Any] = {
+    payload: ChatSearchRequestedPayload = {
         "search_session_id": search_session_id,
         "source_request_id": source_request_id,
         "chat_id": chat_id,
@@ -120,9 +183,9 @@ def build_chat_search_completed_payload(
     error: str | None = None,
     guild_id: str | None = None,
     channel_id: str | None = None,
-) -> dict[str, Any]:
+) -> ChatSearchCompletedPayload:
     """Build a payload for a completed search event."""
-    payload: dict[str, Any] = {
+    payload: ChatSearchCompletedPayload = {
         "search_session_id": search_session_id,
         "source_request_id": source_request_id,
         "chat_id": chat_id,
