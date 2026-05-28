@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any
+from collections.abc import Mapping
 
 import asyncpg
 
@@ -38,7 +38,7 @@ class PostgresEventBus(IEventBus):
         self._handlers[topic].append(handler)
         logger.debug(f"Subscribed to topic: {topic}")
 
-    async def publish(self, topic: str, payload: dict[str, Any]) -> None:
+    async def publish(self, topic: str, payload: Mapping[str, object]) -> None:
         if not self._pool:
             msg = "EventBus not started, cannot publish events."
             logger.warning(msg)
@@ -77,7 +77,7 @@ class PostgresEventBus(IEventBus):
             self._listener_conn = await asyncpg.connect(self.dsn)
 
             async def _listener(
-                connection: Any, pid: int, channel: str, payload: str
+                connection: object, pid: int, channel: str, payload: str
             ) -> None:
                 asyncio.create_task(self._process_notification(payload))
 

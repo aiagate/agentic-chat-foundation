@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any, cast
 
 import discord
@@ -12,10 +13,14 @@ logger = logging.getLogger(__name__)
 
 async def send_discord_reply(
     bot: Any,
-    payload: dict[str, Any],
+    payload: Mapping[str, object],
 ) -> None:
     """Send a generated reply to a Discord channel."""
     channel_id = payload.get("channel_id")
+    if not isinstance(channel_id, str):
+        logger.warning("Discord reply payload missing channel_id: %s", payload)
+        return
+
     contents = payload.get("contents")
     content = payload.get("content")
     if not channel_id or (not content and not contents):

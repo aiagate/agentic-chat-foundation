@@ -2,7 +2,7 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Protocol, cast, runtime_checkable
 
 from flow_med import Request, RequestHandler
 from flow_res import Err, Ok, Result, is_err
@@ -22,6 +22,15 @@ from app.infrastructure.orm_models.chat_orm import ChatORM
 from app.usecases.result import ErrorType, UseCaseError
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class _SessionProtocol(Protocol):
+    """Subset of async session behavior needed by this use case."""
+
+    def add(self, instance: object) -> None: ...
+
+    async def flush(self) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -101,8 +110,8 @@ async def _save_raw_line_chat(
     content: str,
 ) -> Result[LineChat, UseCaseError]:
     """Persist a raw LINE chat row with user scope and role."""
-    session = cast(Any, getattr(uow, "_session", None))
-    if session is None:
+    session = getattr(uow, "_session", None)
+    if not isinstance(session, _SessionProtocol):
         return Err(
             UseCaseError(
                 type=ErrorType.UNEXPECTED,

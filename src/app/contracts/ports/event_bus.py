@@ -1,17 +1,16 @@
 """Event bus port."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
-from typing import Any
+from collections.abc import Awaitable, Callable, Mapping
 
-EventHandler = Callable[[dict[str, Any]], Awaitable[None]]
+EventHandler = Callable[[Mapping[str, object]], Awaitable[None]]
 
 
 class IEventBus(ABC):
     """Abstract event bus used by application layers."""
 
     @abstractmethod
-    async def publish(self, topic: str, payload: dict[str, Any]) -> None:
+    async def publish(self, topic: str, payload: Mapping[str, object]) -> None:
         """Publish an event to a topic."""
         pass
 

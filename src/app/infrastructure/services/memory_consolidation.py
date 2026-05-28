@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from pathlib import Path
-from typing import Any, cast
 
 from flow_res import Result, is_err
 
@@ -248,11 +247,11 @@ def _raw_chat_log_sort_key(raw_log: RawChatLog) -> tuple[str, str]:
     return occurred_key, raw_log.id
 
 
-def _require_repository_result(result: Result[Any, Any]) -> Any:
+def _require_repository_result[T, E: Exception](result: Result[T, E]) -> T:
     if is_err(result):
         error = getattr(result, "error", None)
         raise RuntimeError(str(error) if error is not None else "Query failed")
-    return cast(Any, result).value
+    return result.value
 
 
 def _daily_body_from_raw_chat_logs(

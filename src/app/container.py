@@ -29,7 +29,15 @@ from app.infrastructure.services import (
     MockAIService,
     OllamaWebSearchService,
 )
-from app.infrastructure.services.memory_store import FilesystemMemoryStore
+from app.infrastructure.services.memory_index import (
+    MemoryIndexDocument,
+    MemorySearchFilters,
+    MemorySearchResult,
+)
+from app.infrastructure.services.memory_store import (
+    FilesystemMemoryStore,
+    StoredMemoryDocument,
+)
 from app.infrastructure.unit_of_work import SQLAlchemyUnitOfWork
 
 
@@ -126,7 +134,14 @@ class MemoryModule(injector.Module):
 
     @injector.provider
     @injector.singleton
-    def provide_memory_index(self) -> IMemoryIndex:
+    def provide_memory_index(
+        self,
+    ) -> IMemoryIndex[
+        StoredMemoryDocument,
+        MemoryIndexDocument,
+        MemorySearchResult,
+        MemorySearchFilters,
+    ]:
         """Provide the persistent filesystem-backed memory index."""
         return FilesystemMemoryIndex()
 

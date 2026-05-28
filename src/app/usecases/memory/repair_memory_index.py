@@ -9,6 +9,12 @@ from flow_res import Err, Ok, Result, is_err
 from injector import inject
 
 from app.contracts.ports.memory_index import IMemoryIndex
+from app.infrastructure.services.memory_index import (
+    MemoryIndexDocument,
+    MemorySearchFilters,
+    MemorySearchResult,
+)
+from app.infrastructure.services.memory_store import StoredMemoryDocument
 from app.usecases.result import ErrorType, UseCaseError
 
 
@@ -35,7 +41,15 @@ class RepairMemoryIndexHandler(
     """Handle RepairMemoryIndexCommand."""
 
     @inject
-    def __init__(self, memory_index: IMemoryIndex) -> None:
+    def __init__(
+        self,
+        memory_index: IMemoryIndex[
+            StoredMemoryDocument,
+            MemoryIndexDocument,
+            MemorySearchResult,
+            MemorySearchFilters,
+        ],
+    ) -> None:
         self._memory_index = memory_index
 
     async def handle(
