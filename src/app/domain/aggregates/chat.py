@@ -11,18 +11,10 @@ from app.domain.value_objects import ChatId, ChatType, MessageContent, Version
 
 @dataclass(kw_only=True, slots=True)
 class Chat(ABC):
-    """Base Chat aggregate root using Table Per Hierarchy inheritance.
+    """全チャット集約の基底クラス。
 
-    This is an abstract base class for all chat types (Discord, LINE, etc).
-    Each aggregate instance represents one received or sent message. Concrete
-    implementations (DiscordChat, LineChat) provide platform-specific context.
-
-    Implements IAuditable: timestamps are infrastructure concerns but exposed
-    as read-only fields for auditing and display purposes. The repository layer
-    automatically manages created_at and updated_at.
-
-    Implements IVersionable: optimistic locking via version field, which is
-    automatically managed by the repository layer during updates.
+    Discord や LINE など、各チャット種別の共通属性をまとめる。
+    1 件の送受信メッセージを 1 集約として表現する。
     """
 
     _id: ChatId = field(
@@ -64,11 +56,7 @@ class Chat(ABC):
 
 @dataclass(kw_only=True, slots=True)
 class DiscordChat(Chat):
-    """Discord chat aggregate.
-
-    Represents one Discord message where the bot receives or sends content.
-    Stores Discord-specific identifiers like guild_id and channel_id.
-    """
+    """Discord のチャット集約。"""
 
     _discord_guild_id: str  # Discord guild (server) ID
     _discord_channel_id: str  # Discord channel ID
@@ -80,15 +68,15 @@ class DiscordChat(Chat):
         channel_id: str,
         message_content: MessageContent,
     ) -> DiscordChat:
-        """Factory method to create a new Discord message chat aggregate.
+        """Discord メッセージ集約を生成する。
 
         Args:
-            guild_id: Discord guild (server) ID
-            channel_id: Discord channel ID
-            message_content: Content payload for this message
+            guild_id: Discord のサーバー ID。
+            channel_id: Discord のチャンネル ID。
+            message_content: メッセージ内容。
 
         Returns:
-            New DiscordChat instance
+            生成した DiscordChat。
         """
         return cls(
             _type=ChatType.DISCORD,
@@ -108,11 +96,7 @@ class DiscordChat(Chat):
 
 @dataclass(kw_only=True, slots=True)
 class LineChat(Chat):
-    """LINE chat aggregate.
-
-    Represents one LINE message where the bot receives or sends content.
-    Stores LINE-specific identifiers.
-    """
+    """LINE のチャット集約。"""
 
     _line_user_id: str  # LINE user ID (for 1-on-1 chats)
     _line_group_id: str | None = None  # LINE group ID (for group chats)
@@ -124,14 +108,14 @@ class LineChat(Chat):
         line_user_id: str,
         message_content: MessageContent,
     ) -> LineChat:
-        """Factory method to create a new LINE 1-on-1 message chat aggregate.
+        """LINE の 1対1 チャット集約を生成する。
 
         Args:
-            line_user_id: LINE user ID
-            message_content: Content payload for this message
+            line_user_id: LINE のユーザー ID。
+            message_content: メッセージ内容。
 
         Returns:
-            New LineChat instance for user chat
+            生成した LineChat。
         """
         return cls(
             _type=ChatType.LINE,
@@ -148,15 +132,15 @@ class LineChat(Chat):
         line_group_id: str,
         message_content: MessageContent,
     ) -> LineChat:
-        """Factory method to create a new LINE group message chat aggregate.
+        """LINE のグループチャット集約を生成する。
 
         Args:
-            line_user_id: LINE user ID
-            line_group_id: LINE group ID
-            message_content: Content payload for this message
+            line_user_id: LINE のユーザー ID。
+            line_group_id: LINE のグループ ID。
+            message_content: メッセージ内容。
 
         Returns:
-            New LineChat instance for group chat
+            生成した LineChat。
         """
         return cls(
             _type=ChatType.LINE,
@@ -173,15 +157,15 @@ class LineChat(Chat):
         line_room_id: str,
         message_content: MessageContent,
     ) -> LineChat:
-        """Factory method to create a new LINE room message chat aggregate.
+        """LINE のルームチャット集約を生成する。
 
         Args:
-            line_user_id: LINE user ID
-            line_room_id: LINE room ID
-            message_content: Content payload for this message
+            line_user_id: LINE のユーザー ID。
+            line_room_id: LINE のルーム ID。
+            message_content: メッセージ内容。
 
         Returns:
-            New LineChat instance for room chat
+            生成した LineChat。
         """
         return cls(
             _type=ChatType.LINE,
@@ -204,13 +188,13 @@ class LineChat(Chat):
         return self._line_room_id
 
     def is_user_chat(self) -> bool:
-        """Check if this is a 1-on-1 user chat."""
+        """1対1 チャットかどうかを返す。"""
         return self._line_group_id is None and self._line_room_id is None
 
     def is_group_chat(self) -> bool:
-        """Check if this is a group chat."""
+        """グループチャットかどうかを返す。"""
         return self._line_group_id is not None
 
     def is_room_chat(self) -> bool:
-        """Check if this is a room chat."""
+        """ルームチャットかどうかを返す。"""
         return self._line_room_id is not None

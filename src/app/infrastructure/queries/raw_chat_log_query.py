@@ -9,7 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.queries.raw_chat_log_query import IRawChatLogQuery, RawChatLog
+from app.domain.queries.raw_chat_log_query import (
+    IRawChatLogQuery,
+    MemorySleepSourceItem,
+)
 from app.domain.repositories.interfaces import RepositoryError, RepositoryErrorType
 from app.domain.value_objects.chat_type import ChatType
 from app.infrastructure.orm_models.chat_orm import ChatORM
@@ -23,7 +26,7 @@ class SQLAlchemyRawChatLogQuery(IRawChatLogQuery):
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def list_raw_chat_log_user_ids(
+    async def list_memory_sleep_source_user_ids(
         self,
         since: datetime | None = None,
         until: datetime | None = None,
@@ -53,14 +56,14 @@ class SQLAlchemyRawChatLogQuery(IRawChatLogQuery):
                 )
             )
 
-    async def get_raw_chat_logs(
+    async def get_memory_sleep_source_items(
         self,
         user_id: str,
         chat_type: ChatType,
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 1000,
-    ) -> Result[list[RawChatLog], RepositoryError]:
+    ) -> Result[list[MemorySleepSourceItem], RepositoryError]:
         """Get raw chat logs for the given user scope and time window."""
         try:
             table = cast(Any, ChatORM).__table__
@@ -82,7 +85,7 @@ class SQLAlchemyRawChatLogQuery(IRawChatLogQuery):
             result = await self._session.execute(statement)
             orm_items = list(result.scalars().all())
             raw_logs = [
-                RawChatLog(
+                MemorySleepSourceItem(
                     id=item.id or "",
                     user_id=item.user_id or "",
                     role=item.role or "",

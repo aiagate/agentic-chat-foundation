@@ -1,4 +1,4 @@
-"""MembershipId value object."""
+"""参加関係 ID の値オブジェクト。"""
 
 from dataclasses import dataclass
 
@@ -7,7 +7,4 @@ from app.domain.value_objects.base_id import BaseId
 
 @dataclass(frozen=True)
 class MembershipId(BaseId):
-    """MembershipId value object using ULID.
-
-    Inherits all functionality from BaseId.
-    """
+    """ULID ベースの参加関係 ID。"""

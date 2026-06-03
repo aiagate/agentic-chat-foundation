@@ -1,4 +1,4 @@
-"""Query interface for raw chat log retrieval."""
+"""メモリ睡眠用の生ログ取得クエリ契約。"""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True)
-class RawChatLog:
-    """Raw chat log row from SQL storage."""
+class MemorySleepSourceItem:
+    """意味圧縮の入力になる生ログ1件。"""
 
     id: str
     user_id: str
@@ -27,27 +27,30 @@ class RawChatLog:
     created_at: datetime | None
 
 
+RawChatLog = MemorySleepSourceItem
+
+
 class IRawChatLogQuery(ABC):
-    """Query interface for retrieving raw chat logs."""
+    """メモリ睡眠処理向けの生ログ取得契約。"""
 
     @abstractmethod
-    async def list_raw_chat_log_user_ids(
+    async def list_memory_sleep_source_user_ids(
         self,
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 1000,
     ) -> Result[list[str], RepositoryError]:
-        """Get distinct user IDs that have raw chat logs in a time window."""
+        """対象ログを持つユーザーIDの一覧を取得する。"""
         pass
 
     @abstractmethod
-    async def get_raw_chat_logs(
+    async def get_memory_sleep_source_items(
         self,
         user_id: str,
         chat_type: ChatType,
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 1000,
-    ) -> Result[list[RawChatLog], RepositoryError]:
-        """Get raw chat logs for a user scope and optional time window."""
+    ) -> Result[list[MemorySleepSourceItem], RepositoryError]:
+        """指定ユーザーと時間範囲の生ログを取得する。"""
         pass

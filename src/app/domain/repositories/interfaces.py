@@ -1,4 +1,4 @@
-"""Repository interfaces for domain layer."""
+"""ドメイン層のリポジトリ契約。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from app.domain.queries.raw_chat_log_query import IRawChatLogQuery
 
 
 class RepositoryErrorType(Enum):
-    """Enum for repository error types."""
+    """リポジトリエラーの種別。"""
 
     NOT_FOUND = auto()
     UNEXPECTED = auto()
@@ -24,73 +24,63 @@ class RepositoryErrorType(Enum):
 
 @dataclass(frozen=True)
 class RepositoryError(Exception):
-    """Represents a specific error from a repository."""
+    """リポジトリ層から返すエラー情報。"""
 
     type: RepositoryErrorType
     message: str
 
 
 class IRepository[T](ABC):
-    """Repository interface for add and delete operations.
+    """追加・更新・削除を扱うリポジトリ契約。
 
-    Use this when you need to add or delete entities without ID-based retrieval.
-    Does not require knowledge of ID type.
+    ID 参照を前提にしない集約で使う。
 
     Type Parameters:
-        T: Entity type (e.g., User, Order)
+        T: エンティティ型。
     """
 
     @abstractmethod
     async def add(self, entity: T) -> Result[T, RepositoryError]:
-        """Add new entity.
-
-        Returns ALREADY_EXISTS error if entity already exists in the database.
-        """
+        """新しいエンティティを追加する。"""
         pass
 
     @abstractmethod
     async def update(self, entity: T) -> Result[T, RepositoryError]:
-        """Update existing entity.
-
-        Returns NOT_FOUND error if entity doesn't exist in the database.
-        """
+        """既存エンティティを更新する。"""
         pass
 
     @abstractmethod
     async def delete(self, entity: T) -> Result[None, RepositoryError]:
-        """Delete entity."""
+        """エンティティを削除する。"""
         pass
 
 
 class IRepositoryWithId[T, K](IRepository[T], ABC):
-    """Repository interface with ID-based get operation.
-
-    Extends IRepository[T] with get_by_id operation.
-    Use this when you need to retrieve entities by ID.
+    """ID 参照を追加したリポジトリ契約。
 
     Type Parameters:
-        T: Entity type (e.g., User, Order)
-        K: Primary key type (e.g., int, str, UserId)
+        T: エンティティ型。
+        K: 主キー型。
     """
 
     @abstractmethod
     async def get_by_id(self, id: K) -> Result[T, RepositoryError]:
-        """Get entity by ID."""
+        """ID でエンティティを取得する。"""
         pass
 
 
 class IUnitOfWork(ABC):
-    """Unit of Work interface for transaction management."""
+    """トランザクション境界を表す Unit of Work 契約。"""
 
     @overload
     def GetRepository[T](self, entity_type: type[T]) -> IRepository[T]:
-        """Get repository for add and delete operations.
+        """追加・更新・削除用のリポジトリを取得する。
 
         Args:
-            entity_type: The domain entity type (e.g., User)
+            entity_type: ドメインエンティティ型。
 
         Returns:
-            Repository instance with add and delete operations
+            リポジトリ実装。
         """
         ...
 
@@ -98,14 +88,14 @@ class IUnitOfWork(ABC):
     def GetRepository[T, K](
         self, entity_type: type[T], key_type: type[K]
     ) -> IRepositoryWithId[T, K]:
-        """Get repository with ID-based get operation.
+        """ID 参照付きリポジトリを取得する。
 
         Args:
-            entity_type: The domain entity type (e.g., User)
-            key_type: The primary key type (e.g., int, str, UserId)
+            entity_type: ドメインエンティティ型。
+            key_type: 主キー型。
 
         Returns:
-            Repository instance with all operations (add, delete, get_by_id)
+            ID 参照を含むリポジトリ実装。
         """
         ...
 
@@ -113,47 +103,43 @@ class IUnitOfWork(ABC):
     def GetRepository[T, K](
         self, entity_type: type[T], key_type: type[K] | None = None
     ) -> IRepository[T] | IRepositoryWithId[T, K]:
-        """Get repository for entity type.
-
-        This method is overloaded:
-        - GetRepository(User) -> IRepository[User] (add, delete)
-        - GetRepository(User, UserId) -> IRepositoryWithId[User, UserId] (add, delete, get_by_id)
+        """エンティティ型に対応するリポジトリを取得する。
 
         Args:
-            entity_type: The domain entity type
-            key_type: Optional primary key type
+            entity_type: ドメインエンティティ型。
+            key_type: 任意の主キー型。
 
         Returns:
-            Repository instance
+            リポジトリ実装。
         """
         pass
 
     @abstractmethod
     async def commit(self) -> Result[None, RepositoryError]:
-        """Commit the transaction."""
+        """トランザクションを確定する。"""
         pass
 
     @abstractmethod
     async def rollback(self) -> None:
-        """Rollback the transaction."""
+        """トランザクションを破棄して巻き戻す。"""
         pass
 
     @abstractmethod
     def GetChatHistoryQuery(self) -> IChatHistoryQuery:
-        """Get the chat history query."""
+        """チャット履歴クエリを取得する。"""
         pass
 
     @abstractmethod
     def GetRawChatLogQuery(self) -> IRawChatLogQuery:
-        """Get the raw chat log query."""
+        """生ログクエリを取得する。"""
         pass
 
     @abstractmethod
     async def __aenter__(self) -> IUnitOfWork:
-        """Enter async context manager."""
+        """非同期コンテキストに入る。"""
         pass
 
     @abstractmethod
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        """Exit async context manager with auto-commit/rollback."""
+        """非同期コンテキストを抜ける。"""
         pass

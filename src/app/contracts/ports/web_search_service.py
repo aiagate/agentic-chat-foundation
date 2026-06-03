@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 
 from flow_res import Result
 
-from app.contracts.messages.tool_use import SearchToolArguments
+from app.contracts.messages.tool_contracts import SearchToolArguments
 
 
 class WebSearchServiceError(Exception):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.contracts.messages.tool_use import ToolName
+from app.contracts.messages.tool_contracts import ToolName
 
 
 class RetrievedContextItem(BaseModel):
@@ -30,7 +30,11 @@ class RetrievedContext(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    search_session_id: str = Field(description="Search workflow session ID.")
+    tool_call_id: str = Field(description="Tool call that produced this context.")
+    character_id: str | None = Field(
+        default=None,
+        description="Agent character that owns this retrieved context.",
+    )
     query: str = Field(description="Search query that produced this context.")
     tool_name: ToolName = Field(description="Tool that produced the context.")
     items: list[RetrievedContextItem] = Field(

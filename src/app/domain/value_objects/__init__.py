@@ -1,4 +1,4 @@
-"""Value objects for domain layer."""
+"""ドメイン層の値オブジェクト公開API。"""
 
 from app.domain.value_objects.base_id import BaseId
 from app.domain.value_objects.chat_id import ChatId

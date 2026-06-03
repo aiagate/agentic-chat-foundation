@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+from app.contracts.messages import (
+    CHAT_TOOL_COMPLETED_TOPIC,
+    CHAT_TOOL_REQUESTED_TOPIC,
+    AgentEnvelope,
+    GeneratedContent,
+    RetrievedContext,
+    SearchToolArguments,
+    ToolCall,
+    build_chat_tool_completed_payload,
+    build_chat_tool_requested_payload,
+)
+
+
+def test_search_tool_arguments_shape() -> None:
+    arguments = SearchToolArguments(
+        query="ollama web search",
+        max_results=3,
+        source_request_id="req-1",
+    )
+
+    assert arguments.query == "ollama web search"
+    assert arguments.max_results == 3
+    assert arguments.source_request_id == "req-1"
+
+
+def test_retrieved_context_uses_tool_call_id() -> None:
+    context = RetrievedContext(
+        tool_call_id="tool-1",
+        query="ollama web search",
+        tool_name="web_search",
+        items=[],
+        rendered_text="## Retrieved Context\n- example",
+    )
+
+    assert context.tool_call_id == "tool-1"
+    assert context.rendered_text.startswith("## Retrieved Context")
+
+
+def test_generated_content_uses_tool_calls_as_the_only_tool_request_shape() -> None:
+    content = GeneratedContent(
+        contents=["searching"],
+        tool_calls=[
+            ToolCall(
+                event_id="event-2",
+                agent_run_id="run-2",
+                agent_turn_id="turn-2",
+                tool_call_id="tool-2",
+                tool_name="web_search",
+                arguments={
+                    "query": "ollama web search",
+                    "max_results": 3,
+                    "source_request_id": "req-2",
+                },
+                user_message="ちょっと検索してみます",
+            ),
+            ToolCall(
+                tool_name="memory.search",
+                arguments={"query": "memory lookup"},
+                user_message="memory lookup",
+            ),
+        ],
+    )
+
+    assert len(content.tool_calls) == 2
+    assert content.tool_calls[0].tool_call_id == "tool-2"
+    assert content.tool_calls[0].tool_name == "web_search"
+    assert content.tool_calls[1].tool_name == "memory.search"
+
+
+def test_generic_tool_payload_builders_merge_agent_metadata() -> None:
+    agent_envelope = AgentEnvelope(
+        event_id="event-3",
+        correlation_id="corr-3",
+        causation_id="caus-3",
+        agent_run_id="run-3",
+        agent_turn_id="turn-3",
+        character_id="reina",
+        tool_call_id="tool-3",
+        source_message_id="msg-3",
+        decision_summary="Tool loop bridge",
+    )
+
+    requested_payload = build_chat_tool_requested_payload(
+        chat_id="chat-1",
+        user_id="user-1",
+        chat_type="discord",
+        tool_call_id="tool-3",
+        tool_name="web_search",
+        guild_id="DM",
+        channel_id="123",
+        agent_envelope=agent_envelope,
+    )
+    completed_payload = build_chat_tool_completed_payload(
+        chat_id="chat-1",
+        chat_type="discord",
+        user_id="user-1",
+        status="ok",
+        tool_name="web_search",
+        result={"tool_call_id": "tool-3", "retrieved_context": True},
+        guild_id="DM",
+        channel_id="123",
+        agent_envelope=agent_envelope,
+    )
+
+    assert requested_payload.get("agent_run_id") == "run-3"
+    assert requested_payload.get("character_id") == "reina"
+    assert requested_payload.get("tool_call_id") == "tool-3"
+    assert "arguments" not in requested_payload
+    assert "user_message" not in requested_payload
+    assert completed_payload["status"] == "ok"
+    result = completed_payload.get("result")
+    assert result is not None
+    assert result["retrieved_context"] is True
+    assert completed_payload.get("decision_summary") == "Tool loop bridge"
+    assert completed_payload.get("character_id") == "reina"
+    assert CHAT_TOOL_REQUESTED_TOPIC == "chat.tool.requested"
+    assert CHAT_TOOL_COMPLETED_TOPIC == "chat.tool.completed"

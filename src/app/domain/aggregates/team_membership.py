@@ -17,10 +17,10 @@ from app.domain.value_objects import (
 
 @dataclass(kw_only=True, slots=True)
 class TeamMembership:
-    """Team membership aggregate root.
+    """チーム参加関係を表す集約。
 
-    Manages the relationship between a User and a Team, including roles and status.
-    Implements IAuditable and IVersionable (managed by repository).
+    ユーザーとチームの関係、役割、参加状態を保持する。
+    監査時刻とバージョン管理はリポジトリ層が担う。
     """
 
     _id: MembershipId = field(
@@ -43,7 +43,7 @@ class TeamMembership:
         team_id: TeamId,
         user_id: UserId,
     ) -> TeamMembership:
-        """Factory method for a user joining a team."""
+        """承認済みでチームに参加するレコードを生成する。"""
         return TeamMembership(
             _team_id=team_id,
             _user_id=user_id,
@@ -57,7 +57,7 @@ class TeamMembership:
         team_id: TeamId,
         user_id: UserId,
     ) -> TeamMembership:
-        """Factory method for a user requesting to join a team."""
+        """参加申請中のレコードを生成する。"""
         return TeamMembership(
             _team_id=team_id,
             _user_id=user_id,
@@ -98,16 +98,16 @@ class TeamMembership:
         return self._updated_at
 
     def change_role(self, new_role: MembershipRole) -> TeamMembership:
-        """Change the role of the member."""
+        """参加者の役割を変更する。"""
         self._role = new_role
         return self
 
     def activate(self) -> TeamMembership:
-        """Activate the membership (e.g. after approval)."""
+        """参加状態を有効化する。"""
         self._status = MembershipStatus.ACTIVE
         return self
 
     def leave(self) -> TeamMembership:
-        """User leaves the team."""
+        """参加状態を離脱に変更する。"""
         self._status = MembershipStatus.LEAVED
         return self

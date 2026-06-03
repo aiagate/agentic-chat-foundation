@@ -1,4 +1,4 @@
-"""Query interface for chat history retrieval."""
+"""チャット履歴取得のクエリ契約。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from flow_res import Result
 
-from app.domain.aggregates.chat import Chat
+from app.contracts.messages.chat_history import ChatHistoryItem
 from app.domain.value_objects.chat_type import ChatType
 
 if TYPE_CHECKING:
@@ -15,13 +15,16 @@ if TYPE_CHECKING:
 
 
 class IChatHistoryQuery(ABC):
-    """Query interface for retrieving chat history."""
+    """チャット履歴を取得するクエリ契約。"""
 
     @abstractmethod
     async def get_recent_history(
         self,
         chat_type: ChatType,
+        user_id: str | None = None,
+        guild_id: str | None = None,
+        channel_id: str | None = None,
         limit: int = 20,
-    ) -> Result[list[Chat], RepositoryError]:
-        """Get recent chat history for a platform."""
+    ) -> Result[list[ChatHistoryItem], RepositoryError]:
+        """指定したチャット種別の最新履歴を取得する。"""
         pass

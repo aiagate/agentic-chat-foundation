@@ -1,4 +1,4 @@
-"""Interface for value objects that can be converted to/from primitive types."""
+"""プリミティブ型と相互変換できる値オブジェクトの契約。"""
 
 from typing import Protocol, TypeVar, runtime_checkable
 
@@ -9,44 +9,30 @@ T = TypeVar("T")
 
 @runtime_checkable
 class IValueObject(Protocol[T]):
-    """Protocol for value objects that can be converted to/from primitive types.
+    """プリミティブ型と相互変換できる値オブジェクトの契約。
 
-    Value objects implementing this protocol can be automatically converted
-    between domain and persistence layers. This enables generic repository
-    implementations to handle value objects without type-specific logic.
+    この契約を満たす型は、永続化層との受け渡しで共通処理を使える。
 
     Type Parameters:
-        T: The primitive type used for persistence (e.g., str, int, UUID)
-
-    Example:
-        >>> @dataclass(frozen=True)
-        >>> class UserId:
-        >>>     _value: ULID
-        >>>
-        >>>     def to_primitive(self) -> str:
-        >>>         return str(self._value)
-        >>>
-        >>>     @classmethod
-        >>>     def from_primitive(cls, value: str) -> "UserId":
-        >>>         return cls(_value=ULID.from_str(value))
+        T: 永続化に使うプリミティブ型。
     """
 
     def to_primitive(self) -> T:
-        """Convert value object to primitive type for persistence.
+        """永続化向けのプリミティブ値に変換する。
 
         Returns:
-            The primitive representation suitable for database storage.
+            データベース保存に使えるプリミティブ値。
         """
         ...
 
     @classmethod
     def from_primitive(cls, value: T) -> Result["IValueObject[T]", Exception]:
-        """Create value object from primitive type.
+        """プリミティブ値から値オブジェクトを復元する。
 
         Args:
-            value: The primitive value from the database.
+            value: データベースから取得したプリミティブ値。
 
         Returns:
-            Result[IValueObject[T], Exception] - Ok with new instance or Err with validation error.
+            成功時は生成したインスタンス、失敗時は検証エラー。
         """
         ...

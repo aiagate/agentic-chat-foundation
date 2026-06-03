@@ -1,4 +1,4 @@
-"""Chat type value object."""
+"""チャット種別の値オブジェクト。"""
 
 from __future__ import annotations
 
@@ -8,20 +8,20 @@ from flow_res import Err, Ok, Result
 
 
 class ChatType(StrEnum):
-    """Chat platform types."""
+    """チャットプラットフォーム種別。"""
 
     DISCORD = "DISCORD"
     LINE = "LINE"
 
     @classmethod
     def from_primitive(cls, value: str) -> Result[ChatType, ValueError]:
-        """Create ChatType from string.
+        """文字列からチャット種別を復元する。
 
         Args:
-            value: String representation of chat type
+            value: チャット種別の文字列表現。
 
         Returns:
-            Ok with ChatType if valid, Err with ValueError otherwise
+            成功時は ChatType、失敗時は ValueError。
         """
         try:
             normalized = value.strip()
@@ -32,5 +32,5 @@ class ChatType(StrEnum):
             return Err(ValueError(f"Invalid chat type: {value}"))
 
     def to_primitive(self) -> str:
-        """Convert to primitive string for persistence."""
+        """永続化向けの文字列に変換する。"""
         return self.value

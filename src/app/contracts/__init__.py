@@ -1,6 +1,7 @@
 """Application contracts shared across layers."""
 
 from app.contracts.messages import (
+    APP_ERROR_DETECTED_TOPIC,
     DISCORD_CHAT_REPLY_READY_TOPIC,
     DISCORD_CHAT_SAVED_TOPIC,
     LINE_CHAT_REPLY_READY_TOPIC,
@@ -10,6 +11,7 @@ from app.contracts.messages import (
     MemoryEntity,
     MemoryProfile,
     MemoryTimelineEntry,
+    build_app_error_detected_payload,
     build_discord_chat_saved_payload,
     build_line_chat_saved_payload,
     build_reply_ready_payload,
@@ -26,6 +28,7 @@ from app.contracts.ports import (
 
 __all__ = [
     "AIServiceError",
+    "APP_ERROR_DETECTED_TOPIC",
     "DISCORD_CHAT_REPLY_READY_TOPIC",
     "DISCORD_CHAT_SAVED_TOPIC",
     "EventHandler",
@@ -40,6 +43,7 @@ __all__ = [
     "LINE_CHAT_REPLY_READY_TOPIC",
     "LINE_CHAT_SAVED_TOPIC",
     "MemoryServiceError",
+    "build_app_error_detected_payload",
     "build_discord_chat_saved_payload",
     "build_line_chat_saved_payload",
     "build_reply_ready_payload",

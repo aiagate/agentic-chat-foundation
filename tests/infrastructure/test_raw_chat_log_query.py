@@ -92,7 +92,7 @@ async def test_raw_chat_log_query_returns_chronological_messages(
 
     async with uow:
         query = uow.GetRawChatLogQuery()
-        result = await query.get_raw_chat_logs(
+        result = await query.get_memory_sleep_source_items(
             "u1",
             ChatType.DISCORD,
             since=datetime(2026, 5, 20, 8, 30, tzinfo=UTC),
@@ -119,7 +119,7 @@ async def test_raw_chat_log_query_lists_distinct_user_ids(
 
     async with uow:
         query = uow.GetRawChatLogQuery()
-        result = await query.list_raw_chat_log_user_ids(
+        result = await query.list_memory_sleep_source_user_ids(
             since=datetime(2026, 5, 20, 8, 0, tzinfo=UTC),
             until=datetime(2026, 5, 20, 12, 0, tzinfo=UTC),
             limit=10,

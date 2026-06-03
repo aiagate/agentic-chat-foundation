@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from flow_med import Request, RequestHandler
@@ -12,10 +13,12 @@ from app.contracts.messages.retrieved_context import (
     RetrievedContext,
     RetrievedContextItem,
 )
-from app.contracts.messages.tool_use import SearchToolArguments, ToolName
-from app.contracts.ports.search_context_store import ISearchContextStore
+from app.contracts.messages.tool_contracts import SearchToolArguments, ToolName
+from app.contracts.ports.retrieved_context_store import IRetrievedContextStore
 from app.contracts.ports.web_search_service import IWebSearchService
 from app.usecases.result import ErrorType, UseCaseError
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -27,14 +30,15 @@ class RunWebSearchResult:
 
 @dataclass
 class RunWebSearchCommand(Request[Result[RunWebSearchResult, UseCaseError]]):
-    """Run a web search for an existing search session."""
+    """Run a web search for an existing tool call."""
 
-    search_session_id: str
+    tool_call_id: str
     query: str
     user_message: str
     source_request_id: str
     tool_name: ToolName = "web_search"
     max_results: int | None = None
+    character_id: str | None = None
 
 
 class RunWebSearchHandler(
@@ -46,10 +50,10 @@ class RunWebSearchHandler(
     def __init__(
         self,
         web_search_service: IWebSearchService,
-        search_context_store: ISearchContextStore,
+        retrieved_context_store: IRetrievedContextStore,
     ) -> None:
         self._web_search_service = web_search_service
-        self._search_context_store = search_context_store
+        self._retrieved_context_store = retrieved_context_store
 
     async def handle(
         self, request: RunWebSearchCommand
@@ -72,10 +76,17 @@ class RunWebSearchHandler(
 
         payload = search_result.value
         items = _normalize_items(payload.get("results", []))
-        rendered_text = _render_retrieved_context(request.search_session_id, items)
-        save_result = await self._search_context_store.save(
+        rendered_text = _render_retrieved_context(request.tool_call_id, items)
+        logger.info(
+            "Storing web retrieved context: tool_call_id=%s query=%s items=%d",
+            request.tool_call_id,
+            request.query,
+            len(items),
+        )
+        save_result = await self._retrieved_context_store.save(
             RetrievedContext(
-                search_session_id=request.search_session_id,
+                tool_call_id=request.tool_call_id,
+                character_id=request.character_id,
                 query=request.query,
                 tool_name=request.tool_name,
                 items=items,
@@ -86,9 +97,14 @@ class RunWebSearchHandler(
             return Err(
                 UseCaseError(
                     type=ErrorType.UNEXPECTED,
-                    message="Failed to store search context",
+                    message="Failed to store retrieved context",
                 )
             )
+        logger.info(
+            "Web search completed: tool_call_id=%s result_count=%d",
+            request.tool_call_id,
+            len(items),
+        )
 
         return Ok(RunWebSearchResult(result_count=len(items)))
 
@@ -113,12 +129,12 @@ def _normalize_items(raw_results: object) -> list[RetrievedContextItem]:
 
 
 def _render_retrieved_context(
-    search_session_id: str,
+    tool_call_id: str,
     items: list[RetrievedContextItem],
 ) -> str:
     lines = [
         "## Retrieved Context",
-        f"- search_session_id: {search_session_id}",
+        f"- tool_call_id: {tool_call_id}",
     ]
     for item in items:
         title = item.title or "(untitled)"

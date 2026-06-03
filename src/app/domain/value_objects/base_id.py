@@ -1,4 +1,4 @@
-"""Base class for ULID-based ID value objects."""
+"""ULID ベース ID 値オブジェクトの基底。"""
 
 from dataclasses import dataclass
 from typing import TypeVar
@@ -11,51 +11,42 @@ T = TypeVar("T", bound="BaseId")
 
 @dataclass(frozen=True)
 class BaseId:
-    """Base class for ULID-based ID value objects.
+    """ULID を包む不変 ID 値オブジェクトの基底。
 
-    This is an immutable value object that wraps a ULID identifier.
-    ULIDs are lexicographically sortable, URL-safe, and include timestamp information.
-
-    Implements IValueObject[str] protocol for automatic persistence layer conversion.
-
-    Subclasses automatically inherit:
-    - generate() class method for creating new IDs
-    - to_primitive() for database serialization
-    - from_primitive() for database deserialization
-    - __str__() and __repr__() for string representation
+    文字列表現と永続化変換を共通化し、各 ID 型の実装を薄く保つ。
     """
 
     _value: ULID
 
     @classmethod
     def generate(cls: type[T]) -> Result[T, Exception]:
-        """Generate a new ULID-based ID.
+        """新しい ID を生成する。
 
         Returns:
-            A new ID instance with a generated ULID
+            生成した ID。
         """
         return Ok(cls(_value=ULID()))
 
     def to_primitive(self) -> str:
-        """Convert to primitive string type for persistence.
+        """永続化向けの文字列に変換する。
 
         Returns:
-            String representation of ULID suitable for database storage
+            ULID の文字列表現。
         """
         return str(self._value)
 
     @classmethod
     def from_primitive(cls: type[T], value: str) -> Result[T, Exception]:
-        """Create ID from primitive string.
+        """文字列から ID を復元する。
 
         Args:
-            value: String representation of ULID from database
+            value: データベース由来の ULID 文字列。
 
         Returns:
-            ID instance
+            生成した ID。
 
         Raises:
-            ValueError: If the string is not a valid ULID
+            ValueError: 文字列が有効な ULID でない場合。
         """
         try:
             return Ok(cls(_value=ULID.from_str(value)))
@@ -63,9 +54,9 @@ class BaseId:
             return Err(ValueError(f"Invalid ULID string: {value}", e))
 
     def __str__(self) -> str:
-        """String representation."""
+        """文字列表現を返す。"""
         return self.to_primitive()
 
     def __repr__(self) -> str:
-        """Developer-friendly representation."""
+        """開発者向け表現を返す。"""
         return f"{self.__class__.__name__}({self.to_primitive()})"

@@ -2,12 +2,13 @@
 
 from flow_res import Ok, Result
 
+from app.contracts.messages.chat_history import ChatHistoryItem
 from app.contracts.messages.generated_content import GeneratedContent
+from app.contracts.messages.tool_contracts import ToolDefinition
 from app.contracts.ports.ai_service import (
     AIServiceError,
     IAIService,
 )
-from app.domain.aggregates.chat import Chat
 
 
 class MockAIService(IAIService):
@@ -16,12 +17,14 @@ class MockAIService(IAIService):
     async def generate_content(
         self,
         prompt: str,
-        history: list[Chat],
+        history: list[ChatHistoryItem],
         system_instruction: str | None = None,
+        tool_definitions: list[ToolDefinition] | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
         """Return a simple structured mock response."""
         _ = history
         _ = system_instruction
+        _ = tool_definitions
         return Ok(
             GeneratedContent(
                 contents=[

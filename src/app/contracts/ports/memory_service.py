@@ -21,7 +21,7 @@ class MemoryServiceError(Exception):
 
 
 class IMemoryService(ABC):
-    """Interface for memory retrieval and persistence."""
+    """Interface for memory retrieval."""
 
     @abstractmethod
     async def retrieve(
@@ -30,13 +30,3 @@ class IMemoryService(ABC):
         user_id: str,
     ) -> Result[MemoryContextPack, MemoryServiceError]:
         """Return a user-scoped context pack with assembled prompt context."""
-
-    @abstractmethod
-    async def add_log(
-        self,
-        user_id: str,
-        role: str,
-        content: str,
-        metadata: dict[str, str],
-    ) -> Result[None, MemoryServiceError]:
-        """Persist a raw memory log."""

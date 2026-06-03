@@ -12,8 +12,25 @@ class IMemoryStore(Protocol):
 
     root: Path
 
-    def agent_profile_path(self) -> Path:
-        """Return the global agent profile path."""
+    def agent_profile_dir(self, character_id: str | None = None) -> Path:
+        """Return the agent profile bundle directory."""
+        ...
+
+    def agent_profile_part_path(
+        self,
+        part: str,
+        *,
+        character_id: str | None = None,
+    ) -> Path:
+        """Return one agent profile bundle file path."""
+        ...
+
+    def agent_profile_bundle_paths(
+        self,
+        *,
+        character_id: str | None = None,
+    ) -> dict[str, Path]:
+        """Return all agent profile bundle paths keyed by part name."""
         ...
 
     def user_profile_path(self, user_id: str) -> Path:
@@ -36,6 +53,16 @@ class IMemoryStore(Protocol):
 
     def daily_timeline_path(self, *, user_id: str, day: date) -> Path:
         """Return the user-scoped daily summary path."""
+        ...
+
+    def section_timeline_path(
+        self,
+        *,
+        user_id: str,
+        day: date,
+        section_slug: str,
+    ) -> Path:
+        """Return the user-scoped section summary path."""
         ...
 
     def iter_timeline_paths(self, user_id: str) -> list[Path]:

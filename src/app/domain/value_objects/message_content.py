@@ -1,4 +1,4 @@
-"""Message content value object."""
+"""メッセージ内容を表す値オブジェクト。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from flow_res import Err, Ok, Result
 
 
 class MessageContentType(StrEnum):
-    """Supported message content types."""
+    """対応するメッセージ種別。"""
 
     TEXT = "TEXT"
     IMAGE = "IMAGE"
@@ -20,10 +20,9 @@ class MessageContentType(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class MessageContent:
-    """Content payload for a single chat message.
+    """単一メッセージの内容を表す。
 
-    The payload shape is intentionally flexible because each provider exposes
-    different metadata for images, stickers, and emoji.
+    画像やスタンプのように、配信元ごとに異なるメタデータをそのまま保持する。
     """
 
     _type: MessageContentType
@@ -31,12 +30,12 @@ class MessageContent:
 
     @classmethod
     def text(cls, text: str) -> MessageContent:
-        """Create text message content."""
+        """テキストメッセージを生成する。"""
         return cls(_type=MessageContentType.TEXT, _payload={"text": text})
 
     @classmethod
     def image(cls, image_id: str, url: str | None = None) -> MessageContent:
-        """Create image message content."""
+        """画像メッセージを生成する。"""
         payload: dict[str, Any] = {"image_id": image_id}
         if url is not None:
             payload["url"] = url
@@ -44,7 +43,7 @@ class MessageContent:
 
     @classmethod
     def sticker(cls, sticker_id: str, package_id: str | None = None) -> MessageContent:
-        """Create sticker message content."""
+        """スタンプメッセージを生成する。"""
         payload: dict[str, Any] = {"sticker_id": sticker_id}
         if package_id is not None:
             payload["package_id"] = package_id
@@ -52,17 +51,17 @@ class MessageContent:
 
     @classmethod
     def emoji(cls, emoji: str) -> MessageContent:
-        """Create emoji message content."""
+        """絵文字メッセージを生成する。"""
         return cls(_type=MessageContentType.EMOJI, _payload={"emoji": emoji})
 
     @property
     def type(self) -> MessageContentType:
-        """Return the message content type."""
+        """メッセージ種別を返す。"""
         return self._type
 
     @property
     def payload(self) -> dict[str, Any]:
-        """Return a copy of the message content payload."""
+        """メッセージ内容のコピーを返す。"""
         return self._payload.copy()
 
     @classmethod
@@ -70,7 +69,7 @@ class MessageContent:
         cls,
         value: dict[str, Any],
     ) -> Result[MessageContent, Exception]:
-        """Create message content from a persistence payload."""
+        """永続化データからメッセージ内容を復元する。"""
         content_type = value.get("type")
         payload = value.get("payload")
 
@@ -87,7 +86,7 @@ class MessageContent:
         return Ok(cls(_type=normalized_type, _payload=payload.copy()))
 
     def to_primitive(self) -> dict[str, Any]:
-        """Convert message content to a persistence payload."""
+        """永続化向けの辞書に変換する。"""
         return {
             "type": self._type.value,
             "payload": self._payload.copy(),

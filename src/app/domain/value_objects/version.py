@@ -1,4 +1,4 @@
-"""Version value object for optimistic locking."""
+"""楽観ロック用バージョンの値オブジェクト。"""
 
 from __future__ import annotations
 
@@ -9,27 +9,26 @@ from flow_res import Err, Ok, Result
 
 @dataclass(frozen=True)
 class Version:
-    """Version value object for optimistic locking.
+    """更新競合を検出するためのバージョン値。
 
-    Wraps an integer version number used to detect concurrent modifications.
-    Implements IValueObject[int] protocol for automatic persistence conversion.
+    単純な整数を包み、永続化や比較の意味を明示する。
     """
 
     _value: int
 
     def to_primitive(self) -> int:
-        """Convert to primitive int for persistence."""
+        """永続化向けの整数に変換する。"""
         return self._value
 
     @classmethod
     def from_primitive(cls, value: int) -> Result[Version, Exception]:
-        """Create Version from primitive int with validation.
+        """整数からバージョンを復元する。
 
         Args:
-            value: The version number (must be non-negative integer)
+            value: 非負のバージョン番号。
 
         Returns:
-            Result containing Version or Exception
+            生成した Version か検証エラー。
         """
         if not isinstance(value, int):  # type: ignore[reportUnnecessaryIsInstance]
             return Err(TypeError(f"Version must be int, got {type(value).__name__}"))
@@ -38,10 +37,10 @@ class Version:
         return Ok(cls(_value=value))
 
     def increment(self) -> Version:
-        """Return new Version instance with incremented value.
+        """1 つ進めた新しいバージョンを返す。
 
         Returns:
-            New Version with value incremented by 1
+            インクリメント後の Version。
         """
         return Version(_value=self._value + 1)
 

@@ -10,14 +10,10 @@ from app.domain.value_objects import TeamId, TeamName, Version
 
 @dataclass(kw_only=True, slots=True)
 class Team:
-    """Team aggregate root.
+    """チーム集約。
 
-    Implements IAuditable: timestamps are infrastructure concerns but exposed
-    as read-only fields for auditing and display purposes. The repository layer
-    automatically manages created_at and updated_at.
-
-    Implements IVersionable: optimistic locking via version field, which is
-    automatically managed by the repository layer during updates.
+    監査用時刻と楽観ロック用のバージョンを持つ。
+    更新管理はリポジトリ層が担当する。
     """
 
     _id: TeamId = field(
@@ -33,7 +29,7 @@ class Team:
 
     @classmethod
     def form(cls, name: TeamName) -> Team:
-        """Factory method to create a new Team."""
+        """新しいチームを生成する。"""
         return Team(_name=name)
 
     @property
@@ -57,10 +53,7 @@ class Team:
         return self._updated_at
 
     def change_name(self, new_name: TeamName) -> Team:
-        """チーム名を変更するドメインロジック
-
-        Note: updated_at is automatically managed by the repository layer.
-        """
+        """チーム名を変更する。"""
         self._name = new_name
 
         return self

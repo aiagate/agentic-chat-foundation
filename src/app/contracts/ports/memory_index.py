@@ -8,8 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeVar
 
-from flow_res import Result
-
 
 @dataclass(frozen=True)
 class MemoryIndexError(Exception):
@@ -58,23 +56,11 @@ class IMemoryIndex[TStored, TDocument, THit, TFilters](ABC):
         documents: Sequence[TDocument],
         filters: TFilters,
         *,
+        root: Path | None = None,
+        index_db_path: Path | None = None,
+        embedding_service: object | None = None,
+        query_embedding: list[float] | None = None,
         limit: int = 20,
     ) -> list[THit]:
         """Search documents and return ranked hits."""
         ...
-
-    @abstractmethod
-    def rebuild_memory_index(
-        self,
-        *,
-        user_id: str | None = None,
-    ) -> Result[int, MemoryIndexError]:
-        """Rebuild the persistent memory index from Markdown sources."""
-
-    @abstractmethod
-    def repair_memory_index(
-        self,
-        *,
-        user_id: str | None = None,
-    ) -> Result[int, MemoryIndexError]:
-        """Repair stale or missing persistent memory index rows."""

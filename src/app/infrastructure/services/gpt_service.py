@@ -1,19 +1,28 @@
 """OpenAI GPT service implementation."""
 
 import json
+import logging
 import os
+from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 from flow_res import Err, Ok, Result
 from openai import AsyncOpenAI
 from openai.types.responses import ResponseInputItemParam
 
+from app.contracts.messages.chat_history import ChatHistoryItem
 from app.contracts.messages.generated_content import GeneratedContent
+from app.contracts.messages.tool_contracts import (
+    ToolDefinition,
+    render_tool_definitions,
+)
 from app.contracts.ports.ai_service import (
     AIServiceError,
     IAIService,
 )
-from app.domain.aggregates.chat import Chat
+
+logger = logging.getLogger(__name__)
+_MAX_ATTEMPTS = 4
 
 
 def _parse_generated_content(payload: Any) -> GeneratedContent:
@@ -33,37 +42,97 @@ class GptService(IAIService):
     async def generate_content(
         self,
         prompt: str,
-        history: list[Chat],
+        history: list[ChatHistoryItem],
         system_instruction: str | None = None,
+        tool_definitions: list[ToolDefinition] | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
         """Generate structured content with OpenAI."""
         if self._client is None:
             return Err(AIServiceError("OpenAI API key not configured."))
+        client = self._client
 
         try:
-            input_messages = [
-                {
-                    "role": "user",
-                    "content": chat.message_content.payload.get("text", ""),
-                }
-                for chat in history
-            ]
+            instructions = _compose_instructions(
+                system_instruction=system_instruction,
+                tool_definitions=tool_definitions,
+            )
+            input_messages = _history_to_openai_input(history)
             input_messages.append({"role": "user", "content": prompt})
 
-            response = await self._client.responses.create(
-                model="gpt-4o-mini",
-                instructions=system_instruction or "You are a helpful assistant.",
-                input=cast(list[ResponseInputItemParam], input_messages),
-                store=False,
-                text={
-                    "format": {
-                        "type": "json_schema",
-                        "name": "generated_content",
-                        "schema": GeneratedContent.model_json_schema(),
-                        "strict": True,
-                    }
-                },
+            response = await _generate_with_retries(
+                lambda: client.responses.create(
+                    model="gpt-4o-mini",
+                    instructions=instructions,
+                    input=cast(list[ResponseInputItemParam], input_messages),
+                    store=False,
+                    text={
+                        "format": {
+                            "type": "json_schema",
+                            "name": "generated_content",
+                            "schema": GeneratedContent.model_json_schema(),
+                            "strict": True,
+                        }
+                    },
+                ),
+                service_name="OpenAI",
             )
             return Ok(_parse_generated_content(json.loads(response.output_text)))
         except Exception as e:
             return Err(AIServiceError(f"OpenAI API Error: {e}"))
+
+
+def _compose_instructions(
+    *,
+    system_instruction: str | None,
+    tool_definitions: list[ToolDefinition] | None,
+) -> str:
+    instructions = system_instruction or "You are a helpful assistant."
+    if tool_definitions:
+        instructions = "\n\n".join(
+            [
+                instructions,
+                render_tool_definitions(tool_definitions),
+            ]
+        )
+    return instructions
+
+
+def _history_to_openai_input(
+    history: list[ChatHistoryItem],
+) -> list[dict[str, str]]:
+    input_messages: list[dict[str, str]] = []
+    for item in history:
+        input_messages.append(
+            {
+                "role": item.role,
+                "content": item.content,
+            }
+        )
+    return input_messages
+
+
+async def _generate_with_retries[T](
+    operation: Callable[[], Awaitable[T]],
+    *,
+    service_name: str,
+) -> T:
+    """Run an external AI call with up to three retries."""
+
+    last_error: Exception | None = None
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            return await operation()
+        except Exception as error:
+            last_error = error
+            if attempt >= _MAX_ATTEMPTS:
+                raise
+            logger.warning(
+                "%s API call failed; retrying %s/%s: %s",
+                service_name,
+                attempt,
+                _MAX_ATTEMPTS - 1,
+                error,
+            )
+
+    assert last_error is not None
+    raise last_error

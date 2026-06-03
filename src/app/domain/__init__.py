@@ -1,1 +1,5 @@
-"""Domain layer containing business logic and aggregate roots."""
+"""ドメイン層の公開エントリ。
+
+集約、値オブジェクト、リポジトリ契約、クエリ契約など、
+アプリケーションの中核となる型をまとめて公開する。
+"""

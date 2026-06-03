@@ -1,4 +1,4 @@
-"""Domain aggregate roots and business entities."""
+"""ドメインの集約ルートとビジネスエンティティ。"""
 
 from app.domain.aggregates.chat import Chat, DiscordChat, LineChat
 from app.domain.aggregates.team import Team

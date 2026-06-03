@@ -8,14 +8,10 @@ from app.domain.value_objects import DisplayName, Email, UserId, Version
 
 @dataclass(kw_only=True, slots=True)
 class User:
-    """User aggregate root.
+    """ユーザー集約。
 
-    Implements IAuditable: timestamps are infrastructure concerns but exposed
-    as read-only fields for auditing and display purposes. The repository layer
-    automatically manages created_at and updated_at.
-
-    Implements IVersionable: optimistic locking via version field, which is
-    automatically managed by the repository layer during updates.
+    監査用時刻と楽観ロック用のバージョンを持つ。
+    更新管理はリポジトリ層が担当する。
     """
 
     _id: UserId = field(
@@ -32,7 +28,7 @@ class User:
 
     @classmethod
     def register(cls, display_name: DisplayName, email: Email) -> User:
-        """ユーザーを登録するファクトリメソッド"""
+        """新規ユーザーを生成する。"""
         return User(_display_name=display_name, _email=email)
 
     @property
@@ -60,10 +56,7 @@ class User:
         return self._updated_at
 
     def change_email(self, new_email: Email) -> User:
-        """メールアドレスを変更するドメインロジック
-
-        Note: updated_at is automatically managed by the repository layer.
-        """
+        """メールアドレスを変更する。"""
         self._email = new_email
 
         return self

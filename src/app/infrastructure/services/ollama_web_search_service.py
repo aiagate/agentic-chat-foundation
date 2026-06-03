@@ -9,7 +9,7 @@ from urllib import error, request
 
 from flow_res import Err, Ok, Result
 
-from app.contracts.messages.tool_use import SearchToolArguments
+from app.contracts.messages.tool_contracts import SearchToolArguments
 from app.contracts.ports.web_search_service import (
     IWebSearchService,
     WebSearchServiceError,

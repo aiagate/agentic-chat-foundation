@@ -1,4 +1,4 @@
-"""Membership role value object."""
+"""チーム参加時の役割を表す値オブジェクト。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from flow_res import Err, Ok, Result
 
 
 class MembershipRole(str, Enum):
-    """Roles for team members."""
+    """チームメンバーの役割。"""
 
     OWNER = "OWNER"
     ADMIN = "ADMIN"
@@ -16,7 +16,7 @@ class MembershipRole(str, Enum):
 
     @classmethod
     def from_primitive(cls, value: str) -> Result[MembershipRole, ValueError]:
-        """Create MembershipRole from string."""
+        """文字列から役割を復元する。"""
         try:
             normalized = value.strip()
             if not normalized:

@@ -1,4 +1,4 @@
-"""Email value object with validation."""
+"""メールアドレスの値オブジェクト。"""
 
 import re
 from dataclasses import dataclass
@@ -9,12 +9,9 @@ from flow_res import Err, Ok, Result
 
 @dataclass(frozen=True)
 class Email:
-    """Email value object with validation.
+    """メールアドレスを表す不変値オブジェクト。
 
-    This is an immutable value object that wraps an email address string.
-    Email addresses are validated using a regex pattern.
-
-    Implements IValueObject[str] protocol for automatic persistence layer conversion.
+    余分な空白を除去し、簡易形式チェックを通した値だけを保持する。
     """
 
     _value: str
@@ -28,25 +25,25 @@ class Email:
     )
 
     def to_primitive(self) -> str:
-        """Convert to primitive string type for persistence.
+        """永続化向けの文字列に変換する。
 
         Returns:
-            String representation suitable for database storage
+            メールアドレスの文字列表現。
         """
         return self._value
 
     @classmethod
     def from_primitive(cls, value: str) -> Result["Email", Exception]:
-        """Create Email from primitive string.
+        """文字列からメールアドレスを復元する。
 
         Args:
-            value: String representation of email from database
+            value: データベース由来のメールアドレス。
 
         Returns:
-            Email instance
+            生成したメールアドレス。
 
         Raises:
-            ValueError: If the string is not a valid email format
+            ValueError: 形式が不正な場合。
         """
         if not value:
             return Err(ValueError("Email cannot be empty."))
@@ -58,9 +55,9 @@ class Email:
         return Ok(cls(_value=normalized))
 
     def __str__(self) -> str:
-        """String representation."""
+        """文字列表現を返す。"""
         return self.to_primitive()
 
     def __repr__(self) -> str:
-        """Developer-friendly representation."""
+        """開発者向け表現を返す。"""
         return f"Email({self.to_primitive()})"

@@ -1,4 +1,4 @@
-"""Search workflow context store port."""
+"""Retrieved context store port."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from flow_res import Result
 from app.contracts.messages.retrieved_context import RetrievedContext
 
 
-class SearchContextStoreError(Exception):
-    """Represents an error from the search workflow store."""
+class RetrievedContextStoreError(Exception):
+    """Represents an error from the retrieved context store."""
 
     message: str
 
@@ -22,19 +22,22 @@ class SearchContextStoreError(Exception):
         return self.message
 
 
-class ISearchContextStore(ABC):
-    """Store short-lived retrieved context by search session."""
+class IRetrievedContextStore(ABC):
+    """Store short-lived retrieved context by tool call."""
 
     @abstractmethod
     async def save(
         self, context: RetrievedContext
-    ) -> Result[None, SearchContextStoreError]:
-        """Save retrieved context for a search session."""
+    ) -> Result[None, RetrievedContextStoreError]:
+        """Save retrieved context for a tool call."""
         raise NotImplementedError
 
     @abstractmethod
     async def get(
-        self, search_session_id: str
-    ) -> Result[RetrievedContext, SearchContextStoreError]:
-        """Load retrieved context by search session ID."""
+        self,
+        tool_call_id: str,
+        *,
+        character_id: str | None = None,
+    ) -> Result[RetrievedContext, RetrievedContextStoreError]:
+        """Load retrieved context by tool call ID."""
         raise NotImplementedError

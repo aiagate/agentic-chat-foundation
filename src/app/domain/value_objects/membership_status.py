@@ -1,4 +1,4 @@
-"""Membership status value object."""
+"""チーム参加状態を表す値オブジェクト。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from flow_res import Err, Ok, Result
 
 
 class MembershipStatus(str, Enum):
-    """Status of team membership."""
+    """チーム参加の状態。"""
 
     PENDING = "PENDING"
     ACTIVE = "ACTIVE"
@@ -16,7 +16,7 @@ class MembershipStatus(str, Enum):
 
     @classmethod
     def from_primitive(cls, value: str) -> Result[MembershipStatus, ValueError]:
-        """Create MembershipStatus from string."""
+        """文字列から参加状態を復元する。"""
         try:
             return Ok(cls(value.upper()))
         except ValueError:

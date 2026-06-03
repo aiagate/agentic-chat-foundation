@@ -1,4 +1,4 @@
-"""Domain interfaces."""
+"""ドメインの共通インターフェース。"""
 
 from app.domain.interfaces.auditable import IAuditable
 from app.domain.interfaces.value_object import IValueObject

@@ -1,4 +1,4 @@
-"""TeamName value object with validation."""
+"""チーム名の値オブジェクト。"""
 
 from dataclasses import dataclass
 
@@ -7,12 +7,9 @@ from flow_res import Err, Ok, Result
 
 @dataclass(frozen=True)
 class TeamName:
-    """TeamName value object with validation.
+    """チーム名を表す不変値オブジェクト。
 
-    This is an immutable value object that wraps a team name string.
-    Team names are validated to ensure they meet minimum requirements.
-
-    Implements IValueObject[str] protocol for automatic persistence layer conversion.
+    長さと空白の制約を持ち、表示や永続化で同じ値を使う。
     """
 
     _value: str
@@ -22,25 +19,25 @@ class TeamName:
     MAX_LENGTH: int = 100
 
     def to_primitive(self) -> str:
-        """Convert to primitive string type for persistence.
+        """永続化向けの文字列に変換する。
 
         Returns:
-            String representation suitable for database storage
+            チーム名の文字列表現。
         """
         return self._value
 
     @classmethod
     def from_primitive(cls, value: str) -> Result["TeamName", Exception]:
-        """Create TeamName from primitive string.
+        """文字列からチーム名を復元する。
 
         Args:
-            value: String representation of team name from database
+            value: データベース由来のチーム名。
 
         Returns:
-            TeamName instance
+            生成したチーム名。
 
         Raises:
-            ValueError: If the string is not a valid team name
+            ValueError: チーム名として不正な場合。
         """
         if not value:
             return Err(ValueError("Team name cannot be empty."))
@@ -61,9 +58,9 @@ class TeamName:
         return Ok(cls(_value=value))
 
     def __str__(self) -> str:
-        """String representation."""
+        """文字列表現を返す。"""
         return self.to_primitive()
 
     def __repr__(self) -> str:
-        """Developer-friendly representation."""
+        """開発者向け表現を返す。"""
         return f"TeamName({self.to_primitive()})"
