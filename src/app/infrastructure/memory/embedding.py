@@ -1,12 +1,16 @@
-"""Deterministic embedding helpers and adapter for memory indexing."""
+"""Embedding helpers and adapters for memory indexing."""
 
 from __future__ import annotations
 
 import hashlib
 import math
+import os
 import re
+from typing import cast
 
-from flow_res import Ok, Result
+from flow_res import Err, Ok, Result
+from google import genai
+from google.genai import types
 
 from app.contracts.ports.embedding_service import (
     EmbeddingServiceError,
@@ -34,6 +38,50 @@ class DeterministicEmbeddingService(IEmbeddingService):
                 for text in texts
             ]
         )
+
+
+class GeminiEmbeddingService(IEmbeddingService):
+    """Generate embeddings using Gemini."""
+
+    def __init__(
+        self,
+        *,
+        model: str | None = None,
+        output_dimensionality: int = 768,
+    ) -> None:
+        api_key = os.getenv("GEMINI_API_KEY")
+        self._client = genai.Client(api_key=api_key) if api_key else None
+        self._model = model or os.getenv(
+            "GEMINI_EMBEDDING_MODEL",
+            "gemini-embedding-001",
+        )
+        self._output_dimensionality = output_dimensionality
+
+    async def embed_texts(
+        self,
+        texts: list[str],
+    ) -> Result[list[list[float]], EmbeddingServiceError]:
+        """Generate embeddings for a batch of texts."""
+
+        if self._client is None:
+            return Err(EmbeddingServiceError("Gemini API key not configured."))
+
+        try:
+            response = await self._client.aio.models.embed_content(
+                model=self._model,
+                contents=texts,
+                config=types.EmbedContentConfig(
+                    task_type="SEMANTIC_SIMILARITY",
+                    output_dimensionality=self._output_dimensionality,
+                ),
+            )
+            embeddings = [
+                list(cast(list[float], embedding.values))
+                for embedding in (response.embeddings or [])
+            ]
+            return Ok(embeddings)
+        except Exception as exc:
+            return Err(EmbeddingServiceError(f"Gemini embedding error: {exc}"))
 
 
 def embed_text_deterministically(

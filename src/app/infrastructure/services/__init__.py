@@ -1,29 +1,51 @@
 """Infrastructure service implementations."""
 
+from app.infrastructure.memory.embedding import (
+    DeterministicEmbeddingService,
+    GeminiEmbeddingService,
+)
+from app.infrastructure.queries.memory_index_query_service import (
+    FilesystemMemoryIndex,
+)
+from app.infrastructure.services.agent_profile_service import (
+    FilesystemAgentProfileService,
+)
 from app.infrastructure.services.gemini_service import GeminiService
 from app.infrastructure.services.gpt_service import GptService
 from app.infrastructure.services.memory_consolidation import (
-    DeterministicMemoryConsolidationService,
+    MemoryConsolidationService,
 )
-from app.infrastructure.services.memory_embedding import DeterministicEmbeddingService
-from app.infrastructure.services.memory_index import FilesystemMemoryIndex
+from app.infrastructure.services.memory_index_maintenance import (
+    MemoryIndexMaintenanceService,
+)
+from app.infrastructure.services.memory_semantic_extraction import (
+    MemorySemanticExtractionService,
+)
 from app.infrastructure.services.memory_service import FilesystemMemoryService
+from app.infrastructure.services.memory_write_service import (
+    FilesystemMemoryWriteService,
+)
 from app.infrastructure.services.mock_ai_service import MockAIService
 from app.infrastructure.services.ollama_web_search_service import (
     OllamaWebSearchService,
 )
-from app.infrastructure.services.search_context_store import (
-    InMemorySearchContextStore,
-)
+from app.infrastructure.services.tool_catalog import StaticToolCatalog
+from app.infrastructure.services.tool_executor import GenericToolExecutor
 
 __all__ = [
-    "DeterministicMemoryConsolidationService",
+    "MemoryConsolidationService",
+    "MemoryIndexMaintenanceService",
     "DeterministicEmbeddingService",
+    "GeminiEmbeddingService",
+    "FilesystemAgentProfileService",
     "FilesystemMemoryService",
+    "FilesystemMemoryWriteService",
     "FilesystemMemoryIndex",
     "GeminiService",
     "GptService",
+    "MemorySemanticExtractionService",
     "MockAIService",
     "OllamaWebSearchService",
-    "InMemorySearchContextStore",
+    "StaticToolCatalog",
+    "GenericToolExecutor",
 ]

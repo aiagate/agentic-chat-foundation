@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import (
@@ -40,6 +41,20 @@ def get_engine() -> AsyncEngine:
     if _engine is None:
         raise RuntimeError("Database not initialized. Call init_db() first.")
     return _engine
+
+
+def get_sqlite_database_path() -> Path | None:
+    """Return the configured SQLite database file path, if any."""
+
+    if _engine is None:
+        return None
+    url = _engine.url
+    if not url.drivername.startswith("sqlite"):
+        return None
+    database = url.database
+    if database is None or database in {":memory:", ""}:
+        return None
+    return Path(database)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession]:

@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from app.infrastructure.services.memory_decay import calculate_decay_score
+from app.infrastructure.memory.decay import calculate_decay_score
 
 
 def test_decay_score_is_deterministic_for_same_inputs() -> None:

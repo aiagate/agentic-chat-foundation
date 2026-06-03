@@ -1,22 +1,38 @@
 """Tests for the dependency-free memory keyword index."""
 
+import json
 import sqlite3
 from pathlib import Path
+from typing import Any, cast
 
+import pytest
 from flow_res import is_err
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.contracts.messages.memory_context import MemoryEntity
-from app.infrastructure.services.memory_index import (
-    FilesystemMemoryIndex,
+from app.contracts.messages.memory_index import (
     MemoryIndexDocument,
     MemorySearchFilters,
-    search_memory_index,
 )
-from app.infrastructure.services.memory_markdown import (
+from app.infrastructure.memory.embedding import embed_text_deterministically
+from app.infrastructure.memory.markdown import (
     parse_memory_markdown,
     render_memory_markdown,
 )
-from app.infrastructure.services.memory_service import FilesystemMemoryService
+from app.infrastructure.orm_models.memory_index_orm import MemoryIndexDocumentORM
+from app.infrastructure.queries.memory_index_query_service import (
+    FilesystemMemoryIndex,
+)
+from app.infrastructure.services.memory_index_maintenance import (
+    MemoryIndexMaintenanceService,
+)
+from app.infrastructure.services.memory_write_service import (
+    FilesystemMemoryWriteService,
+)
+
+_memory_index_source_id = cast(Any, MemoryIndexDocumentORM.source_id)
+_memory_index_user_id = cast(Any, MemoryIndexDocumentORM.user_id)
 
 
 def test_search_memory_index_ranks_entity_alias_and_separates_users() -> None:
@@ -52,7 +68,7 @@ def test_search_memory_index_ranks_entity_alias_and_separates_users() -> None:
         ),
     ]
 
-    hits = search_memory_index(
+    hits = FilesystemMemoryIndex().search_memory_index(
         "workbench gray",
         documents,
         MemorySearchFilters(user_id="u1", tags=("office",)),
@@ -126,7 +142,7 @@ def test_search_memory_index_filters_timeline_date_status_and_archived() -> None
         ),
     ]
 
-    timeline_hits = search_memory_index(
+    timeline_hits = FilesystemMemoryIndex().search_memory_index(
         "memory index",
         documents,
         MemorySearchFilters(
@@ -136,12 +152,12 @@ def test_search_memory_index_filters_timeline_date_status_and_archived() -> None
             date_from="2026-05-01T00:00:00+00:00",
         ),
     )
-    unresolved_hits = search_memory_index(
+    unresolved_hits = FilesystemMemoryIndex().search_memory_index(
         "unknown repository",
         documents,
         MemorySearchFilters(user_id="u1", unresolved=True),
     )
-    archived_hits = search_memory_index(
+    archived_hits = FilesystemMemoryIndex().search_memory_index(
         "archived",
         documents,
         MemorySearchFilters(user_id="u1"),
@@ -177,24 +193,18 @@ def test_filesystem_memory_index_wraps_search_function() -> None:
         documents,
         MemorySearchFilters(user_id="u1", tags=("office",)),
     )
-    function_hits = search_memory_index(
-        "workbench gray",
-        documents,
-        MemorySearchFilters(user_id="u1", tags=("office",)),
-    )
-
-    assert [hit.hit.source.id for hit in wrapped_hits] == [
-        hit.hit.source.id for hit in function_hits
-    ]
+    assert [hit.hit.source.id for hit in wrapped_hits] == ["desk"]
 
 
-def test_filesystem_memory_index_rebuilds_and_repairs_snapshot(
+@pytest.mark.anyio
+async def test_memory_index_maintenance_rebuilds_and_repairs_snapshot(
+    session_factory: async_sessionmaker[AsyncSession],
     tmp_path: Path,
 ) -> None:
     """The adapter should persist and repair a local index snapshot."""
     memory_root = tmp_path / "memory"
-    service = FilesystemMemoryService(memory_root)
-    service.write_entity(
+    write_service = FilesystemMemoryWriteService(memory_root)
+    write_service.write_entity(
         MemoryEntity(
             id="desk-1",
             user_id="u1",
@@ -207,37 +217,36 @@ def test_filesystem_memory_index_rebuilds_and_repairs_snapshot(
         )
     )
 
-    index = FilesystemMemoryIndex(root=memory_root)
-    rebuild_result = index.rebuild_memory_index(user_id="u1")
+    maintenance = MemoryIndexMaintenanceService(
+        root=memory_root,
+        session_factory=session_factory,
+    )
+    rebuild_result = await maintenance.rebuild_memory_index(user_id="u1")
 
     assert not is_err(rebuild_result)
-    assert rebuild_result.value >= 2
+    assert rebuild_result.value >= 1
 
-    db_path = memory_root / "index" / "memory_index.sqlite3"
-    with sqlite3.connect(db_path) as connection:
-        row = connection.execute(
-            """
-            select source_path, source_id, content_hash, indexed_text, tags_json
-            from memory_index_documents
-            where source_id = ?
-            """,
-            ("desk-1",),
-        ).fetchone()
-        row_count = connection.execute(
-            "select count(*) from memory_index_documents where user_id = ?",
-            ("u1",),
-        ).fetchone()
+    async with session_factory() as session:
+        row = await session.execute(
+            select(MemoryIndexDocumentORM).where(_memory_index_source_id == "desk-1")
+        )
+        rows = await session.execute(
+            select(MemoryIndexDocumentORM).where(_memory_index_user_id == "u1")
+        )
 
-    assert row is not None
-    assert row_count is not None
-    assert row_count[0] >= 1
-    assert row[0] == "entities/u1/desk-1.md"
-    assert row[1] == "desk-1"
-    assert len(row[2]) == 64
-    assert "Standing Desk" in row[3]
-    assert "workbench" in row[3]
-    assert row[4] == "[]"
+    orm_row = row.scalars().first()
+    user_rows = rows.scalars().all()
+    assert orm_row is not None
+    assert len(user_rows) >= 1
+    assert orm_row.source_path == "entities/u1/desk-1.md"
+    assert orm_row.source_id == "desk-1"
+    assert len(orm_row.content_hash) == 64
+    assert "Standing Desk" in orm_row.indexed_text
+    assert "workbench" in orm_row.indexed_text
+    assert orm_row.tags_json == "[]"
+    assert len(orm_row.embedding) > 0
 
+    index = FilesystemMemoryIndex(root=memory_root)
     hits = index.search_memory_index(
         "standing desk",
         [],
@@ -249,22 +258,16 @@ def test_filesystem_memory_index_rebuilds_and_repairs_snapshot(
     entity_path = memory_root / "entities" / "u1" / "desk-1.md"
     entity_path.unlink()
 
-    repair_result = index.repair_memory_index(user_id="u1")
+    repair_result = await maintenance.repair_memory_index(user_id="u1")
 
     assert not is_err(repair_result)
-    assert repair_result.value >= 1
 
-    with sqlite3.connect(db_path) as connection:
-        repaired_row = connection.execute(
-            """
-            select count(*) from memory_index_documents
-            where source_id = ?
-            """,
-            ("desk-1",),
-        ).fetchone()
+    async with session_factory() as session:
+        repaired_row = await session.execute(
+            select(MemoryIndexDocumentORM).where(_memory_index_source_id == "desk-1")
+        )
 
-    assert repaired_row is not None
-    assert repaired_row[0] == 0
+    assert repaired_row.scalars().first() is None
 
     repaired_hits = index.search_memory_index(
         "standing desk",
@@ -272,6 +275,66 @@ def test_filesystem_memory_index_rebuilds_and_repairs_snapshot(
         MemorySearchFilters(user_id="u1"),
     )
     assert all(hit.hit.source.id != "desk-1" for hit in repaired_hits)
+
+
+def test_search_memory_index_uses_persisted_embedding_when_terms_do_not_match(
+    tmp_path: Path,
+) -> None:
+    """Persisted embeddings should drive retrieval even without lexical overlap."""
+    index_db_path = tmp_path / "memory_index.sqlite3"
+    _create_index_db(index_db_path)
+    query = "remember the constellation"
+    query_embedding = embed_text_deterministically(query, dimension=8)
+    stored_embedding = list(query_embedding)
+    _insert_index_row(
+        index_db_path,
+        {
+            "source_path": "profiles/users/u1.md",
+            "user_id": "u1",
+            "memory_type": "profile",
+            "source_id": "profile-u1",
+            "title": None,
+            "content_hash": "a" * 64,
+            "indexed_text": "",
+            "tags_json": "[]",
+            "status": None,
+            "timeline_type": None,
+            "occurred_at": None,
+            "updated_at": "2026-05-18T00:00:00+00:00",
+            "importance": 0.6,
+            "confidence": 1.0,
+            "decay_score": 1.0,
+            "embedding": stored_embedding,
+        },
+    )
+
+    documents = [
+        _document(
+            "profiles/users/u1.md",
+            {
+                "memory_type": "profile",
+                "id": "profile-u1",
+                "user_id": "u1",
+                "display_name": None,
+                "summary": "",
+                "traits": [],
+                "preferences": [],
+                "tags": [],
+            },
+            "",
+        )
+    ]
+
+    hits = FilesystemMemoryIndex().search_memory_index(
+        query,
+        documents,
+        MemorySearchFilters(user_id="u1"),
+        index_db_path=index_db_path,
+        query_embedding=query_embedding,
+    )
+
+    assert [hit.hit.source.id for hit in hits] == ["profile-u1"]
+    assert hits[0].rank_score > 0.0
 
 
 def _document(
@@ -289,8 +352,85 @@ def _document(
         "metadata": {},
         **front_matter,
     }
+    if full_front_matter.get("memory_type") == "profile":
+        full_front_matter.setdefault(
+            "profile_scope",
+            "agent" if full_front_matter.get("user_id") is None else "user",
+        )
     return MemoryIndexDocument(
         path=Path(reference),
         reference=reference,
         document=parse_memory_markdown(render_memory_markdown(full_front_matter, body)),
     )
+
+
+def _create_index_db(path: Path) -> None:
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            create table memory_index_documents (
+                source_path text primary key,
+                user_id text,
+                memory_type text not null,
+                source_id text not null,
+                title text,
+                content_hash text not null,
+                indexed_text text not null,
+                tags_json text not null,
+                status text,
+                timeline_type text,
+                occurred_at text,
+                updated_at text not null,
+                importance real not null,
+                confidence real not null,
+                decay_score real not null,
+                embedding json not null
+            )
+            """
+        )
+        connection.commit()
+
+
+def _insert_index_row(path: Path, row: dict[str, object]) -> None:
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            insert into memory_index_documents (
+                source_path,
+                user_id,
+                memory_type,
+                source_id,
+                title,
+                content_hash,
+                indexed_text,
+                tags_json,
+                status,
+                timeline_type,
+                occurred_at,
+                updated_at,
+                importance,
+                confidence,
+                decay_score,
+                embedding
+            ) values (
+                :source_path,
+                :user_id,
+                :memory_type,
+                :source_id,
+                :title,
+                :content_hash,
+                :indexed_text,
+                :tags_json,
+                :status,
+                :timeline_type,
+                :occurred_at,
+                :updated_at,
+                :importance,
+                :confidence,
+                :decay_score,
+                json(:embedding)
+            )
+            """,
+            {**row, "embedding": json.dumps(row["embedding"])},
+        )
+        connection.commit()

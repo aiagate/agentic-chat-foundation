@@ -16,6 +16,7 @@ from app.infrastructure.orm_models import (
     ChatORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
     DiscordChatORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
     LineChatORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
+    MemoryIndexDocumentORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
     TeamMembershipORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
     TeamORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
     UserORM,  # pyright: ignore[reportUnusedImport] # noqa: F401

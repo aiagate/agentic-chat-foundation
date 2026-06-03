@@ -11,8 +11,9 @@ from app.contracts.messages.memory_context import (
     MemoryFrameSectionName,
     MemorySource,
 )
-from app.infrastructure.services.memory_index import MemorySearchResult
-from app.infrastructure.services.memory_markdown import (
+from app.contracts.messages.memory_index import MemorySearchResult
+from app.contracts.messages.relationship_growth import RELATIONSHIP_ENTITY_TYPE
+from app.infrastructure.memory.markdown import (
     front_matter_string,
     front_matter_string_list,
 )
@@ -85,6 +86,8 @@ def _section_name(
             return "primary"
         return "functional"
     if memory_type == "entity":
+        if front_matter.get("entity_type") == RELATIONSHIP_ENTITY_TYPE:
+            return "functional"
         status = front_matter.get("status")
         if status == "unresolved" or front_matter.get("missing_attributes"):
             return "functional"
@@ -92,7 +95,14 @@ def _section_name(
             return "primary"
         return "peripheral"
     if memory_type == "timeline":
-        if front_matter.get("timeline_type") == "daily_summary" and score >= 1.0:
+        if (
+            front_matter.get("timeline_type")
+            in {
+                "daily_summary",
+                "section_summary",
+            }
+            and score >= 1.0
+        ):
             return "primary"
         return "peripheral"
     return "peripheral"
@@ -123,8 +133,11 @@ def _source_text(
 
 def _profile_lines(front_matter: Mapping[str, object]) -> list[str]:
     lines: list[str] = []
+    profile_part = front_matter_string(front_matter.get("profile_part"))
     display_name = front_matter_string(front_matter.get("display_name"))
     summary = front_matter_string(front_matter.get("summary"))
+    if profile_part:
+        lines.append(f"- profile_part: {profile_part}")
     if display_name:
         lines.append(f"- display_name: {display_name}")
     if summary:
@@ -156,6 +169,7 @@ def _timeline_lines(front_matter: Mapping[str, object]) -> list[str]:
 
 def _entity_lines(front_matter: Mapping[str, object]) -> list[str]:
     lines = [
+        f"- id: {front_matter_string(front_matter.get('id'))}",
         f"- label: {front_matter_string(front_matter.get('label'))}",
         f"- entity_type: {front_matter_string(front_matter.get('entity_type'))}",
         f"- status: {front_matter_string(front_matter.get('status'), default='active')}",

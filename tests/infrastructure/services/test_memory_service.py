@@ -10,17 +10,23 @@ from app.contracts.messages.memory_context import (
     MemoryEntity,
     MemoryProfile,
 )
-from app.infrastructure.services.memory_index import FilesystemMemoryIndex
-from app.infrastructure.services.memory_markdown import (
+from app.infrastructure.memory.markdown import (
     MemoryMarkdownError,
     parse_memory_markdown,
     render_memory_markdown,
 )
-from app.infrastructure.services.memory_service import FilesystemMemoryService
-from app.infrastructure.services.memory_store import (
+from app.infrastructure.memory.store import (
     FilesystemMemoryStore,
     encode_path_segment,
 )
+from app.infrastructure.queries.memory_index_query_service import (
+    FilesystemMemoryIndex,
+)
+from app.infrastructure.services.memory_service import FilesystemMemoryService
+from app.infrastructure.services.memory_write_service import (
+    FilesystemMemoryWriteService,
+)
+from tests._agent_profile_fixture import copy_agent_profile_bundle
 
 
 @pytest.mark.anyio
@@ -28,6 +34,7 @@ async def test_filesystem_memory_service_retrieve_returns_app_context_pack(
     tmp_path: Path,
 ) -> None:
     """The adapter should return the app-level memory DTO."""
+    copy_agent_profile_bundle(tmp_path / "memory")
     service = FilesystemMemoryService(tmp_path / "memory")
     result = await service.retrieve("hello", "u1")
 
@@ -41,10 +48,13 @@ async def test_filesystem_memory_service_retrieve_returns_app_context_pack(
     assert pack.entities == []
     assert pack.context_frame is not None
     assert pack.assembled_context == pack.context_frame.assembled_context
-    assert "## Source: profiles/agent.md" in (pack.assembled_context or "")
+    assert "## Source: profiles/agent/SOUL.md" in (pack.assembled_context or "")
 
-    profile_file = tmp_path / "memory" / "profiles" / "agent.md"
-    assert profile_file.exists()
+    profile_dir = tmp_path / "memory" / "profiles" / "agent"
+    assert (profile_dir / "AGENTS.md").exists()
+    assert (profile_dir / "SOUL.md").exists()
+    assert (profile_dir / "PERSONAL.md").exists()
+    assert (profile_dir / "MEMORY.md").exists()
 
 
 @pytest.mark.anyio
@@ -52,36 +62,21 @@ async def test_filesystem_memory_service_writes_profile_and_entities(
     tmp_path: Path,
 ) -> None:
     """Profile and entity memories should persist as Markdown files."""
-    service = FilesystemMemoryService(tmp_path / "memory")
+    write_service = FilesystemMemoryWriteService(tmp_path / "memory")
 
-    service.write_profile(
+    write_service.write_profile(
         MemoryProfile(
-            user_id="ai",
-            display_name="白鷺 レイナ",
-            summary=(
-                "17歳の白鷺家の令嬢。寡黙で理性的、礼儀正しいが、内面はかなり情が深い。"
-            ),
-            traits=[
-                "寡黙",
-                "理性的",
-                "礼儀正しい",
-                "内面はかなり情が深い",
-                "感情を外に出すのが苦手",
-                "奥ゆかしい",
-            ],
-            preferences=[
-                "夜景を見ること",
-                "クラシックピアノ",
-                "読書",
-                "推理小説",
-                "静かな場所",
-            ],
+            user_id="u1",
+            display_name="ユーザーA",
+            summary="落ち着いて記録を残す。",
+            traits=["丁寧"],
+            preferences=["静かな場所"],
         )
     )
-    service.write_entity(
+    write_service.write_entity(
         MemoryEntity(
             id="ENT-001",
-            user_id="ai",
+            user_id="u1",
             label="机",
             entity_type="object",
             status="active",
@@ -90,24 +85,27 @@ async def test_filesystem_memory_service_writes_profile_and_entities(
             confidence=0.9,
         )
     )
+    service = FilesystemMemoryService(tmp_path / "memory")
 
-    result = await service.retrieve("profile", "ai")
+    result = await service.retrieve("profile", "u1")
 
     assert not is_err(result)
     assert result.value.profile is not None
-    assert result.value.profile.display_name == "白鷺 レイナ"
+    assert result.value.profile.display_name == "ユーザーA"
     assert result.value.entities[0].label == "机"
     assert result.value.search_hits
     assert result.value.timelines == []
 
-    profile_file = tmp_path / "memory" / "profiles" / "agent.md"
-    entity_file = tmp_path / "memory" / "entities" / "ai" / "ENT-001.md"
-    assert profile_file.read_text(encoding="utf-8").startswith("---\n")
+    user_profile_file = tmp_path / "memory" / "profiles" / "users" / "u1.md"
+    entity_file = tmp_path / "memory" / "entities" / "u1" / "ENT-001.md"
+    assert user_profile_file.read_text(encoding="utf-8").startswith("---\n")
     assert entity_file.read_text(encoding="utf-8").startswith("---\n")
-    assert "schema_version: 1" in profile_file.read_text(encoding="utf-8")
+    user_doc = parse_memory_markdown(user_profile_file.read_text(encoding="utf-8"))
+    assert user_doc.front_matter["profile_scope"] == "user"
+    assert "summary" in user_doc.front_matter
+    assert "traits" in user_doc.front_matter
+    assert "preferences" in user_doc.front_matter
     assert "memory_type: entity" in entity_file.read_text(encoding="utf-8")
-    assert "白鷺 レイナ" in profile_file.read_text(encoding="utf-8")
-    assert "都会の夜景が似合う" in profile_file.read_text(encoding="utf-8")
     assert "机" in entity_file.read_text(encoding="utf-8")
 
 
@@ -165,14 +163,15 @@ async def test_filesystem_memory_service_writes_timeline_markdown(
     tmp_path: Path,
 ) -> None:
     """Chat logs should persist as timeline Markdown files."""
-    service = FilesystemMemoryService(tmp_path / "memory")
+    write_service = FilesystemMemoryWriteService(tmp_path / "memory")
 
-    await service.add_log(
+    await write_service.add_log(
         user_id="u1",
         role="user",
         content="remember this",
         metadata={"chat_type": "DISCORD"},
     )
+    service = FilesystemMemoryService(tmp_path / "memory")
 
     result = await service.retrieve("remember", "u1")
 
@@ -291,18 +290,26 @@ async def test_filesystem_memory_service_prefers_memory_root_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """MEMORY_ROOT should be preferred while MEMORY_AGENT_ROOT remains fallback."""
+    """MEMORY_ROOT should control where the agent bundle is read from."""
     preferred_root = tmp_path / "preferred"
-    legacy_root = tmp_path / "legacy"
     monkeypatch.setenv("MEMORY_ROOT", str(preferred_root))
-    monkeypatch.setenv("MEMORY_AGENT_ROOT", str(legacy_root))
 
+    copy_agent_profile_bundle(preferred_root)
     service = FilesystemMemoryService()
     result = await service.retrieve("hello", "u1")
 
     assert not is_err(result)
-    assert (preferred_root / "profiles" / "agent.md").exists()
-    assert not (legacy_root / "profiles" / "agent.md").exists()
+    assert (preferred_root / "profiles" / "agent" / "SOUL.md").exists()
+    assert (preferred_root / "profiles" / "agent" / "AGENTS.md").exists()
+    agents_text = (preferred_root / "profiles" / "agent" / "AGENTS.md").read_text(
+        encoding="utf-8"
+    )
+    assert "communication_style:" not in agents_text
+    assert "known_constraints:" not in agents_text
+    assert "Do not mention that you are an AI" in agents_text
+    assert "Treat conversation like hosting a guest" in agents_text
+    assert "Relational habits" in agents_text
+    assert "at most one easy-to-answer question" in agents_text
 
 
 @pytest.mark.anyio
@@ -310,6 +317,7 @@ async def test_filesystem_memory_service_accepts_concrete_index(
     tmp_path: Path,
 ) -> None:
     """The service should accept the concrete filesystem index implementation."""
+    copy_agent_profile_bundle(tmp_path / "memory")
     service = FilesystemMemoryService(
         tmp_path / "memory",
         index=FilesystemMemoryIndex(),

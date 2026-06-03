@@ -8,13 +8,7 @@ from flow_med import Request, RequestHandler
 from flow_res import Err, Ok, Result, is_err
 from injector import inject
 
-from app.contracts.ports.memory_index import IMemoryIndex
-from app.infrastructure.services.memory_index import (
-    MemoryIndexDocument,
-    MemorySearchFilters,
-    MemorySearchResult,
-)
-from app.infrastructure.services.memory_store import StoredMemoryDocument
+from app.contracts.ports.memory_index_maintenance import IMemoryIndexMaintenance
 from app.usecases.result import ErrorType, UseCaseError
 
 
@@ -43,20 +37,15 @@ class RepairMemoryIndexHandler(
     @inject
     def __init__(
         self,
-        memory_index: IMemoryIndex[
-            StoredMemoryDocument,
-            MemoryIndexDocument,
-            MemorySearchResult,
-            MemorySearchFilters,
-        ],
+        memory_index_maintenance: IMemoryIndexMaintenance,
     ) -> None:
-        self._memory_index = memory_index
+        self._memory_index_maintenance = memory_index_maintenance
 
     async def handle(
         self, request: RepairMemoryIndexCommand
     ) -> Result[RepairMemoryIndexResult, UseCaseError]:
         """Repair the persistent memory index through the port."""
-        index_result = self._memory_index.repair_memory_index(
+        index_result = await self._memory_index_maintenance.repair_memory_index(
             user_id=request.user_id,
         )
         if is_err(index_result):

@@ -9,7 +9,8 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from urllib.parse import quote
 
-from app.infrastructure.services.memory_markdown import (
+from app.contracts.messages.character_definition import selected_character_id
+from app.infrastructure.memory.markdown import (
     MemoryMarkdownDocument,
     MemoryMarkdownError,
     parse_memory_markdown,
@@ -19,6 +20,7 @@ from app.infrastructure.services.memory_markdown import (
 _SAFE_SEGMENT_CHARS = (
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
 )
+_AGENT_PROFILE_PARTS: tuple[str, ...] = ("AGENTS", "SOUL", "PERSONAL", "MEMORY")
 _WINDOWS_RESERVED_NAMES = frozenset(
     {
         "CON",
@@ -90,13 +92,57 @@ class FilesystemMemoryStore:
 
     def __post_init__(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
-        for relative in ("profiles/users", "timeline", "entities"):
+        for relative in ("profiles/agent", "profiles/users", "timeline", "entities"):
             (self.root / relative).mkdir(parents=True, exist_ok=True)
 
-    def agent_profile_path(self) -> Path:
-        """Return the global agent profile path."""
+    def agent_profile_dir(self, character_id: str | None = None) -> Path:
+        """Return the agent profile bundle directory."""
 
-        return self.root / "profiles" / "agent.md"
+        resolved_character_id = character_id or selected_character_id()
+        return (
+            self.root
+            / "profiles"
+            / "agent"
+            / encode_path_segment(resolved_character_id)
+        )
+
+    def agent_profile_part_path(
+        self,
+        part: str,
+        *,
+        character_id: str | None = None,
+    ) -> Path:
+        """Return one agent profile bundle file path."""
+
+        normalized = part.upper()
+        if normalized not in _AGENT_PROFILE_PARTS:
+            raise MemoryStoreError(f"Invalid agent profile part: {part!r}")
+        if character_id is not None:
+            return self.agent_profile_dir(character_id) / f"{normalized}.md"
+
+        active_path = (
+            self.agent_profile_dir(selected_character_id()) / f"{normalized}.md"
+        )
+        if active_path.exists():
+            return active_path
+
+        legacy_path = self.root / "profiles" / "agent" / f"{normalized}.md"
+        if legacy_path.exists():
+            return legacy_path
+
+        return active_path
+
+    def agent_profile_bundle_paths(
+        self,
+        *,
+        character_id: str | None = None,
+    ) -> dict[str, Path]:
+        """Return all agent profile bundle paths keyed by part name."""
+
+        return {
+            part: self.agent_profile_part_path(part, character_id=character_id)
+            for part in _AGENT_PROFILE_PARTS
+        }
 
     def user_profile_path(self, user_id: str) -> Path:
         """Return a user-scoped profile path."""
@@ -144,6 +190,26 @@ class FilesystemMemoryStore:
             / f"{day:%Y}"
             / f"{day:%m}"
             / f"{day:%Y-%m-%d}.md"
+        )
+
+    def section_timeline_path(
+        self,
+        *,
+        user_id: str,
+        day: date,
+        section_slug: str,
+    ) -> Path:
+        """Return the user-scoped section Timeline summary path."""
+
+        safe_slug = encode_path_segment(section_slug)
+        return (
+            self.root
+            / "timeline"
+            / encode_path_segment(user_id)
+            / "sections"
+            / f"{day:%Y}"
+            / f"{day:%m}"
+            / f"{day:%Y-%m-%d}_{safe_slug}.md"
         )
 
     def read_document(

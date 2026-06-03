@@ -1,17 +1,12 @@
 """Tests for memory index rebuild and repair use cases."""
 
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 from flow_res import Err, Ok, is_err
 
-from app.contracts.ports.memory_index import IMemoryIndex
-from app.infrastructure.services.memory_index import (
-    MemoryIndexDocument,
-    MemorySearchFilters,
-    MemorySearchResult,
-)
-from app.infrastructure.services.memory_store import StoredMemoryDocument
+from app.contracts.ports.memory_index_maintenance import IMemoryIndexMaintenance
 from app.usecases.memory.rebuild_memory_index import (
     RebuildMemoryIndexCommand,
     RebuildMemoryIndexHandler,
@@ -21,20 +16,15 @@ from app.usecases.memory.repair_memory_index import (
     RepairMemoryIndexHandler,
 )
 
-MemoryIndexPort = IMemoryIndex[
-    StoredMemoryDocument,
-    MemoryIndexDocument,
-    MemorySearchResult,
-    MemorySearchFilters,
-]
+MemoryIndexPort = IMemoryIndexMaintenance
 
 
 @pytest.fixture
 def mock_memory_index(mocker: Any) -> MemoryIndexPort:
-    """Return a mocked memory index port."""
+    """Return a mocked memory index maintenance port."""
     index = mocker.Mock(spec=MemoryIndexPort)
-    index.rebuild_memory_index = mocker.Mock(return_value=Ok(3))
-    index.repair_memory_index = mocker.Mock(return_value=Ok(2))
+    index.rebuild_memory_index = AsyncMock(return_value=Ok(3))
+    index.repair_memory_index = AsyncMock(return_value=Ok(2))
     return index
 
 
@@ -57,7 +47,7 @@ async def test_rebuild_memory_index_success(
 async def test_rebuild_memory_index_failure(mocker: Any) -> None:
     """Port errors should be mapped to a use case error."""
     index = mocker.Mock(spec=MemoryIndexPort)
-    index.rebuild_memory_index = mocker.Mock(
+    index.rebuild_memory_index = AsyncMock(
         return_value=Err(Exception("memory index error"))
     )
     handler = RebuildMemoryIndexHandler(index)
@@ -87,7 +77,7 @@ async def test_repair_memory_index_success(
 async def test_repair_memory_index_failure(mocker: Any) -> None:
     """Port errors should be mapped to a use case error."""
     index = mocker.Mock(spec=MemoryIndexPort)
-    index.repair_memory_index = mocker.Mock(
+    index.repair_memory_index = AsyncMock(
         return_value=Err(Exception("memory index error"))
     )
     handler = RepairMemoryIndexHandler(index)

@@ -3,7 +3,7 @@
 import pytest
 from flow_res import is_err
 
-from app.infrastructure.services.memory_embedding import (
+from app.infrastructure.memory.embedding import (
     DeterministicEmbeddingService,
     embed_text_deterministically,
     embed_texts_deterministically,

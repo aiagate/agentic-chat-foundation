@@ -1,5 +1,8 @@
 """Pytest configuration and fixtures."""
 
+from __future__ import annotations
+
+import os
 from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock
 
@@ -61,6 +64,39 @@ async def session_factory(
 def anyio_backend() -> str:
     """Specify anyio backend for pytest-anyio."""
     return "asyncio"
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Register custom test markers."""
+
+    config.addinivalue_line(
+        "markers",
+        (
+            "scenario: live external-service scenario tests that are skipped "
+            "unless RUN_SCENARIO_TESTS=1"
+        ),
+    )
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config,
+    items: list[pytest.Item],
+) -> None:
+    """Skip live scenario tests unless they are explicitly enabled."""
+
+    del config
+    if os.getenv("RUN_SCENARIO_TESTS") == "1":
+        return
+
+    skip_marker = pytest.mark.skip(
+        reason=(
+            "Scenario tests require RUN_SCENARIO_TESTS=1 and a configured live AI "
+            "provider."
+        )
+    )
+    for item in items:
+        if item.get_closest_marker("scenario") is not None:
+            item.add_marker(skip_marker)
 
 
 @pytest.fixture
