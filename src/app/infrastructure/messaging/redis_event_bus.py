@@ -144,6 +144,29 @@ class RedisEventBus(IEventBus):
     ) -> None:
         if handlers := self._handlers.get(handler_key):
             # 複数ハンドラがある場合は並行実行する
-            await asyncio.gather(
+            logger.debug(
+                "Dispatching event to %d handler(s): %s",
+                len(handlers),
+                handler_key,
+            )
+            results = await asyncio.gather(
                 *[handler(payload) for handler in handlers], return_exceptions=True
             )
+            for handler, result in zip(handlers, results, strict=False):
+                if isinstance(result, Exception):
+                    logger.error(
+                        "Handler failed for topic %s (%s) with payload %s: %s",
+                        handler_key,
+                        getattr(handler, "__name__", repr(handler)),
+                        payload,
+                        result,
+                        exc_info=(type(result), result, result.__traceback__),
+                    )
+                else:
+                    logger.debug(
+                        "Handler completed for topic %s: %s",
+                        handler_key,
+                        getattr(handler, "__name__", repr(handler)),
+                    )
+        else:
+            logger.debug("No handlers registered for topic: %s", handler_key)
