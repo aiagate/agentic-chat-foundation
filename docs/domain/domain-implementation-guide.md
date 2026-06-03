@@ -1,8 +1,11 @@
 # Domain層実装ガイド
 
-最終更新日: 2025-11-26
+最終更新日: 2026-06-03
 
 このドキュメントは、Domain層（ドメイン層）の実装方法と、プロジェクトで使用するパターンを説明します。
+
+このリポジトリでは、アプリケーション境界の契約は `src/app/contracts/ports/` と `src/app/contracts/messages/` に集約しています。
+`src/app/domain/interfaces/` は、Domain層の中で再利用する契約だけを置く場所です。
 
 ---
 
@@ -11,7 +14,7 @@
 1. [Domain層の役割](#domain層の役割)
 2. [ディレクトリ構成](#ディレクトリ構成)
 3. [Aggregate（集約）の実装](#aggregate集約の実装)
-4. [インターフェースの定義](#インターフェースの定義)
+4. [インターフェースと契約の配置](#インターフェースと契約の配置)
 5. [バリデーション](#バリデーション)
 6. [タイムスタンプ管理（IAuditable）](#タイムスタンプ管理iauditable)
 7. [ベストプラクティス](#ベストプラクティス)
@@ -36,186 +39,137 @@ Domain層は**ビジネスロジックの中核**であり、以下の責務を�
 
 ```
 src/app/domain/
-├── aggregates/          # 集約ルート（Aggregate Roots）
-│   ├── __init__.py
-│   └── user.py         # User集約
-├── interfaces/          # ドメインインターフェース
-│   ├── __init__.py
-│   └── auditable.py    # IAuditableプロトコル
-└── value_objects/       # 値オブジェクト（将来追加）
-    └── __init__.py
+├── aggregates/          # 集約ルート
+│   ├── chat.py
+│   ├── team.py
+│   ├── team_membership.py
+│   └── user.py
+├── interfaces/          # Domain内部で再利用する契約
+│   ├── auditable.py
+│   ├── value_object.py
+│   └── versionable.py
+├── queries/             # 読み取り専用クエリ契約
+├── repositories/        # リポジトリ / Unit of Work 契約
+└── value_objects/       # 値オブジェクト
+    ├── display_name.py
+    ├── email.py
+    ├── user_id.py
+    └── version.py
 ```
 
 ### ファイル命名規則
 
-- **集約**: `snake_case.py`（例: `user.py`, `order.py`）
-- **クラス名**: `PascalCase`（例: `User`, `Order`）
+- **集約**: `snake_case.py`（例: `user.py`, `team_membership.py`）
+- **クラス名**: `PascalCase`（例: `User`, `TeamMembership`）
 - **インターフェース**: `I` プレフィックス（例: `IAuditable`）
 
 ---
 
 ## Aggregate（集約）の実装
 
-### 基本構造
+### 現行の実装スタイル
 
-集約は `@dataclass` デコレータを使用して実装します。
-
-```python
-from dataclasses import dataclass
-
-
-@dataclass
-class User:
-    """User aggregate root.
-
-    Represents a user in the system with name and email.
-    """
-
-    id: int
-    name: str
-    email: str
-
-    def __post_init__(self) -> None:
-        """Validate user data."""
-        if not self.name:
-            raise ValueError("User name cannot be empty.")
-        if not self.email:
-            raise ValueError("User email cannot be empty.")
-```
-
-### 主要な設計原則
-
-#### 1. **イミュータビリティ（不変性）の原則**
-
-ドメインオブジェクトの状態は、ドメインメソッドを通じてのみ変更します。
-
-✅ **良い例**:
-
-```python
-@dataclass
-class User:
-    id: int
-    name: str
-    email: str
-
-    def change_email(self, new_email: str) -> "User":
-        """ビジネスルールに従ってメールアドレスを変更"""
-        if not new_email:
-            raise ValueError("Email cannot be empty.")
-        if "@" not in new_email:
-            raise ValueError("Invalid email format.")
-
-        self.email = new_email
-        return self
-```
-
-❌ **悪い例**:
-
-```python
-# ドメインメソッドを経由せず、直接変更
-user.email = "new@example.com"  # バリデーションがスキップされる！
-```
-
-#### 2. **不変条件（Invariants）の保証**
-
-集約は常に有効な状態を保ちます。
-
-```python
-@dataclass
-class Order:
-    id: int
-    items: list[OrderItem]
-    status: OrderStatus
-
-    def __post_init__(self) -> None:
-        """不変条件の検証"""
-        if not self.items:
-            raise ValueError("Order must have at least one item.")
-        if self.status == OrderStatus.SHIPPED and not self.shipping_address:
-            raise ValueError("Shipped order must have shipping address.")
-
-    def add_item(self, item: OrderItem) -> "Order":
-        """アイテムを追加（ビジネスルールを適用）"""
-        if self.status != OrderStatus.DRAFT:
-            raise ValueError("Cannot add items to non-draft order.")
-
-        self.items.append(item)
-        return self
-```
-
-#### 3. **集約境界の尊重**
-
-集約外のオブジェクトへの参照は、IDのみを保持します。
-
-✅ **良い例**:
-
-```python
-@dataclass
-class Order:
-    id: int
-    user_id: int  # UserのIDのみを保持
-    items: list[OrderItem]
-```
-
-❌ **悪い例**:
-
-```python
-@dataclass
-class Order:
-    id: int
-    user: User  # 集約境界を越えた参照
-    items: list[OrderItem]
-```
-
----
-
-## インターフェースの定義
-
-Domain層のインターフェースは `Protocol` を使用して定義します。
-
-### Protocolの使用例
-
-```python
-from typing import Protocol, runtime_checkable
-from datetime import datetime
-
-
-@runtime_checkable
-class IAuditable(Protocol):
-    """監査可能なエンティティのプロトコル"""
-    created_at: datetime
-    updated_at: datetime
-```
-
-### なぜProtocolを使うのか？
-
-- **構造的部分型（Structural Subtyping）**: 明示的な継承不要
-- **柔軟性**: 既存のクラスを変更せずにプロトコルを満たせる
-- **型安全性**: `isinstance()` チェックで実行時検証が可能（`@runtime_checkable`）
-
-### Protocolの実装
-
-Pythonの`Protocol`は構造的部分型なので、明示的に継承する必要はありません：
+このリポジトリの集約は、`@dataclass(kw_only=True, slots=True)` を基本にしています。
+代表例は `src/app/domain/aggregates/user.py`、`src/app/domain/aggregates/team.py`、`src/app/domain/aggregates/chat.py`、`src/app/domain/aggregates/team_membership.py` です。
 
 ```python
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from app.domain.value_objects import DisplayName, Email, UserId, Version
 
-@dataclass
+
+@dataclass(kw_only=True, slots=True)
 class User:
-    """User aggregate root.
+    _id: UserId = field(
+        init=False,
+        default_factory=lambda: UserId.generate().expect("UserId.generate should succeed"),
+    )
+    _display_name: DisplayName
+    _email: Email
+    _version: Version = field(init=False, default_factory=lambda: Version(0))
+    _created_at: datetime = field(init=False, default_factory=lambda: datetime.now(UTC))
+    _updated_at: datetime = field(init=False, default_factory=lambda: datetime.now(UTC))
 
-    Implements IAuditable: timestamps are automatically managed
-    by the repository layer.
-    """
-    id: int
-    name: str
-    email: str
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    # ↑ IAuditableプロトコルを満たす（明示的な継承不要）
+    @classmethod
+    def register(cls, display_name: DisplayName, email: Email) -> "User":
+        return cls(_display_name=display_name, _email=email)
+
+    def change_email(self, new_email: Email) -> "User":
+        self._email = new_email
+        return self
 ```
+
+### 実装原則
+
+- 集約の状態は、ドメインメソッドから変更する
+- 集約外の参照は ID または値オブジェクトで持つ
+- `version`、`created_at`、`updated_at` は集約に持たせるが、更新責任はインフラ層に寄せる
+- 検証は `__post_init__` か、生成用クラスメソッドの内部で行う
+
+`TeamMembership` のような状態遷移を持つ集約では、`join()`、`request_join()`、`activate()`、`leave()` のようなビジネス名を使います。
+
+---
+
+## インターフェースと契約の配置
+
+このリポジトリでは、契約の種類ごとに置き場所を分けています。
+
+### `src/app/domain/interfaces/`
+
+Domain内部で再利用する契約を置きます。
+
+- `auditable.py`: `IAuditable`
+- `value_object.py`: `IValueObject`
+- `versionable.py`: `IVersionable`
+
+`IValueObject` は `src/app/infrastructure/orm_mapping.py` の変換処理で使います。
+`IAuditable` と `IVersionable` は `src/app/infrastructure/repositories/generic_repository.py` の更新処理で使います。
+
+### `src/app/domain/repositories/`
+
+リポジトリと Unit of Work の契約を置きます。
+
+- `IRepository`
+- `IRepositoryWithId`
+- `IUnitOfWork`
+- `RepositoryError`
+- `RepositoryErrorType`
+
+### `src/app/domain/queries/`
+
+読み取り専用のクエリ契約を置きます。
+
+- `IChatHistoryQuery`
+- `IRawChatLogQuery`
+
+### `src/app/contracts/ports/`
+
+アプリケーション境界の port を置きます。
+
+- `IAgentProfileService`
+- `IAIService`
+- `IEventBus`
+- `IMemoryStore`
+- `IWebSearchService`
+
+### `src/app/contracts/messages/`
+
+レイヤーをまたいで共有する DTO、イベント、ペイロードを置きます。
+
+- `GeneratedContent`
+- `AgentProfileBundle`
+- `ChatHistoryItem`
+- `ChatToolRequestedPayload`
+- `ToolCall`
+- `ToolExecutionResult`
+
+### 置き場所の判断
+
+- Domain内部の再利用契約なら `domain/interfaces`
+- リポジトリやクエリの契約なら `domain/repositories` または `domain/queries`
+- 外部実装に差し替わるサービスなら `contracts/ports`
+- 送受信するデータ構造なら `contracts/messages`
 
 ---
 
@@ -298,11 +252,8 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class IAuditable(Protocol):
-    """Protocol for entities that support audit timestamps.
+    """監査時刻を持つ型の契約。"""
 
-    Any domain aggregate implementing this protocol will have
-    created_at and updated_at automatically managed by the repository layer.
-    """
     created_at: datetime
     updated_at: datetime
 ```
@@ -313,60 +264,45 @@ class IAuditable(Protocol):
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from app.domain.value_objects import DisplayName, Email, UserId, Version
 
-@dataclass
+
+@dataclass(kw_only=True, slots=True)
 class User:
-    """User aggregate root.
-
-    Implements IAuditable: timestamps are infrastructure concerns but exposed
-    as read-only fields for auditing and display purposes. The repository layer
-    automatically manages created_at and updated_at.
-    """
-    id: int
-    name: str
-    email: str
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-
-    def __post_init__(self) -> None:
-        """Validate user data."""
-        if not self.name:
-            raise ValueError("User name cannot be empty.")
+    _id: UserId = field(
+        init=False,
+        default_factory=lambda: UserId.generate().expect("UserId.generate should succeed"),
+    )
+    _display_name: DisplayName
+    _email: Email
+    _version: Version = field(init=False, default_factory=lambda: Version(0))
+    _created_at: datetime = field(init=False, default_factory=lambda: datetime.now(UTC))
+    _updated_at: datetime = field(init=False, default_factory=lambda: datetime.now(UTC))
 ```
 
 ### タイムスタンプの自動更新
 
-リポジトリ層が自動的に`updated_at`を更新します：
+リポジトリ層は更新時に `updated_at` を更新します。`GenericRepository.add()` は集約が持っている初期値をそのまま使い、`GenericRepository.update()` が `IAuditable` と `IVersionable` を見て更新します。
 
 ```python
 # src/app/infrastructure/repositories/generic_repository.py
-async def save(self, entity: T) -> Result[T, RepositoryError]:
-    """Save entity.
+async def update(self, entity: T) -> Result[T, RepositoryError]:
+    """Update existing entity with optimistic locking support."""
+    orm_instance = ORMMappingRegistry.to_orm(entity)
 
-    For IAuditable entities, automatically updates the updated_at timestamp.
-    """
-    orm_instance = domain_to_orm(entity)
-
-    # IAuditableエンティティの場合、更新時にupdated_atを自動設定
-    is_update = orm_instance.id is not None
-    if is_update and isinstance(entity, IAuditable):
+    if isinstance(entity, IAuditable):
         orm_instance.updated_at = datetime.now(UTC)
 
-    # ... 保存処理
+    if isinstance(entity, IVersionable):
+        current_version = entity.version.to_primitive()
+        # version をチェックしたうえで更新する
+        ...
 ```
 
 ### タイムスタンプ不要なエンティティ
 
-タイムスタンプが不要なエンティティは、`IAuditable`を実装しません：
-
-```python
-@dataclass
-class TemporarySession:
-    """一時セッション（タイムスタンプ不要）"""
-    id: int
-    token: str
-    # created_at/updated_atなし
-```
+このリポジトリの現行集約はすべて `created_at` / `updated_at` を持ちます。
+将来、監査時刻を持たない一時オブジェクトや専用DTOを追加する場合だけ、`IAuditable` を実装しない設計にします。
 
 ---
 
@@ -379,16 +315,16 @@ class TemporarySession:
 ✅ **良い例**:
 
 ```python
-def change_email(self, new_email: str) -> "User": ...
-def activate_account(self) -> "User": ...
-def suspend_for_violation(self, reason: str) -> "User": ...
+def change_email(self, new_email: Email) -> "User": ...
+def change_name(self, new_name: TeamName) -> "Team": ...
+def leave(self) -> "TeamMembership": ...
 ```
 
 ❌ **悪い例**:
 
 ```python
 def update_email(self, email: str) -> "User": ...  # 技術用語
-def set_active(self) -> "User": ...  # ビジネス意図が不明確
+def set_status(self) -> "TeamMembership": ...  # ビジネス意図が不明確
 ```
 
 ### 2. フィールドのデフォルト値
@@ -401,22 +337,28 @@ def set_active(self) -> "User": ...  # ビジネス意図が不明確
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from app.domain.value_objects import TeamId, TeamName, Version
 
 @dataclass
-class User:
-    id: int
-    name: str
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+class Team:
+    _id: TeamId = field(
+        init=False,
+        default_factory=lambda: TeamId.generate().expect("TeamId.generate should succeed"),
+    )
+    _name: TeamName
+    _version: Version = field(init=False, default_factory=lambda: Version(0))
+    _created_at: datetime = field(init=False, default_factory=lambda: datetime.now(UTC))
+    _updated_at: datetime = field(init=False, default_factory=lambda: datetime.now(UTC))
 ```
 
 ❌ **悪い例**:
 
 ```python
 @dataclass
-class User:
-    id: int
-    name: str
-    created_at: datetime = datetime.now(UTC)  # クラス定義時に評価される！
+class Team:
+    _id: TeamId
+    _name: TeamName
+    _created_at: datetime = datetime.now(UTC)  # クラス定義時に評価される！
 ```
 
 ### 3. 型ヒントの使用
@@ -428,14 +370,12 @@ from dataclasses import dataclass
 
 
 @dataclass
-class User:
-    id: int
-    name: str
-    email: str
+class TeamMembership:
+    team_id: int
+    user_id: int
 
-    def change_email(self, new_email: str) -> "User":
-        """Change user email."""
-        self.email = new_email
+    def leave(self) -> "TeamMembership":
+        """Leave the team."""
         return self
 ```
 
@@ -448,34 +388,8 @@ class User:
 class User:
     """User aggregate root.
 
-    Represents a user in the system with authentication credentials
-    and profile information.
-
-    Attributes:
-        id: Unique identifier
-        name: User's display name
-        email: User's email address (unique)
+    Represents a user with display name, email, version, and audit timestamps.
     """
-    id: int
-    name: str
-    email: str
-
-    def change_email(self, new_email: str) -> "User":
-        """Change user's email address.
-
-        Args:
-            new_email: New email address
-
-        Returns:
-            Updated user instance
-
-        Raises:
-            ValueError: If email format is invalid
-        """
-        if not new_email or "@" not in new_email:
-            raise ValueError("Invalid email format.")
-        self.email = new_email
-        return self
 ```
 
 ### 5. フレームワーク非依存
@@ -492,7 +406,7 @@ from datetime import datetime  # 標準ライブラリのみ
 @dataclass
 class User:
     id: int
-    name: str
+    display_name: str
     created_at: datetime
 ```
 
@@ -574,8 +488,8 @@ class User:
 
 # Infrastructure層: 永続化の責務
 class UserRepository:
-    async def save(self, user: User) -> Result[User, RepositoryError]:
-        # データベース保存処理
+    async def update(self, user: User) -> Result[User, RepositoryError]:
+        # ORM への変換と更新処理
         ...
 ```
 
@@ -597,7 +511,7 @@ class User:
     password_hash: str
 
     # 注文関連
-    orders: list[Order]
+    memberships: list[TeamMembership]
 
     # 決済関連
     payment_methods: list[PaymentMethod]
@@ -622,8 +536,8 @@ class UserCredential:
     password_hash: str
 
 @dataclass
-class Order:
-    """注文情報（別の集約）"""
+class TeamMembership:
+    """チーム参加情報（別の集約）"""
     id: int
     user_id: int  # Userへの参照はIDのみ
 ```
@@ -640,8 +554,11 @@ class Order:
 - [OK] フレームワーク非依存を保つ
 - [OK] 型ヒントとDocstringを記述
 - [OK] タイムスタンプが必要な場合は`IAuditable`を実装
+- [OK] 楽観ロックが必要な場合は`IVersionable`を実装
 - [OK] 不変条件を常に保証
 - [OK] 集約境界を尊重
+- [OK] アプリ境界の port は `src/app/contracts/ports/` に置く
+- [OK] 共有 DTO / event payload は `src/app/contracts/messages/` に置く
 - [NG] データベースアクセスを行わない
 - [NG] 外部APIを呼び出さない
 - [NG] インフラストラクチャに依存しない
@@ -650,7 +567,7 @@ class Order:
 
 ## 参考資料
 
-- [プロジェクトのアーキテクチャドキュメント](../ARCHITECTURE.md)
+- [プロジェクトのアーキテクチャドキュメント](../architecture/architecture-overview.md)
 - [クリーンアーキテクチャ（Robert C. Martin）](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html)
 - [ドメイン駆動設計（Eric Evans）](https://www.domainlanguage.com/ddd/)
 - [Python Protocol（PEP 544）](https://peps.python.org/pep-0544/)

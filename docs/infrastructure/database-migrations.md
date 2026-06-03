@@ -546,5 +546,5 @@ uv run --frozen alembic check
 
 ## 関連ドキュメント
 
-- [アーキテクチャ設計](../ARCHITECTURE.md)
-- [ドメイン実装ガイド](../domain/DOMAIN_IMPLEMENTATION_GUIDE.md)
+- [アーキテクチャ設計](../architecture/architecture-overview.md)
+- [ドメイン実装ガイド](../domain/domain-implementation-guide.md)

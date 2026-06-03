@@ -2,128 +2,29 @@
 
 本ドキュメントは、このコードベースで作業する際の重要な情報をまとめたものです。これらの指針を厳密に遵守してください。
 
+教義の詳細は以下を参照してください。
+- [Service Role Guidelines](docs/architecture/service-role-guidelines.md)
+- [Storage and Query Boundaries](docs/architecture/storage-and-query-boundaries.md)
+- [Legacy Removal Policy](docs/architecture/legacy-removal-policy.md)
+
 ## 開発の基本ルール
 
-### 1\. パッケージ管理
 
 - `uv` のみを使用すること。 `pip` は絶対に使用しないこと。
-- インストール: `uv add package`
-- ツールの実行: `uv run tool`
-- アップグレード: `uv add --dev package --upgrade-package package`
-- 禁止事項
-  - `pyproject.toml` を直接変更してライブラリを追加する行為
-  - `uv pip install` コマンドの使用
-  - `@latest` 構文の使用
-
-### 2\. コード品質
-
 - 型ヒント: すべてのコードに必須とする。
-- ドキュメント: 公開API（Public APIs）には必ずDocstringを記述すること。
-- 関数: 単一の責務に集中させ、小さく保つこと。
-- パターン: 既存のコードパターンに正確に従うこと。
-- 行の長さ: 最大88文字（Ruff/Black標準）。
+- ファイル、クラス、関数はその責務に集中させ、小さく保つこと。
 
-### 3\. テスト要件
+## ベストプラクティス
 
-- フレームワーク: `uv run --frozen pytest` を使用。
-- 非同期テスト: `asyncio` ではなく、`anyio` を使用すること。
-  非同期テストは `@pytest.mark.anyio` を付け、`tests/conftest.py` の
-  `anyio_backend` fixture で `asyncio` バックエンドを選択する。
-- カバレッジ: エッジケースとエラー処理のテストを網羅すること。
-- 新機能: 必ずテストを追加すること。
-- バグ修正: 必ずリグレッションテスト（回帰テスト）を追加すること。
-
-### Gitコミットに関する規定
-
-- ユーザー報告に基づくバグ修正や機能追加の場合、以下をコミットメッセージに追加する：
-
-  ```bash
-  git commit --trailer "Reported-by:<name>"
-  ```
-
-  ※ `<name>` にはユーザー名を記述。
-
-- GitHub Issueに関連するコミットの場合、以下を追加する：
-
-  ```bash
-  git commit --trailer "Github-Issue:#<number>"
-  ```
-
-- 禁止事項: `co-authored-by` やそれに類する記述は絶対に含めないこと。特に、コミットメッセージやPRの作成に使用したAIツール（LLM等）については一切言及しないこと。
-
-## Pythonツール群
-
-### コードフォーマット
-
-#### 1\. Ruff
-
-- フォーマット実行: `uv run --frozen ruff format .`
-- チェック実行: `uv run --frozen ruff check .`
-- 自動修正: `uv run --frozen ruff check . --fix`
-- 重要なチェック項目:
-  - 行の長さ（88文字）
-  - インポートのソート（I001）
-  - 未使用のインポート
-- 行の折り返しルール:
-  - 文字列: 括弧 `()` を使用して折り返す。
-  - 関数呼び出し: 適切なインデントを用いた複数行表記にする。
-  - インポート: 複数行に分割する。
-
-#### 2\. 型チェック (Type Checking)
-
-- ツール: `uv run --frozen pyright`
-- 要件:
-  - `Optional` 型に対しては明示的な `None` チェックを行うこと。
-  - 文字列に対する型ナローイング（Type narrowing）を行うこと。
-  - チェック自体がパスしていれば、ツールのバージョン警告は無視してよい。
-
-#### 3\. Pre-commit
-
-- 設定ファイル: `.pre-commit-config.yaml`
-- 実行タイミング: `git commit` 時
-- ツール構成: Prettier (YAML/JSON用)、Ruff (Python用)
-- Ruffの更新手順:
-  - PyPIのバージョンを確認する。
-  - 設定ファイルの `rev` を更新する。
-  - 更新した設定ファイルを最初にコミットする。
-
-## エラー解決 (Error Resolution)
-
-### 1\. CI失敗時の対応
-
-- 修正順序:
-  1. フォーマット (Formatting)
-  2. 型エラー (Type errors)
-  3. リント (Linting)
-- 型エラーの対処:
-  - 完全な行コンテキスト（前後の文脈）を確認する。
-  - `Optional` 型の扱いを確認する。
-  - 型ナローイングを追加する。
-  - 関数シグネチャが正しいか検証する。
-
-### 2\. よくある問題
-
-- 行の長さ:
-  - 文字列は括弧で囲んで改行する。
-  - 関数呼び出しを複数行にする。
-  - インポート文を分割する。
-- 型:
-  - `None` チェックを追加する。
-  - 文字列型のナローイングを行う。
-  - 既存のパターンに合わせる。
-- Pytest:
-  - テストが `anyio` のpytest markを見つけられない場合、pytest実行コマンドの先頭に `PYTEST_DISABLE_PLUGIN_AUTOLOAD=""` を追加して試すこと。
-    例: `PYTEST_DISABLE_PLUGIN_AUTOLOAD="" uv run --frozen pytest`
-
-### 3\. ベストプラクティス
-
-- コミット前に必ず `git status` を確認する。
-- 型チェックを行う前に、フォーマッターを実行する。
-- 変更は「目的を達成できる最小限」の形にとどめる。
-  古い実装を残すかどうかは「目的」を考えること。多くの場合はレガシーになったコードは即削除する(Gitからいつでも復元可能であるため)
-- 既存のアーキテクチャに従う。
+- 起動は常に Docker コンテナで行うこと。単体起動の手順は追加しない。
+- コード変更後は `docker compose up --build -d` で再ビルド再起動すること。
+- レガシーになったコードは即削除する(Gitからいつでも復元可能であるため)
 - 依存の方向性をまず確認すること。何かを置く前に「どこからどこへ依存してよいか」を仮定として明示し、その方向に合わせて配置を決める。
   `IAIService` や `IEventBus` のようなアプリケーション境界のインターフェース契約は `src/app/contracts/ports` に置く。
   `GeneratedContent` や `chat_events` のように複数レイヤーから参照されるDTO・イベントトピック・ペイロードビルダーは `src/app/contracts/messages` に置く。
   `domain/interfaces` を汎用的な契約置き場として使わない。ドメイン固有の抽象だけをドメイン配下に残し、ユースケース固有でない共有境界型を `usecases` に逃がさない。
 - 徹底的に型チェックとテストを行う。
+- 名前は責務を示すべきで、配置は名前を裏切ってはいけない
+- 複雑さは薄い層に押し込まず、責務に応じて層を分ける
+- 派生データの永続化は、実装ファイルではなく migration で扱う
+- 誤認を生む構造は、動いていても欠陥とみなす

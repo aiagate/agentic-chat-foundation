@@ -27,22 +27,27 @@
 - いかなる memory 層も `user_id` の境界を越えて漏れてはならない。（他ユーザーとの記憶の流出防止）
 - 検索 workflow の短期結果は memory ではなく別系統の一時状態として扱う。
 
-## 2026-05-23 時点の実装棚卸し
+## 現在の実装棚卸し
 
 この節は目標状態ではなく、移行履歴と現状把握のための棚卸しである。
 
 - raw chat の正本は SQL に寄せる方針で、Markdown raw Timeline は最終保存先ではない。
-- 日次・睡眠後の要約は、まだ LLM による意味圧縮ではなく deterministic summary / deterministic consolidation の性格が残っている。
+- 日次・睡眠後の要約は、まだ deterministic summary / deterministic consolidation の性格が残っている。LLM ベースの意味圧縮は目標状態である。
 - 検索は SQLite metadata と deterministic search を中心にした段階であり、`sqlite-vec` による semantic retrieval は目標状態である。
 - sleep 後に作成・更新された Markdown を index 更新と retrieval に完全接続する経路は未完了である。
-- `source_chat_ids` は SQL raw chat row の根拠を表し、`summary_of` は Markdown Timeline summary 同士の再要約・継承関係を表す。
+- `source_chat_ids` は SQL raw chat row の根拠を表し、現行の section summary writer は
+  `summary_of` にも raw chat IDs を入れている。target-state では
+  `summary_of` を Markdown Timeline summary 同士の再要約・継承関係のみに
+  限定したい。
+- agent profile は `memory/profiles/agent/<character_id>/...` に namespaced で保存され、flat path は legacy fallback として残っている。
+- worker の scheduled task は `schedule_run_time` を受け取り、`memory_sleep` は 3時に整列して起動する現行実装になっている。
 
 ## Search workflow との境界
 
 検索は長期記憶 retrieval とは別の経路で扱う。
 
 - 長期記憶 retrieval は `IMemoryService` の責務。
-- 外部検索結果の受け渡しは `search_session_id` を持つ短期 workflow state の責務。
+- 外部検索結果の受け渡しは `tool_call_id` をキーにした短期 retrieved context state の責務。
 - 検索結果は raw のまま Markdown に昇格させない。
 - 長期記憶に入れるのは、検索結果から抽出・要約された durable fact のみである。
 
@@ -135,7 +140,7 @@ sequenceDiagram
     Presentation->>SaveChatUseCase: 入力メッセージを保存
     SaveChatUseCase->>SQL: raw Chat を永続化
     SaveChatUseCase-->>Worker: ChatSaved event を発行
-    Worker->>GenerateContent: GenerateContentQuery
+    Worker->>RunAgentTurn: RunAgentTurnQuery
     GenerateContent->>MemoryService: retrieve(prompt, user_id)
     MemoryService->>VecIndex: semantic search
     VecIndex->>MemoryService: 似たコンテキストについての会話のId等を返却
@@ -173,7 +178,8 @@ sequenceDiagram
 
 ## Worker 統合
 
-worker にはすでに scheduled task の仕組みがあるが、定期実行のみで定時実行はない
+worker には scheduled task の仕組みがあり、`schedule_run_time` を付けた task は
+初回実行を時刻に合わせられる。`memory_sleep` はこの仕組みをすでに使っている。
 
 - `src/app/presentation/worker/registry.py`
 - `src/app/presentation/worker/handlers.py`
@@ -181,7 +187,7 @@ worker にはすでに scheduled task の仕組みがあるが、定期実行の
 
 推奨 use case:
 
-- `RunMemorySleepCommand`: 定時実行の最上位ジョブ
+- `RunMemorySleepCommand`: 定期実行の最上位ジョブ
 - `ConsolidateUserMemoryCommand`: 1ユーザー・1日分の統合
 - `RebuildMemoryIndexCommand`: Markdown から embedding/index を再構築
 - `RepairMemoryIndexCommand`: 古い index row の検出と修復
@@ -405,7 +411,7 @@ class IEmbeddingService(ABC):
 - `RebuildMemoryIndexCommand`
 - `RepairMemoryIndexCommand`
 
-`GenerateContentHandler` は単一の retrieval boundary を通すだけにし、SQLite、Markdown、embedding の詳細を知らないようにする。
+`RunAgentTurnHandler` は単一の retrieval boundary を通すだけにし、SQLite、Markdown、embedding の詳細を知らないようにする。
 
 ## 冪等性と一貫性
 
@@ -457,7 +463,8 @@ sleep jobs は retry 可能でなければならない。
 5. `IEmbeddingService` を追加する
 6. `sqlite-vec` を使った SQLite vector index を追加する
 7. retrieval は vector search を主、lexical scoring を補助にする
-8. `RunMemorySleepCommand` を worker scheduled task に接続する
+8. `RunMemorySleepCommand` は worker scheduled task に接続済み。必要なら
+   既存の `schedule_run_time` を含めて運用仕様を詰める
 9. sleep 後の Markdown upsert と index upsert / rebuild / repair command を接続する
 10. SQL ベースの sleep が安定したら raw Markdown timeline writing を削除またはアーカイブする
 

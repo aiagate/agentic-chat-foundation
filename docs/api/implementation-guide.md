@@ -13,7 +13,7 @@ API層（`src/app/presentation/api`）は、クリーンアーキテクチャに
 ### 依存関係
 
 * [OK] `src/app/presentation/api` -> `src/app/usecases` (許可)
-* [OK] `src/app/presentation/api` -> `src/app/mediator` (許可)
+* [OK] `src/app/presentation/api` -> `flow_med.Mediator` (許可)
 * [NG] `src/app/presentation/api` -> `src/app/domain` (Use Caseの戻り値としてのDTO参照は許容するが、直接Entityを操作しないこと)
 * [NG] `src/app/presentation/api` -> `src/app/infrastructure` (データベース操作などは厳禁)
 
