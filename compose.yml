@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: discord-bot-template-postgres
+    container_name: agentic-chat-foundation-postgres
     environment:
       POSTGRES_DB: bot
       POSTGRES_USER: bot
@@ -18,7 +18,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: discord-bot-template-redis
+    container_name: agentic-chat-foundation-redis
     ports:
       - "6379:6379"
     volumes:
@@ -28,6 +28,82 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentic-chat-foundation-migrate
+    env_file:
+      - .env.local
+      - .env.docker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["uv", "run", "--frozen", "alembic", "upgrade", "head"]
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentic-chat-foundation-bot
+    env_file:
+      - .env.local
+      - .env.docker
+    volumes:
+      - memory-data:/app/memory
+    command: ["uv", "run", "--frozen", "start-bot"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  line:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentic-chat-foundation-line
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.local
+      - .env.docker
+    volumes:
+      - memory-data:/app/memory
+    command: ["uv", "run", "--frozen", "start-line"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentic-chat-foundation-worker
+    env_file:
+      - .env.local
+      - .env.docker
+    volumes:
+      - memory-data:/app/memory
+    command: ["uv", "run", "--frozen", "start-worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   postgres-data:
   redis-data:
+  memory-data:

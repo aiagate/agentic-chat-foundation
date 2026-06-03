@@ -12,6 +12,75 @@ wheels = [
 ]
 
 [[package]]
+name = "agentic-chat-foundation"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "aiosqlite" },
+    { name = "alembic" },
+    { name = "asyncpg" },
+    { name = "discord-py" },
+    { name = "fastapi" },
+    { name = "flow-med" },
+    { name = "flow-res" },
+    { name = "google-genai" },
+    { name = "injector" },
+    { name = "line-bot-sdk" },
+    { name = "openai" },
+    { name = "python-dotenv" },
+    { name = "python-ulid" },
+    { name = "redis" },
+    { name = "sqlite-vec" },
+    { name = "sqlmodel" },
+    { name = "uvicorn" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "anyio" },
+    { name = "pre-commit" },
+    { name = "pyright" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "pytest-mock" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiosqlite", specifier = ">=0.21.0" },
+    { name = "alembic", specifier = ">=1.17.2" },
+    { name = "asyncpg", specifier = ">=0.31.0" },
+    { name = "discord-py", specifier = ">=2.5.2" },
+    { name = "fastapi", specifier = ">=0.124.4" },
+    { name = "flow-med", specifier = ">=0.1.1" },
+    { name = "flow-res", specifier = "==0.1.1" },
+    { name = "google-genai", specifier = ">=2.0.1" },
+    { name = "injector", specifier = ">=0.22.0" },
+    { name = "line-bot-sdk", specifier = ">=3.23.0" },
+    { name = "openai", specifier = ">=2.36.0" },
+    { name = "python-dotenv", specifier = ">=1.2.1" },
+    { name = "python-ulid", specifier = ">=3.1.0" },
+    { name = "redis", specifier = ">=7.4.0" },
+    { name = "sqlite-vec", specifier = ">=0.1.9" },
+    { name = "sqlmodel", specifier = ">=0.0.24" },
+    { name = "uvicorn", specifier = ">=0.38.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "anyio", specifier = ">=4.11.0" },
+    { name = "pre-commit", specifier = ">=4.5.0" },
+    { name = "pyright", specifier = ">=1.1.407" },
+    { name = "pytest", specifier = ">=8.3.5" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "pytest-mock", specifier = ">=3.14.0" },
+    { name = "ruff", specifier = ">=0.14.6" },
+]
+
+[[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
 source = { registry = "https://pypi.org/simple" }
@@ -120,73 +189,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c6/78/7d432127c41b50bccba979505f272c16cbcadcc33645d5fa3a738110ae75/anyio-4.11.0.tar.gz", hash = "sha256:82a8d0b81e318cc5ce71a5f1f8b5c4e63619620b63141ef8c995fa0db95a57c4", size = 219094, upload-time = "2025-09-23T09:19:12.58Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/15/b3/9b1a8074496371342ec1e796a96f99c82c945a339cd81a8e73de28b4cf9e/anyio-4.11.0-py3-none-any.whl", hash = "sha256:0287e96f4d26d4149305414d4e3bc32f0dcd0862365a4bddea19d7a1ec38c4fc", size = 109097, upload-time = "2025-09-23T09:19:10.601Z" },
-]
-
-[[package]]
-name = "app"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "aiosqlite" },
-    { name = "alembic" },
-    { name = "asyncpg" },
-    { name = "discord-py" },
-    { name = "fastapi" },
-    { name = "flow-med" },
-    { name = "flow-res" },
-    { name = "google-genai" },
-    { name = "injector" },
-    { name = "line-bot-sdk" },
-    { name = "openai" },
-    { name = "python-dotenv" },
-    { name = "python-ulid" },
-    { name = "redis" },
-    { name = "sqlmodel" },
-    { name = "uvicorn" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "anyio" },
-    { name = "pre-commit" },
-    { name = "pyright" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "pytest-mock" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiosqlite", specifier = ">=0.21.0" },
-    { name = "alembic", specifier = ">=1.17.2" },
-    { name = "asyncpg", specifier = ">=0.31.0" },
-    { name = "discord-py", specifier = ">=2.5.2" },
-    { name = "fastapi", specifier = ">=0.124.4" },
-    { name = "flow-med", specifier = ">=0.1.1" },
-    { name = "flow-res", specifier = "==0.1.1" },
-    { name = "google-genai", specifier = ">=2.0.1" },
-    { name = "injector", specifier = ">=0.22.0" },
-    { name = "line-bot-sdk", specifier = ">=3.23.0" },
-    { name = "openai", specifier = ">=2.36.0" },
-    { name = "python-dotenv", specifier = ">=1.2.1" },
-    { name = "python-ulid", specifier = ">=3.1.0" },
-    { name = "redis", specifier = ">=7.4.0" },
-    { name = "sqlmodel", specifier = ">=0.0.24" },
-    { name = "uvicorn", specifier = ">=0.38.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "anyio", specifier = ">=4.11.0" },
-    { name = "pre-commit", specifier = ">=4.5.0" },
-    { name = "pyright", specifier = ">=1.1.407" },
-    { name = "pytest", specifier = ">=8.3.5" },
-    { name = "pytest-asyncio", specifier = ">=1.3.0" },
-    { name = "pytest-cov", specifier = ">=7.0.0" },
-    { name = "pytest-mock", specifier = ">=3.14.0" },
-    { name = "ruff", specifier = ">=0.14.6" },
 ]
 
 [[package]]
@@ -1390,6 +1392,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/32/d5/0e66097fc64fa266f29a7963296b40a80d6a997b7ac13806183700676f86/sqlalchemy-2.0.44-cp313-cp313-win32.whl", hash = "sha256:ee51625c2d51f8baadf2829fae817ad0b66b140573939dd69284d2ba3553ae73", size = 2101275, upload-time = "2025-10-10T15:03:26.096Z" },
     { url = "https://files.pythonhosted.org/packages/03/51/665617fe4f8c6450f42a6d8d69243f9420f5677395572c2fe9d21b493b7b/sqlalchemy-2.0.44-cp313-cp313-win_amd64.whl", hash = "sha256:c1c80faaee1a6c3428cecf40d16a2365bcf56c424c92c2b6f0f9ad204b899e9e", size = 2127901, upload-time = "2025-10-10T15:03:27.548Z" },
     { url = "https://files.pythonhosted.org/packages/9c/5e/6a29fa884d9fb7ddadf6b69490a9d45fded3b38541713010dad16b77d015/sqlalchemy-2.0.44-py3-none-any.whl", hash = "sha256:19de7ca1246fbef9f9d1bff8f1ab25641569df226364a0e40457dc5457c54b05", size = 1928718, upload-time = "2025-10-10T15:29:45.32Z" },
+]
+
+[[package]]
+name = "sqlite-vec"
+version = "0.1.9"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/68/85/9fad0045d8e7c8df3e0fa5a56c630e8e15ad6e5ca2e6106fceb666aa6638/sqlite_vec-0.1.9-py3-none-macosx_10_6_x86_64.whl", hash = "sha256:1b62a7f0a060d9475575d4e599bbf94a13d85af896bc1ce86ee80d1b5b48e5fb", size = 131171, upload-time = "2026-03-31T08:02:31.717Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/3d/3677e0cd2f92e5ebc43cd29fbf565b75582bff1ccfa0b8327c7508e1084f/sqlite_vec-0.1.9-py3-none-macosx_11_0_arm64.whl", hash = "sha256:1d52e30513bae4cc9778ddbf6145610434081be4c3afe57cd877893bad9f6b6c", size = 165434, upload-time = "2026-03-31T08:02:32.712Z" },
+    { url = "https://files.pythonhosted.org/packages/00/d4/f2b936d3bdc38eadcbd2a87875815db36430fab0363182ba5d12cd8e0b51/sqlite_vec-0.1.9-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:4e921e592f24a5f9a18f590b6ddd530eb637e2d474e3b1972f9bbeb773aa3cb9", size = 160076, upload-time = "2026-03-31T08:02:33.796Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/ad/6afd073b0f817b3e03f9e37ad626ae341805891f23c74b5292818f49ac63/sqlite_vec-0.1.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux1_x86_64.whl", hash = "sha256:1515727990b49e79bcaf75fdee2ffc7d461f8b66905013231251f1c8938e7786", size = 163388, upload-time = "2026-03-31T08:02:34.888Z" },
+    { url = "https://files.pythonhosted.org/packages/42/89/81b2907cda14e566b9bf215e2ad82fc9b349edf07d2010756ffdb902f328/sqlite_vec-0.1.9-py3-none-win_amd64.whl", hash = "sha256:4a28dc12fa4b53d7b1dced22da2488fade444e96b5d16fd2d698cd670675cf32", size = 292804, upload-time = "2026-03-31T08:02:36.035Z" },
 ]
 
 [[package]]

@@ -1,7 +1,7 @@
 [project]
-name = "app"
+name = "agentic-chat-foundation"
 version = "0.1.0"
-description = "Clean Architecture Discord Bot Template"
+description = "Agentic chat application foundation"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -19,6 +19,7 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "python-ulid>=3.1.0",
     "redis>=7.4.0",
+    "sqlite-vec>=0.1.9",
     "sqlmodel>=0.0.24",
     "uvicorn>=0.38.0",
 ]
@@ -27,6 +28,7 @@ dependencies = [
 start-bot = "app.presentation.bot.__main__:main"
 start-api = "app.presentation.api.__main__:start"
 start-line = "app.presentation.line.__main__:start"
+start-worker = "app.presentation.worker.__main__:start"
 
 [dependency-groups]
 dev = [
@@ -83,9 +85,11 @@ indent-style = "space"
 [tool.pyright]
 typeCheckingMode = "strict"
 pythonVersion = "3.13"
-include = ["src/app", "tests" , "alembic"]
+include = ["src/app", "tests", "alembic"]
 exclude = [
     "**/__pycache__",
+    "**/node_modules",
+    "**/.*",
     ".venv",
 ]
 reportMissingTypeStubs = false
@@ -100,6 +104,9 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+markers = [
+    "scenario: live external-service scenario tests that are skipped unless RUN_SCENARIO_TESTS=1",
+]
 addopts = [
     "-v",
     "--cov=src/app",

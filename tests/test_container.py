@@ -8,14 +8,16 @@ from app.contracts.ports.event_bus import IEventBus
 from app.contracts.ports.memory_consolidation import IMemoryConsolidationService
 from app.contracts.ports.memory_service import IMemoryService
 from app.contracts.ports.memory_store import IMemoryStore
+from app.contracts.ports.tool_execution_lock import IToolExecutionLock
 from app.domain.repositories import IUnitOfWork
+from app.infrastructure.memory.store import FilesystemMemoryStore
 from app.infrastructure.messaging.in_memory_event_bus import InMemoryEventBus
 from app.infrastructure.messaging.redis_event_bus import RedisEventBus
 from app.infrastructure.services.memory_consolidation import (
-    DeterministicMemoryConsolidationService,
+    MemoryConsolidationService,
 )
 from app.infrastructure.services.memory_service import FilesystemMemoryService
-from app.infrastructure.services.memory_store import FilesystemMemoryStore
+from app.infrastructure.stores.tool_execution_lock import RedisToolExecutionLock
 from app.infrastructure.unit_of_work import SQLAlchemyUnitOfWork
 
 
@@ -34,7 +36,7 @@ async def test_di_container_bindings(test_db_engine: None) -> None:
     assert isinstance(memory_store, FilesystemMemoryStore)
     assert isinstance(
         memory_consolidation_service,
-        DeterministicMemoryConsolidationService,
+        MemoryConsolidationService,
     )
     assert isinstance(memory_service, FilesystemMemoryService)
 
@@ -63,3 +65,17 @@ async def test_di_container_event_bus_selects_redis(
     event_bus = injector.get(IEventBus)
 
     assert isinstance(event_bus, RedisEventBus)
+
+
+@pytest.mark.anyio
+async def test_di_container_selects_redis_tool_execution_lock(
+    test_db_engine: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that Redis-backed runs use a cross-process execution lock."""
+
+    monkeypatch.setenv("REDIS_URL", "redis://test")
+    injector = Injector([container.configure])
+    lock = injector.get(IToolExecutionLock)
+
+    assert isinstance(lock, RedisToolExecutionLock)
