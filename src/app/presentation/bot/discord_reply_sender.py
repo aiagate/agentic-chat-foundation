@@ -21,11 +21,12 @@ async def send_discord_reply(
         logger.warning("Discord reply payload missing channel_id: %s", payload)
         return
 
-    contents = payload.get("contents")
-    content = payload.get("content")
-    if not channel_id or (not content and not contents):
+    contents = _normalize_contents(payload)
+    if not channel_id or not contents:
         logger.warning("Discord reply payload missing required fields: %s", payload)
         return
+
+    logger.info("Sending Discord reply to channel %s", channel_id)
 
     channel = bot.get_channel(int(channel_id))
     if channel is None:
@@ -36,8 +37,20 @@ async def send_discord_reply(
             return
 
     messageable = cast(discord.abc.Messageable, channel)
-    if isinstance(contents, list) and contents:
-        for item in contents:
-            await messageable.send(str(item))
-        return
-    await messageable.send(str(content))
+    for item in contents:
+        await messageable.send(item)
+    logger.info(
+        "Discord reply sent to channel %s (%d messages)", channel_id, len(contents)
+    )
+
+
+def _normalize_contents(payload: Mapping[str, object]) -> list[str]:
+    contents = payload.get("contents")
+    if isinstance(contents, list):
+        normalized = [
+            str(content).strip() for content in contents if str(content).strip()
+        ]
+        if normalized:
+            return normalized
+
+    return []

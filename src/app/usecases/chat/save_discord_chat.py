@@ -102,7 +102,6 @@ class SaveChatHandler(
                         user_id=request.user_id,
                         guild_id=request.guild_id,
                         channel_id=request.channel_id,
-                        content=request.content,
                     ),
                 )
             except Exception:

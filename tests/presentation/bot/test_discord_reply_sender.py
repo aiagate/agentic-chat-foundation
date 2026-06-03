@@ -59,9 +59,38 @@ async def test_send_discord_reply_falls_back_to_fetch() -> None:
         bot,
         {
             "channel_id": "123",
-            "content": "hello",
+            "contents": ["hello"],
         },
     )
 
     bot.fetch_channel.assert_awaited_once_with(123)
     channel.send.assert_awaited_once_with("hello")
+
+
+@pytest.mark.anyio
+async def test_send_discord_reply_skips_blank_contents() -> None:
+    """Test that blank reply chunks are ignored."""
+
+    class ChannelStub:
+        def __init__(self) -> None:
+            self.send: AsyncMock = AsyncMock(return_value=None)
+
+    class BotStub:
+        def __init__(self, channel: ChannelStub) -> None:
+            self._channel = channel
+
+        def get_channel(self, channel_id: int) -> ChannelStub | None:
+            return self._channel
+
+    channel = ChannelStub()
+    bot = BotStub(channel)
+
+    await send_discord_reply(
+        bot,
+        {
+            "channel_id": "123",
+            "contents": ["hello", "", "   ", "\n", "world"],
+        },
+    )
+
+    assert channel.send.await_args_list == [call("hello"), call("world")]

@@ -96,7 +96,6 @@ class SaveChatHandler(
                     build_line_chat_saved_payload(
                         chat_id=saved_chat.id.to_primitive(),
                         user_id=request.user_id,
-                        content=request.content,
                     ),
                 )
             except Exception:

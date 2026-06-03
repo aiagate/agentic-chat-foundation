@@ -53,3 +53,18 @@ def test_initial_delay_until_run_returns_zero_before_target() -> None:
     now = datetime(2026, 5, 19, 3, 0, tzinfo=UTC)
 
     assert worker_main._initial_delay_until_run(now, time(hour=3)) == 0.0
+
+
+def test_start_invokes_async_main(monkeypatch: Any) -> None:
+    """Test that the sync worker entry point runs the async main coroutine."""
+
+    called: list[bool] = []
+
+    async def fake_main() -> None:
+        called.append(True)
+
+    monkeypatch.setattr(worker_main, "main", fake_main)
+
+    worker_main.start()
+
+    assert called == [True]

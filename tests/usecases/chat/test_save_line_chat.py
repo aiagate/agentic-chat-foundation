@@ -28,13 +28,12 @@ async def test_save_line_chat_persists_message(
         {
             "chat_id": result.value.id,
             "user_id": "u1",
-            "content": "hello",
         },
     )
 
     async with uow:
         raw_query = uow.GetRawChatLogQuery()
-        raw_history = await raw_query.get_raw_chat_logs(
+        raw_history = await raw_query.get_memory_sleep_source_items(
             "u1",
             ChatType.LINE,
             limit=10,
@@ -48,4 +47,5 @@ async def test_save_line_chat_persists_message(
         query = uow.GetChatHistoryQuery()
         history = await query.get_recent_history(ChatType.LINE, limit=10)
         assert not is_err(history)
-        assert history.value[-1].message_content.payload["text"] == "hello"
+        assert history.value[-1].role == "user"
+        assert history.value[-1].content == "hello"

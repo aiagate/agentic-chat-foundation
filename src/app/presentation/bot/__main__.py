@@ -12,6 +12,7 @@ from injector import Injector
 from app.contracts.messages.chat_events import DISCORD_CHAT_REPLY_READY_TOPIC
 from app.contracts.ports.event_bus import IEventBus
 from app.infrastructure.database import init_db
+from app.infrastructure.mediator_observer import install as install_mediator_observer
 from app.presentation.bot.cogs.dm_response_cog import DirectMessageResponseCog
 from app.presentation.bot.cogs.memberships_cog import MembershipsCog
 from app.presentation.bot.cogs.teams_cog import TeamsCog
@@ -52,6 +53,7 @@ class MyBot(commands.Bot):
             return
 
         self._event_bus = self.injector.get(IEventBus)
+        install_mediator_observer(self._event_bus)
         await self._event_bus.subscribe(
             DISCORD_CHAT_REPLY_READY_TOPIC,
             lambda payload: send_discord_reply(self, payload),
@@ -79,13 +81,13 @@ def load_environment() -> None:
     # .env.local が存在すれば優先的に読み込む（開発環境用）
     env_local = root_dir / ".env.local"
     if env_local.exists():
-        load_dotenv(env_local)
+        load_dotenv(env_local, override=True)
         return
 
     # .env ファイルを読み込む（本番環境用）
     env_file = root_dir / ".env"
     if env_file.exists():
-        load_dotenv(env_file)
+        load_dotenv(env_file, override=True)
 
 
 def main() -> None:

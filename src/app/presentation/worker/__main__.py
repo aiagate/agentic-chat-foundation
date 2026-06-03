@@ -14,6 +14,7 @@ from injector import Injector
 from app import container
 from app.contracts.ports.event_bus import IEventBus
 from app.infrastructure.database import init_db
+from app.infrastructure.mediator_observer import install as install_mediator_observer
 from app.presentation.worker.registry import EventRegistry
 
 logging.basicConfig(
@@ -29,11 +30,11 @@ def load_environment() -> None:
     root_dir = Path(__file__).parent.parent.parent.parent.parent
     env_local = root_dir / ".env.local"
     if env_local.exists():
-        load_dotenv(env_local)
+        load_dotenv(env_local, override=True)
         return
     env_file = root_dir / ".env"
     if env_file.exists():
-        load_dotenv(env_file)
+        load_dotenv(env_file, override=True)
 
 
 async def _run_periodic_task(
@@ -132,6 +133,7 @@ async def main() -> None:
 
     # 2. EventBusの取得
     event_bus = injector.get(IEventBus)
+    install_mediator_observer(event_bus)
 
     # 3. ハンドラーと定期タスクの登録
     import app.presentation.worker.handlers as _  # type: ignore[reportUnusedImport] # noqa: F401
@@ -175,8 +177,14 @@ async def main() -> None:
         await event_bus.stop()
 
 
-if __name__ == "__main__":
+def start() -> None:
+    """Synchronous entry point for console scripts and Docker."""
+
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         pass
+
+
+if __name__ == "__main__":
+    start()

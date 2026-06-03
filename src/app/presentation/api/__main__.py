@@ -9,7 +9,9 @@ from flow_med import Mediator
 from injector import Injector
 
 from app import container
+from app.contracts.ports.event_bus import IEventBus
 from app.infrastructure.database import init_db
+from app.infrastructure.mediator_observer import install as install_mediator_observer
 from app.presentation.api.routers import teams, users
 
 logging.basicConfig(
@@ -31,12 +33,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # We use the same container configuration as the Discord Bot
     injector = Injector([container.configure])
     Mediator.initialize(injector)
+    event_bus = injector.get(IEventBus)
+    install_mediator_observer(event_bus)
+    await event_bus.start()
 
     logger.info("Application initialized successfully")
 
     yield
 
     # Shutdown logic if needed
+    await event_bus.stop()
 
 
 app = FastAPI(title="Discord Bot API", lifespan=lifespan)
@@ -50,7 +56,10 @@ def start() -> None:
     import uvicorn
 
     uvicorn.run(
-        "app.presentation.api.__main__:app", host="127.0.0.1", port=8000, reload=True
+        "app.presentation.api.__main__:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
     )
 
 
