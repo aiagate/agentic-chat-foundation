@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from flow_res import Result
 
 
-@dataclass(frozen=True)
+@dataclass
 class MemoryWriteServiceError(Exception):
     """Represents a memory write adapter failure."""
 

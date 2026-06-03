@@ -22,7 +22,7 @@ class RepositoryErrorType(Enum):
     ALREADY_EXISTS = auto()
 
 
-@dataclass(frozen=True)
+@dataclass
 class RepositoryError(Exception):
     """リポジトリ層から返すエラー情報。"""
 

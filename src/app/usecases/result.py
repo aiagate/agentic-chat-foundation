@@ -13,7 +13,7 @@ class ErrorType(Enum):
     CONCURRENCY_CONFLICT = auto()
 
 
-@dataclass(frozen=True)
+@dataclass
 class UseCaseError(Exception):
     """Represents a specific error from a use case."""
 

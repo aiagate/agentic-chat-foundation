@@ -13,7 +13,7 @@ from app.contracts.messages.memory_semantic_extraction import (
 )
 
 
-@dataclass(frozen=True)
+@dataclass
 class MemorySemanticExtractionError(Exception):
     """Represents a semantic extraction failure."""
 

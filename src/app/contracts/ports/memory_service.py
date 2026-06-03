@@ -10,7 +10,7 @@ from flow_res import Result
 from app.contracts.messages.memory_context import MemoryContextPack
 
 
-@dataclass(frozen=True)
+@dataclass
 class MemoryServiceError(Exception):
     """Represents a memory service failure."""
 

@@ -10,7 +10,7 @@ from app.contracts.messages.generated_content import GeneratedContent
 from app.contracts.messages.tool_contracts import ToolDefinition
 
 
-@dataclass(frozen=True)
+@dataclass
 class AIServiceError(Exception):
     """Represents an error from an AI service."""
 

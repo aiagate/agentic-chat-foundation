@@ -12,7 +12,7 @@ from app.contracts.messages.tool_contracts import ToolCall, ToolExecutionResult
 from app.domain.value_objects.chat_type import ChatType
 
 
-@dataclass(frozen=True)
+@dataclass
 class ToolExecutorError(Exception):
     """Represents a tool execution adapter error."""
 

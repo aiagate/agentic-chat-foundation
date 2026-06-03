@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TypeVar
 
 
-@dataclass(frozen=True)
+@dataclass
 class MemoryIndexError(Exception):
     """Represents a memory index failure."""
 

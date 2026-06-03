@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from app.contracts.messages.agent_profile import AgentProfileBundle
 
 
-@dataclass(frozen=True)
+@dataclass
 class AgentProfileServiceError(Exception):
     """Represents an agent profile service failure."""
 
