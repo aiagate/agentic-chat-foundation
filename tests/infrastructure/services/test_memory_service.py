@@ -36,7 +36,7 @@ async def test_filesystem_memory_service_retrieve_returns_app_context_pack(
     assert isinstance(pack, MemoryContextPack)
     assert pack.user_id == "u1"
     assert pack.profile is not None
-    assert pack.profile.display_name == "白鷺 レイナ"
+    assert pack.profile.display_name == "月城 ノア"
     assert pack.timelines == []
     assert pack.entities == []
     assert pack.context_frame is not None
@@ -57,24 +57,22 @@ async def test_filesystem_memory_service_writes_profile_and_entities(
     service.write_profile(
         MemoryProfile(
             user_id="ai",
-            display_name="白鷺 レイナ",
-            summary=(
-                "17歳の白鷺家の令嬢。寡黙で理性的、礼儀正しいが、内面はかなり情が深い。"
-            ),
+            display_name="月城 ノア",
+            summary=("静かな観測室で対話を支える架空のアシスタント。"),
             traits=[
-                "寡黙",
+                "落ち着いている",
                 "理性的",
                 "礼儀正しい",
-                "内面はかなり情が深い",
-                "感情を外に出すのが苦手",
-                "奥ゆかしい",
+                "相手の話を最後まで聞く",
+                "感情を言葉にするのが慎重",
+                "観察眼が鋭い",
             ],
             preferences=[
-                "夜景を見ること",
-                "クラシックピアノ",
-                "読書",
-                "推理小説",
-                "静かな場所",
+                "静かな読書室",
+                "記録を整理すること",
+                "温かい紅茶",
+                "落ち着いた会話",
+                "メモを取りながら考えること",
             ],
         )
     )
@@ -95,7 +93,7 @@ async def test_filesystem_memory_service_writes_profile_and_entities(
 
     assert not is_err(result)
     assert result.value.profile is not None
-    assert result.value.profile.display_name == "白鷺 レイナ"
+    assert result.value.profile.display_name == "月城 ノア"
     assert result.value.entities[0].label == "机"
     assert result.value.search_hits
     assert result.value.timelines == []
@@ -106,8 +104,8 @@ async def test_filesystem_memory_service_writes_profile_and_entities(
     assert entity_file.read_text(encoding="utf-8").startswith("---\n")
     assert "schema_version: 1" in profile_file.read_text(encoding="utf-8")
     assert "memory_type: entity" in entity_file.read_text(encoding="utf-8")
-    assert "白鷺 レイナ" in profile_file.read_text(encoding="utf-8")
-    assert "都会の夜景が似合う" in profile_file.read_text(encoding="utf-8")
+    assert "月城 ノア" in profile_file.read_text(encoding="utf-8")
+    assert "静かな観測室で対話を支える" in profile_file.read_text(encoding="utf-8")
     assert "机" in entity_file.read_text(encoding="utf-8")
 
 
