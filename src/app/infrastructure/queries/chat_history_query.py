@@ -12,6 +12,7 @@ from app.contracts.messages.chat_history import ChatHistoryItem
 from app.domain.queries.chat_history_query import IChatHistoryQuery
 from app.domain.repositories.interfaces import RepositoryError, RepositoryErrorType
 from app.domain.value_objects.chat_type import ChatType
+from app.domain.value_objects.message_content import render_message_content_text
 from app.infrastructure.orm_models.chat_orm import ChatORM
 
 logger = logging.getLogger(__name__)
@@ -85,7 +86,7 @@ def _to_history_item(item: ChatORM) -> ChatHistoryItem:
     payload = item.message_content.get("payload")
     content = ""
     if isinstance(payload, dict):
-        text = payload.get("text")
+        text = render_message_content_text(payload)
         if isinstance(text, str):
             content = text
     return ChatHistoryItem(

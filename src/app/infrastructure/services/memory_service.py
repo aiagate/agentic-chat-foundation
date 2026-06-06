@@ -6,11 +6,6 @@ from pathlib import Path
 
 from flow_res import Err, Ok, Result, is_err
 
-from app.contracts.messages.agent_profile import AgentProfileBundle
-from app.contracts.messages.character_definition import (
-    CharacterDefinition,
-    selected_character_definition,
-)
 from app.contracts.messages.memory_context import (
     MemoryContextPack,
     MemoryEntity,
@@ -57,7 +52,6 @@ class FilesystemMemoryService(IMemoryService):
 
     def __init__(
         self,
-        root: Path | None = None,
         store: FilesystemMemoryStore | None = None,
         index: IMemoryIndex[
             StoredMemoryDocument,
@@ -68,13 +62,14 @@ class FilesystemMemoryService(IMemoryService):
         | None = None,
         embedding_service: IEmbeddingService | None = None,
         agent_profile_service: IAgentProfileService | None = None,
-        character: CharacterDefinition | None = None,
+        *,
+        character_id: str,
     ) -> None:
-        self._store = store or FilesystemMemoryStore(root or default_memory_root())
+        self._store = store or FilesystemMemoryStore(default_memory_root())
         self._index = index or FilesystemMemoryIndex(root=self._store.root)
         self._embedding_service = embedding_service
         self._agent_profile_service = agent_profile_service
-        self._character = character or selected_character_definition()
+        self._character_id = character_id
 
     async def retrieve(
         self,
@@ -82,14 +77,16 @@ class FilesystemMemoryService(IMemoryService):
         user_id: str,
     ) -> Result[MemoryContextPack, MemoryServiceError]:
         """Return a context pack for the query."""
-
-        _ = query
         try:
-            profile_bundle = self._load_agent_profile_bundle()
+            profile_bundle = (
+                self._agent_profile_service.load_agent_profile_bundle()
+                if self._agent_profile_service is not None
+                else None
+            )
             relationship_entity_id = (
                 profile_bundle.relationship_entity_id
                 if profile_bundle is not None
-                else self._character.relationship_entity_id
+                else f"relationship:{self._character_id}"
             )
             index_documents = self._read_index_documents(
                 user_id,
@@ -103,6 +100,7 @@ class FilesystemMemoryService(IMemoryService):
                     user_id=user_id,
                     relationship_entity_id=relationship_entity_id,
                 ),
+                character_id=self._character_id,
                 root=self._store.root,
                 index_db_path=database.get_sqlite_database_path(),
                 embedding_service=self._embedding_service,
@@ -139,18 +137,6 @@ class FilesystemMemoryService(IMemoryService):
         return result.value[0]
 
     def _read_profile(self, user_id: str) -> MemoryProfile | None:
-        if self._agent_profile_service is not None:
-            try:
-                return self._agent_profile_service.load_agent_profile_bundle().profile
-            except Exception:
-                pass
-        agent_profile = _read_agent_profile_bundle(
-            self._store,
-            character_id=self._character.character_id,
-        )
-        if agent_profile is not None:
-            return agent_profile
-
         user_profile_path = self._store.user_profile_path(user_id)
         if user_profile_path.exists():
             return _profile_from_document(
@@ -217,7 +203,7 @@ class FilesystemMemoryService(IMemoryService):
 
         for path in _agent_profile_paths(
             self._store,
-            character_id=self._character.character_id,
+            character_id=self._character_id,
         ):
             if path.exists():
                 stored_documents.append(
@@ -279,14 +265,6 @@ class FilesystemMemoryService(IMemoryService):
             for stored_document in stored_documents
         ]
 
-    def _load_agent_profile_bundle(self) -> AgentProfileBundle | None:
-        if self._agent_profile_service is None:
-            return None
-        try:
-            return self._agent_profile_service.load_agent_profile_bundle()
-        except Exception:
-            return None
-
 
 def _profile_from_document(document: MemoryMarkdownDocument) -> MemoryProfile:
     front_matter = document.front_matter
@@ -300,124 +278,6 @@ def _profile_from_document(document: MemoryMarkdownDocument) -> MemoryProfile:
     )
 
 
-def _read_agent_profile_bundle(
-    store: FilesystemMemoryStore,
-    *,
-    character_id: str,
-) -> MemoryProfile | None:
-    agents_path = _resolved_agent_profile_part_path(store, "AGENTS", character_id)
-    soul_path = _resolved_agent_profile_part_path(store, "SOUL", character_id)
-    personal_path = _resolved_agent_profile_part_path(store, "PERSONAL", character_id)
-    memory_path = _resolved_agent_profile_part_path(store, "MEMORY", character_id)
-    if (
-        agents_path is None
-        and soul_path is None
-        and personal_path is None
-        and memory_path is None
-    ):
-        return None
-
-    agents_document = (
-        store.read_document(agents_path, expected_memory_type="profile")
-        if agents_path is not None
-        else None
-    )
-    soul_document = (
-        store.read_document(soul_path, expected_memory_type="profile")
-        if soul_path is not None
-        else None
-    )
-    personal_document = (
-        store.read_document(personal_path, expected_memory_type="profile")
-        if personal_path is not None
-        else None
-    )
-    memory_document = (
-        store.read_document(memory_path, expected_memory_type="profile")
-        if memory_path is not None
-        else None
-    )
-    if (
-        agents_document is None
-        and soul_document is None
-        and personal_document is None
-        and memory_document is None
-    ):
-        return None
-
-    agents_front_matter = (
-        agents_document.front_matter if agents_document is not None else {}
-    )
-    soul_front_matter = soul_document.front_matter if soul_document else {}
-    personal_front_matter = personal_document.front_matter if personal_document else {}
-    soul_body = soul_document.body if soul_document is not None else ""
-    personal_body = personal_document.body if personal_document is not None else ""
-    memory_body = memory_document.body if memory_document is not None else ""
-    return MemoryProfile(
-        user_id=front_matter_string(agents_front_matter.get("user_id"), default="ai"),
-        display_name=front_matter_string_or_none(
-            agents_front_matter.get("display_name")
-            or soul_front_matter.get("display_name")
-            or personal_front_matter.get("display_name")
-            or _body_h1_text(soul_body)
-            or _body_h1_text(personal_body)
-        ),
-        summary=front_matter_string(
-            soul_front_matter.get("summary")
-            or _body_section_text(soul_body, "Summary")
-            or _body_section_text(memory_body, "Stable notes"),
-            default="",
-        ),
-        traits=front_matter_string_list(soul_front_matter.get("traits", []))
-        or _body_section_list(soul_body, "Traits"),
-        preferences=front_matter_string_list(
-            personal_front_matter.get("preferences", [])
-        )
-        or _body_section_list(personal_body, "Preferences"),
-    )
-
-
-def _body_section_text(body: str, section_name: str) -> str:
-    lines = _body_section_lines(body, section_name)
-    return "\n".join(line.strip() for line in lines).strip()
-
-
-def _body_section_list(body: str, section_name: str) -> list[str]:
-    lines = _body_section_lines(body, section_name)
-    values: list[str] = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("- "):
-            values.append(stripped[2:].strip())
-    return values
-
-
-def _body_section_lines(body: str, section_name: str) -> list[str]:
-    if not body:
-        return []
-    lines = body.splitlines()
-    captured: list[str] = []
-    active = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("## "):
-            active = stripped[3:].strip().lower() == section_name.lower()
-            continue
-        if active:
-            captured.append(line)
-    return captured
-
-
-def _body_h1_text(body: str) -> str | None:
-    for line in body.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("# "):
-            value = stripped[2:].strip()
-            if value:
-                return value
-    return None
-
-
 def _agent_profile_paths(
     store: FilesystemMemoryStore,
     *,
@@ -425,34 +285,10 @@ def _agent_profile_paths(
 ) -> list[Path]:
     resolved_paths: list[Path] = []
     for part in ("AGENTS", "SOUL", "PERSONAL", "MEMORY"):
-        path = _resolved_agent_profile_part_path(store, part, character_id)
-        if path is not None and path.exists():
+        path = store.agent_profile_part_path(part, character_id=character_id)
+        if path.exists():
             resolved_paths.append(path)
     return resolved_paths
-
-
-def _resolved_agent_profile_part_path(
-    store: FilesystemMemoryStore,
-    part: str,
-    character_id: str,
-) -> Path | None:
-    namespaced_path = store.agent_profile_part_path(
-        part,
-        character_id=character_id,
-    )
-    if namespaced_path.exists():
-        return namespaced_path
-
-    legacy_path = _legacy_agent_profile_part_path(store.root, part)
-    if legacy_path.exists():
-        return legacy_path
-
-    return None
-
-
-def _legacy_agent_profile_part_path(root: Path, part: str) -> Path:
-    normalized = part.upper()
-    return root / "profiles" / "agent" / f"{normalized}.md"
 
 
 def _timeline_from_document(

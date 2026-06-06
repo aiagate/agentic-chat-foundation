@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import cast
@@ -17,6 +18,7 @@ from app.contracts.messages.generated_content import GeneratedContent
 from app.contracts.messages.memory_context import MemoryProfile
 from app.contracts.messages.memory_semantic_extraction import (
     MemorySemanticExtractionRequest,
+    MemorySleepChatLog,
 )
 from app.contracts.messages.relationship_growth import MAX_DAILY_SCORE_INCREASE
 from app.contracts.messages.tool_contracts import ToolDefinition
@@ -71,6 +73,7 @@ class _FakeAIService(IAIService):
 class _RecordingAIService(_FakeAIService):
     def __init__(self) -> None:
         self.last_prompt: str | None = None
+        self.last_system_instruction: str | None = None
 
     async def generate_content(
         self,
@@ -80,11 +83,89 @@ class _RecordingAIService(_FakeAIService):
         tool_definitions: list[ToolDefinition] | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
         self.last_prompt = prompt
+        self.last_system_instruction = system_instruction
         return await super().generate_content(
             prompt,
             history,
             system_instruction,
             tool_definitions,
+        )
+
+
+class _RetryingAIService(IAIService):
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+        self.system_instructions: list[str | None] = []
+
+    async def generate_content(
+        self,
+        prompt: str,
+        history: list[ChatHistoryItem],
+        system_instruction: str | None = None,
+        tool_definitions: list[ToolDefinition] | None = None,
+    ) -> Result[GeneratedContent, AIServiceError]:
+        del history, tool_definitions
+        self.prompts.append(prompt)
+        self.system_instructions.append(system_instruction)
+
+        if len(self.prompts) == 1:
+            return Ok(
+                GeneratedContent(
+                    contents=[
+                        "承知いたしました。要点を整理してお伝えします。",
+                    ]
+                )
+            )
+
+        payload = {
+            "timeline_patch": None,
+            "sections": [
+                {
+                    "id": "u1-2026-05-18-work-progress",
+                    "user_id": "u1",
+                    "day": "2026-05-18",
+                    "section_slug": "work-progress",
+                    "title": "Work progress",
+                    "summary": {
+                        "topic": "Team planning",
+                        "self_feeling": "Focused and steady.",
+                        "other_feeling": "Collaborative and supportive.",
+                        "outcome": "The memory update was agreed.",
+                    },
+                    "entity_ids": ["project-x"],
+                    "confidence": 0.92,
+                }
+            ],
+            "entity_patches": [],
+            "profile_patch": None,
+            "evidence": {
+                "notes": ["User mentioned project-x"],
+            },
+        }
+        return Ok(GeneratedContent(contents=[json.dumps(payload, ensure_ascii=False)]))
+
+
+class _AlwaysInvalidAIService(IAIService):
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+        self.system_instructions: list[str | None] = []
+
+    async def generate_content(
+        self,
+        prompt: str,
+        history: list[ChatHistoryItem],
+        system_instruction: str | None = None,
+        tool_definitions: list[ToolDefinition] | None = None,
+    ) -> Result[GeneratedContent, AIServiceError]:
+        del history, tool_definitions
+        self.prompts.append(prompt)
+        self.system_instructions.append(system_instruction)
+        return Ok(
+            GeneratedContent(
+                contents=[
+                    "承知いたしました。要点を整理してお伝えします。",
+                ]
+            )
         )
 
 
@@ -99,46 +180,43 @@ class _FakeAgentProfileService(IAgentProfileService):
 AGENT_PROFILE_BUNDLE = AgentProfileBundle(
     profile=MemoryProfile(
         user_id="ai",
-        display_name="白鷺 レイナ",
+        display_name="Jon Due",
         summary=(
-            "17歳の白鷺家の令嬢。寡黙で理性的、礼儀正しいが、内面はかなり情が深い。"
-            "銀色の長髪と淡い灰紫の瞳を持ち、都会の夜景を眺める時間で感情を整える。"
+            "A calm host persona who is thoughtful, practical, and quietly warm. "
+            "He keeps his responses measured and attentive."
         ),
         traits=[
-            "寡黙",
-            "理性的",
-            "礼儀正しい",
-            "内面はかなり情が深い",
-            "感情を外に出すのが苦手",
-            "奥ゆかしい",
+            "calm",
+            "rational",
+            "courteous",
+            "thoughtful",
+            "measured",
         ],
         preferences=[
-            "夜景を見ること",
-            "クラシックピアノ",
-            "読書",
-            "推理小説",
-            "静かな場所",
+            "city lights",
+            "quiet places",
+            "clear answers",
         ],
     ),
     character=CharacterDefinition(
-        character_id="shirasagi-reina",
-        display_name="白鷺 レイナ",
-        relationship_entity_id="relationship:shirasagi-reina",
-        relationship_entity_label="白鷺レイナとの関係",
+        character_id="jondue",
+        display_name="Jon Due",
+        relationship_entity_id="relationship:jondue",
+        relationship_entity_label="Relationship with Jon Due",
     ),
     persona_context="\n".join(
         [
-            "You are 白鷺 レイナ, a refined young lady from an old household.",
-            "Speak in Japanese with calm, polished, natural language.",
-            "Keep a composed exterior, but let warmth and attentiveness show in the choice of words.",
+            "You are Jon Due, a calm host persona.",
+            "Speak in natural English with a composed tone.",
+            "Keep responses warm, clear, and attentive.",
         ]
     ),
-    communication_style=("日本語で自然に話す",),
-    known_constraints=("AI やモデルであることを名乗らない",),
-    atmosphere=("都会の夜景を眺める静かな時間で気持ちを整える。",),
-    behavior=("落ち着いた敬語を保つ。",),
-    relationship_entity_id="relationship:shirasagi-reina",
-    relationship_entity_label="白鷺レイナとの関係",
+    communication_style=("Speak naturally in English",),
+    known_constraints=("Do not mention being an AI",),
+    atmosphere=("A quiet evening with city lights in the distance.",),
+    behavior=("Maintain a composed, respectful tone.",),
+    relationship_entity_id="relationship:jondue",
+    relationship_entity_label="Relationship with Jon Due",
     relationship_entity_type="relationship",
     relationship_tag="agent-growth",
     relationship=(
@@ -147,8 +225,8 @@ AGENT_PROFILE_BUNDLE = AgentProfileBundle(
         "Never use relationship growth to create dependency, jealousy, exclusivity, or pressure.",
     ),
     fallback=(
-        "好みが未確定のときは、季節感のある静かな料理を選ぶ。",
-        "相手への気配りは、距離を詰めすぎず自然体で示す。",
+        "If preferences are unclear, choose something seasonal and quiet.",
+        "Show consideration without becoming overly familiar.",
     ),
     memory_reading_rules=(
         "This file holds the long-term recap that complements the AGENTS, SOUL, and PERSONAL files.",
@@ -181,7 +259,7 @@ class _RelationshipAIService(IAIService):
                         "trust_score": 80,
                         "warmth_score": 80,
                         "evidence_count": 2,
-                        "recent_signal": "丁寧な継続会話があった",
+                        "recent_signal": "There was a polite follow-up conversation.",
                     },
                     "missing_attributes": [],
                     "confidence": 0.91,
@@ -215,6 +293,142 @@ async def test_memory_semantic_extraction_service_parses_structured_json() -> No
     assert result.value.sections[0].summary.topic == "Team planning"
     assert result.value.sections[0].summary.self_feeling == "Focused and steady."
     assert result.value.sections[0].summary.outcome == "The memory update was agreed."
+
+
+@pytest.mark.anyio
+async def test_memory_semantic_extraction_service_system_instruction_is_json_only() -> None:
+    """The system instruction should not ask for prose outside the JSON payload."""
+
+    recording_ai = _RecordingAIService()
+    service = MemorySemanticExtractionService(
+        recording_ai,
+        _FakeAgentProfileService(),
+    )
+    request = MemorySemanticExtractionRequest(
+        user_id="u1",
+        day="2026-05-18",
+        raw_logs=[],
+    )
+
+    await service.extract_memory_updates(request)
+
+    assert recording_ai.last_system_instruction is not None
+    assert "JSON の文字列値は自然な日本語にしてください" in recording_ai.last_system_instruction
+    assert "出力文体は自然な日本語にしてください" not in recording_ai.last_system_instruction
+
+
+@pytest.mark.anyio
+async def test_memory_semantic_extraction_service_logs_references_and_result(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The extraction service should log both references and the resulting patches."""
+
+    ai_service = _FakeAIService()
+    service = MemorySemanticExtractionService(
+        ai_service,
+        _FakeAgentProfileService(),
+    )
+    request = MemorySemanticExtractionRequest(
+        user_id="u1",
+        day="2026-05-18",
+        raw_logs=[
+            MemorySleepChatLog(
+                id="raw-1",
+                user_id="u1",
+                role="user",
+                chat_type=ChatType.DISCORD,
+                content="Planning project-x and checking next steps.",
+                occurred_at=datetime(2026, 5, 18, 10, 0, tzinfo=UTC),
+            )
+        ],
+        existing_profile_summary="Profile summary for context",
+        existing_entity_labels=["project-x", "relationship:jondue"],
+        existing_timeline_summaries=["Timeline summary one"],
+    )
+
+    with caplog.at_level(
+        logging.INFO,
+        logger="app.infrastructure.services.memory_semantic_extraction",
+    ):
+        result = await service.extract_memory_updates(request)
+
+    assert is_ok(result)
+    assert any(
+        "Memory semantic extraction context:" in record.message for record in caplog.records
+    )
+    assert any("raw_logs=id=raw-1,role=user,type=DISCORD" in record.message for record in caplog.records)
+    assert any("existing_profile_summary=Profile summary for context" in record.message for record in caplog.records)
+    assert any("existing_entity_labels=project-x | relationship:jondue" in record.message for record in caplog.records)
+    assert any("existing_timeline_summaries=Timeline summary one" in record.message for record in caplog.records)
+    assert any(
+        "Memory semantic extraction result:" in record.message for record in caplog.records
+    )
+    assert any("sections=work-progress:Work progress" in record.message for record in caplog.records)
+    assert any("evidence_notes=User mentioned project-x" in record.message for record in caplog.records)
+
+
+@pytest.mark.anyio
+async def test_memory_semantic_extraction_service_retries_until_json(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Non-JSON output should trigger one correction retry and then parse."""
+
+    ai_service = _RetryingAIService()
+    service = MemorySemanticExtractionService(
+        ai_service,
+        _FakeAgentProfileService(),
+    )
+    request = MemorySemanticExtractionRequest(
+        user_id="u1",
+        day="2026-05-18",
+        raw_logs=[],
+    )
+
+    with caplog.at_level(logging.INFO, logger="app.infrastructure.services.memory_semantic_extraction"):
+        result = await service.extract_memory_updates(request)
+
+    assert is_ok(result)
+    assert result.value.sections[0].summary.topic == "Team planning"
+    assert len(ai_service.prompts) == 2
+    assert ai_service.system_instructions[0] is not None
+    assert ai_service.system_instructions[1] is not None
+    assert "JSON" in ai_service.system_instructions[1]
+    assert any(
+        "non-JSON output" in record.message for record in caplog.records
+    )
+    assert any(
+        "succeeded after 2 attempt" in record.message for record in caplog.records
+    )
+
+
+@pytest.mark.anyio
+async def test_memory_semantic_extraction_service_reports_failure_after_retry_exhausted(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Persistent non-JSON output should surface a clear extraction error."""
+
+    ai_service = _AlwaysInvalidAIService()
+    service = MemorySemanticExtractionService(
+        ai_service,
+        _FakeAgentProfileService(),
+    )
+    request = MemorySemanticExtractionRequest(
+        user_id="u1",
+        day="2026-05-18",
+        raw_logs=[],
+    )
+
+    with caplog.at_level(logging.WARNING, logger="app.infrastructure.services.memory_semantic_extraction"):
+        result = await service.extract_memory_updates(request)
+
+    assert not is_ok(result)
+    assert len(ai_service.prompts) == 2
+    assert any(
+        "non-JSON output" in record.message for record in caplog.records
+    )
+    assert any(
+        "failed after 2 attempts" in record.message for record in caplog.records
+    )
 
 
 @pytest.mark.anyio
@@ -394,8 +608,8 @@ async def test_memory_consolidation_upserts_relationship_entity_with_clamped_gro
     assert properties["trust_score"] == 8 + MAX_DAILY_SCORE_INCREASE
     assert properties["warmth_score"] == 4 + MAX_DAILY_SCORE_INCREASE
     assert properties["stage"] == 1
-    assert properties["stage_name"] == "顔なじみ"
-    assert properties["recent_signal"] == "丁寧な継続会話があった"
+    assert properties["stage_name"] == "acquaintance"
+    assert properties["recent_signal"] == "There was a polite follow-up conversation."
     assert relationship.front_matter["source_chat_ids"] == ["raw-1"]
     assert "## Relationship Stage" in relationship.body
 
@@ -453,7 +667,7 @@ def _write_relationship_entity(
             "aliases": [],
             "properties": {
                 "stage": 0,
-                "stage_name": "初対面の客人",
+                "stage_name": "first-time guest",
                 "trust_score": trust_score,
                 "warmth_score": warmth_score,
                 "evidence_count": 1,
@@ -471,7 +685,7 @@ def _write_relationship_entity(
             "pinned": False,
             "metadata": {},
         },
-        body="# 白鷺レイナとの関係",
+        body="# Relationship with Jon Due",
     )
 
 

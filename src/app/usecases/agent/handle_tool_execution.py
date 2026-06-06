@@ -43,7 +43,7 @@ class HandleToolExecutionCommand(
     user_id: str
     chat_type: ChatType
     tool_name: str
-    character_id: str | None = None
+    character_id: str
     guild_id: str | None = None
     channel_id: str | None = None
     agent_context: AgentEnvelope | None = None
@@ -95,15 +95,7 @@ class HandleToolExecutionHandler(
             )
 
         tool_call = tool_call_result.value
-        execution_character_id = (
-            request.character_id
-            or tool_call.character_id
-            or (
-                request.agent_context.character_id
-                if request.agent_context is not None
-                else None
-            )
-        )
+        execution_character_id = request.character_id
         lock_result = await self._tool_execution_lock.acquire(
             request.tool_call_id,
             character_id=execution_character_id,

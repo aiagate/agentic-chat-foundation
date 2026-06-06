@@ -28,6 +28,7 @@ async def test_chat_tool_requested_dispatches_execution(
             "chat_id": "chat-1",
             "user_id": "u1",
             "chat_type": "DISCORD",
+            "character_id": "shirasagi-reina",
             "tool_call_id": "tool-1",
             "tool_name": "web_search",
         }
@@ -54,6 +55,7 @@ async def test_chat_tool_requested_dispatches_memory_search_execution(
             "chat_id": "chat-1",
             "user_id": "u1",
             "chat_type": "DISCORD",
+            "character_id": "shirasagi-reina",
             "tool_call_id": "tool-2",
             "tool_name": "memory.search",
         }
@@ -80,6 +82,7 @@ async def test_chat_tool_completed_dispatches_agent_runtime(
             "chat_id": "chat-1",
             "user_id": "u1",
             "chat_type": "DISCORD",
+            "character_id": "shirasagi-reina",
             "status": "ok",
             "tool_name": "web_search",
             "tool_call_id": "tool-1",
@@ -111,6 +114,7 @@ async def test_chat_tool_completed_non_search_tool_does_not_reenter(
             "chat_id": "chat-1",
             "user_id": "u1",
             "chat_type": "DISCORD",
+            "character_id": "shirasagi-reina",
             "status": "ok",
             "tool_name": "discord.reply",
             "result": {

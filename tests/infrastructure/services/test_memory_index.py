@@ -30,6 +30,7 @@ from app.infrastructure.services.memory_index_maintenance import (
 from app.infrastructure.services.memory_write_service import (
     FilesystemMemoryWriteService,
 )
+from tests._agent_profile_fixture import _character_id
 
 _memory_index_source_id = cast(Any, MemoryIndexDocumentORM.source_id)
 _memory_index_user_id = cast(Any, MemoryIndexDocumentORM.user_id)
@@ -72,6 +73,7 @@ def test_search_memory_index_ranks_entity_alias_and_separates_users() -> None:
         "workbench gray",
         documents,
         MemorySearchFilters(user_id="u1", tags=("office",)),
+        character_id=_character_id(),
     )
 
     assert [hit.hit.source.id for hit in hits] == ["desk"]
@@ -151,16 +153,19 @@ def test_search_memory_index_filters_timeline_date_status_and_archived() -> None
             timeline_type="daily_summary",
             date_from="2026-05-01T00:00:00+00:00",
         ),
+        character_id=_character_id(),
     )
     unresolved_hits = FilesystemMemoryIndex().search_memory_index(
         "unknown repository",
         documents,
         MemorySearchFilters(user_id="u1", unresolved=True),
+        character_id=_character_id(),
     )
     archived_hits = FilesystemMemoryIndex().search_memory_index(
         "archived",
         documents,
         MemorySearchFilters(user_id="u1"),
+        character_id=_character_id(),
     )
 
     assert [hit.hit.source.id for hit in timeline_hits] == ["daily-1"]
@@ -192,6 +197,7 @@ def test_filesystem_memory_index_wraps_search_function() -> None:
         "workbench gray",
         documents,
         MemorySearchFilters(user_id="u1", tags=("office",)),
+        character_id=_character_id(),
     )
     assert [hit.hit.source.id for hit in wrapped_hits] == ["desk"]
 
@@ -220,6 +226,7 @@ async def test_memory_index_maintenance_rebuilds_and_repairs_snapshot(
     maintenance = MemoryIndexMaintenanceService(
         root=memory_root,
         session_factory=session_factory,
+        character_id=_character_id(),
     )
     rebuild_result = await maintenance.rebuild_memory_index(user_id="u1")
 
@@ -251,6 +258,7 @@ async def test_memory_index_maintenance_rebuilds_and_repairs_snapshot(
         "standing desk",
         [],
         MemorySearchFilters(user_id="u1"),
+        character_id=_character_id(),
     )
     assert hits
     assert hits[0].hit.source.id == "desk-1"
@@ -273,6 +281,7 @@ async def test_memory_index_maintenance_rebuilds_and_repairs_snapshot(
         "standing desk",
         [],
         MemorySearchFilters(user_id="u1"),
+        character_id=_character_id(),
     )
     assert all(hit.hit.source.id != "desk-1" for hit in repaired_hits)
 
@@ -329,6 +338,7 @@ def test_search_memory_index_uses_persisted_embedding_when_terms_do_not_match(
         query,
         documents,
         MemorySearchFilters(user_id="u1"),
+        character_id=_character_id(),
         index_db_path=index_db_path,
         query_embedding=query_embedding,
     )

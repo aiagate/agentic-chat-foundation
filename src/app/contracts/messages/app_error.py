@@ -20,6 +20,7 @@ class AppErrorDetectedPayload(TypedDict, total=False):
     retryable: Required[bool]
     request_type: Required[str]
     chat_type: NotRequired[str]
+    character_id: NotRequired[str]
     chat_id: NotRequired[str]
     user_id: NotRequired[str]
     guild_id: NotRequired[str]
@@ -48,6 +49,7 @@ def build_app_error_detected_payload(
     retryable: bool,
     request_type: str,
     chat_type: str | None = None,
+    character_id: str | None = None,
     chat_id: str | None = None,
     user_id: str | None = None,
     guild_id: str | None = None,
@@ -78,6 +80,8 @@ def build_app_error_detected_payload(
     }
     if chat_type is not None:
         payload["chat_type"] = chat_type
+    if character_id is not None:
+        payload["character_id"] = character_id
     if chat_id is not None:
         payload["chat_id"] = chat_id
     if user_id is not None:

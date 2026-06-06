@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
 from app.contracts.messages.agent_profile import AgentProfileBundle
 from app.contracts.messages.character_definition import (
     CharacterDefinition,
     RelationshipDefaults,
-    selected_character_definition,
 )
 from app.contracts.messages.memory_context import MemoryProfile
 from app.contracts.ports.agent_profile_service import (
@@ -30,11 +28,7 @@ class FilesystemAgentProfileService(IAgentProfileService):
     """Load the built-in agent profile bundle from the filesystem."""
 
     store: IMemoryStore
-    character: CharacterDefinition | None = None
-
-    def __post_init__(self) -> None:
-        self._store = self.store
-        self._character = self.character or selected_character_definition()
+    character_id: str
 
     def ensure_agent_profile_bundle(self) -> None:
         """Validate that the canonical bundle files exist and parse cleanly."""
@@ -48,11 +42,21 @@ class FilesystemAgentProfileService(IAgentProfileService):
         soul_document = self._read_part("SOUL")
         personal_document = self._read_part("PERSONAL")
         memory_document = self._read_part("MEMORY")
+        relationship_section = _section_key_values(
+            personal_document.body, "Relationship"
+        )
         profile = _load_profile(
             agents_document=agents_document,
             soul_document=soul_document,
             personal_document=personal_document,
-            character=self._character,
+        )
+        character = _load_character_definition(
+            character_id=self.character_id,
+            agents_document=agents_document,
+            soul_document=soul_document,
+            personal_document=personal_document,
+            relationship_section=relationship_section,
+            profile=profile,
         )
         persona_context = agents_document.body.strip()
         communication_style = _body_section_list(
@@ -63,62 +67,32 @@ class FilesystemAgentProfileService(IAgentProfileService):
         )
         atmosphere = _body_section_list(soul_document.body, "Atmosphere")
         behavior = _body_section_list(soul_document.body, "ふるまい")
-        relationship_section = _section_key_values(
-            personal_document.body, "Relationship"
-        )
         fallback = _body_section_list(personal_document.body, "Fallback")
         memory_reading_rules = _body_section_list(memory_document.body, "Reading rule")
-        relationship_entity_id = (
-            relationship_section.get("relationship_entity_id")
-            or self._character.relationship_entity_id
-        )
-        relationship_entity_label = (
-            relationship_section.get("relationship_entity_label")
-            or self._character.relationship_entity_label
-        )
-        relationship_entity_type = (
-            relationship_section.get("relationship_entity_type")
-            or self._character.relationship_entity_type
-        )
-        relationship_tag = (
-            relationship_section.get("relationship_tag")
-            or self._character.relationship_tag
-        )
+        relationship_entity_id = character.relationship_entity_id
+        relationship_entity_label = character.relationship_entity_label
+        relationship_entity_type = character.relationship_entity_type
+        relationship_tag = character.relationship_tag
         relationship_defaults = RelationshipDefaults(
             trust_score=_section_float(
                 relationship_section,
                 "relationship_initial_trust_score",
-                default=self._character.relationship_defaults.trust_score,
+                default=character.relationship_defaults.trust_score,
             ),
             warmth_score=_section_float(
                 relationship_section,
                 "relationship_initial_warmth_score",
-                default=self._character.relationship_defaults.warmth_score,
+                default=character.relationship_defaults.warmth_score,
             ),
             stage=_section_int(
                 relationship_section,
                 "relationship_initial_stage",
-                default=self._character.relationship_defaults.stage,
+                default=character.relationship_defaults.stage,
             ),
         )
-        missing_fields = [
-            field_name
-            for field_name, value in (
-                ("relationship_entity_id", relationship_entity_id),
-                ("relationship_entity_label", relationship_entity_label),
-                ("relationship_entity_type", relationship_entity_type),
-                ("relationship_tag", relationship_tag),
-            )
-            if not value
-        ]
-        if missing_fields:
-            joined = ", ".join(missing_fields)
-            raise AgentProfileServiceError(
-                f"agent profile bundle is missing required relationship fields: {joined}"
-            )
         return AgentProfileBundle(
             profile=profile,
-            character=self._character,
+            character=character,
             persona_context=persona_context,
             communication_style=tuple(communication_style),
             known_constraints=tuple(known_constraints),
@@ -137,28 +111,16 @@ class FilesystemAgentProfileService(IAgentProfileService):
         )
 
     def _read_part(self, part: str) -> MemoryMarkdownDocument:
-        path = self._store.agent_profile_part_path(
+        path = self.store.agent_profile_part_path(
             part,
-            character_id=self._character.character_id,
+            character_id=self.character_id,
         )
         if path.exists():
-            return self._store.read_document(path, expected_memory_type="profile")
-
-        legacy_path = _legacy_agent_profile_part_path(self._store.root, part)
-        if legacy_path.exists():
-            return self._store.read_document(
-                legacy_path,
-                expected_memory_type="profile",
-            )
+            return self.store.read_document(path, expected_memory_type="profile")
 
         raise AgentProfileServiceError(
             f"agent profile bundle missing required file: {path}"
         )
-
-
-def _legacy_agent_profile_part_path(root: Path, part: str) -> Path:
-    normalized = part.upper()
-    return root / "profiles" / "agent" / f"{normalized}.md"
 
 
 def _load_profile(
@@ -166,7 +128,6 @@ def _load_profile(
     agents_document: MemoryMarkdownDocument,
     soul_document: MemoryMarkdownDocument,
     personal_document: MemoryMarkdownDocument,
-    character: CharacterDefinition,
 ) -> MemoryProfile:
     display_name = (
         front_matter_string_or_none(agents_document.front_matter.get("display_name"))
@@ -187,13 +148,48 @@ def _load_profile(
         preferences = _body_section_list(personal_document.body, "Preferences")
     user_id = front_matter_string_or_none(agents_document.front_matter.get("user_id"))
     if not user_id:
-        user_id = character.profile_user_id
+        user_id = "ai"
     return MemoryProfile(
         user_id=user_id,
         display_name=display_name,
         summary=summary,
         traits=traits,
         preferences=preferences,
+    )
+
+
+def _load_character_definition(
+    *,
+    character_id: str,
+    agents_document: MemoryMarkdownDocument,
+    soul_document: MemoryMarkdownDocument,
+    personal_document: MemoryMarkdownDocument,
+    relationship_section: dict[str, str],
+    profile: MemoryProfile,
+) -> CharacterDefinition:
+    display_name = profile.display_name or (
+        front_matter_string_or_none(agents_document.front_matter.get("display_name"))
+        or _body_h1_text(agents_document.body)
+        or _body_h1_text(soul_document.body)
+        or _body_h1_text(personal_document.body)
+    )
+    relationship_entity_id = relationship_section.get("relationship_entity_id")
+    relationship_entity_label = relationship_section.get("relationship_entity_label")
+    relationship_entity_type = relationship_section.get("relationship_entity_type")
+    relationship_tag = relationship_section.get("relationship_tag")
+    if not display_name:
+        raise AgentProfileServiceError("agent profile bundle is missing a display name")
+    if not relationship_entity_id or not relationship_entity_label:
+        raise AgentProfileServiceError(
+            "agent profile bundle is missing required relationship metadata"
+        )
+    return CharacterDefinition(
+        character_id=character_id,
+        display_name=display_name,
+        relationship_entity_id=relationship_entity_id,
+        relationship_entity_label=relationship_entity_label,
+        relationship_entity_type=relationship_entity_type or "relationship",
+        relationship_tag=relationship_tag or "agent-growth",
     )
 
 
@@ -239,19 +235,13 @@ def _body_h1_text(body: str) -> str | None:
 
 
 def _section_key_values(body: str, section_name: str) -> dict[str, str]:
+    lines = _body_section_lines(body, section_name)
     values: dict[str, str] = {}
-    for line in _body_section_lines(body, section_name):
+    for line in lines:
         stripped = line.strip()
-        if not stripped.startswith("- "):
-            continue
-        kv_text = stripped[2:].strip()
-        if ": " not in kv_text:
-            continue
-        key, value = kv_text.split(": ", 1)
-        key = key.strip()
-        value = value.strip()
-        if key and value:
-            values[key] = value
+        if stripped.startswith("- ") and ":" in stripped:
+            key, value = stripped[2:].split(":", 1)
+            values[key.strip()] = value.strip()
     return values
 
 

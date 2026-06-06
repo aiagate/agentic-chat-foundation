@@ -37,7 +37,7 @@ class IRetrievedContextStore(ABC):
         self,
         tool_call_id: str,
         *,
-        character_id: str | None = None,
+        character_id: str,
     ) -> Result[RetrievedContext, RetrievedContextStoreError]:
         """Load retrieved context by tool call ID."""
         raise NotImplementedError

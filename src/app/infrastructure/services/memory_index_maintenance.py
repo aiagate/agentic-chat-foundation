@@ -34,11 +34,13 @@ class MemoryIndexMaintenanceService(IMemoryIndexMaintenance):
         root: Path | None = None,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
         embedding_service: IEmbeddingService | None = None,
+        character_id: str,
     ) -> None:
         self._root = root or default_memory_root()
         self._store = FilesystemMemoryStore(self._root)
         self._session_factory = session_factory
         self._embedding_service = embedding_service
+        self._character_id = character_id
 
     async def rebuild_memory_index(
         self,
@@ -109,7 +111,11 @@ class MemoryIndexMaintenanceService(IMemoryIndexMaintenance):
         *,
         user_id: str | None,
     ) -> list[MemoryIndexRecord]:
-        documents = _stored_documents_for_scope(self._store, user_id=user_id)
+        documents = _stored_documents_for_scope(
+            self._store,
+            user_id=user_id,
+            character_id=self._character_id,
+        )
         if not documents:
             return []
         embeddings = await embed_memory_index_records(

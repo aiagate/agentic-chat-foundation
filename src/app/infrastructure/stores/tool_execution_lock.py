@@ -8,7 +8,6 @@ import os
 import redis.asyncio as redis
 from flow_res import Err, Ok, Result
 
-from app.contracts.messages.character_definition import selected_character_id
 from app.contracts.ports.tool_execution_lock import (
     IToolExecutionLock,
     ToolExecutionLockError,
@@ -27,9 +26,9 @@ class InMemoryToolExecutionLock(IToolExecutionLock):
         self,
         tool_call_id: str,
         *,
-        character_id: str | None = None,
+        character_id: str,
     ) -> Result[bool, ToolExecutionLockError]:
-        key = (_character_id(character_id), tool_call_id)
+        key = (character_id, tool_call_id)
         if key in self._locked:
             return Ok(False)
         self._locked.add(key)
@@ -57,11 +56,11 @@ class RedisToolExecutionLock(IToolExecutionLock):
         self,
         tool_call_id: str,
         *,
-        character_id: str | None = None,
+        character_id: str,
     ) -> Result[bool, ToolExecutionLockError]:
         try:
             acquired = await self._redis.set(
-                _key(tool_call_id, character_id=_character_id(character_id)),
+                _key(tool_call_id, character_id=character_id),
                 "1",
                 ex=self._ttl_seconds,
                 nx=True,
@@ -73,10 +72,6 @@ class RedisToolExecutionLock(IToolExecutionLock):
             )
             return Err(ToolExecutionLockError(str(exc)))
         return Ok(bool(acquired))
-
-
-def _character_id(value: str | None) -> str:
-    return value or selected_character_id()
 
 
 def _key(tool_call_id: str, *, character_id: str) -> str:

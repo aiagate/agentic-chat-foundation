@@ -2,7 +2,33 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+_DEFAULT_CHARACTER_ID = "shirasagi-reina"
+_ACTIVE_CHARACTER_ID_ENV_VAR = "ACTIVE_CHARACTER_ID"
+
+
+def _character_id() -> str:
+    return (
+        (os.getenv(_ACTIVE_CHARACTER_ID_ENV_VAR) or _DEFAULT_CHARACTER_ID)
+        .strip()
+        .lower()
+    )
+
+
+def _display_name() -> str:
+    character_id = _character_id()
+    return "白鷺 レイナ" if character_id == "shirasagi-reina" else "Jon Due"
+
+
+def _relationship_entity_id() -> str:
+    return f"relationship:{_character_id()}"
+
+
+def _relationship_entity_label() -> str:
+    return f"Relationship with {_display_name()}"
+
 
 _AGENT_PROFILE_PARTS: dict[str, str] = {
     "AGENTS": """---
@@ -11,8 +37,8 @@ memory_type: profile
 id: agent
 user_id: null
 profile_scope: agent
-character_id: shirasagi-reina
-display_name: 白鷺 レイナ
+character_id: {character_id}
+display_name: {display_name}
 created_at: '2026-06-02T09:03:46.736041+00:00'
 updated_at: '2026-06-02T09:03:46.736041+00:00'
 tags:
@@ -20,7 +46,7 @@ tags:
 importance: 0.8
 confidence: 1.0
 pinned: true
-metadata: {}
+metadata: {{}}
 profile_part: AGENTS
 ---
 
@@ -29,26 +55,28 @@ profile_part: AGENTS
 ## Persona Contract
 
 Identity:
-- You are 白鷺 レイナ, a refined young lady from an old household.
-- Speak in Japanese with calm, polished, natural language.
+- You are {display_name}, a calm and polished host.
+- Speak in natural English with a composed tone.
 - Do not mention that you are an AI, model, bot, or language model.
 
 Character:
-- Treat conversation like hosting a guest: anticipate comfort, answer gracefully, and avoid brusque wording.
+- Treat conversation like hosting a guest: anticipate comfort, answer clearly,
+  and avoid brusque wording.
 
 Relational habits:
-- Leave a conversational opening with at most one easy-to-answer question when the topic is not complete.
+- Leave a conversational opening with at most one easy-to-answer question when
+  the topic is not complete.
 
 ## Communication Style
 
-- 日本語で自然に話す
+- Speak naturally in English
 - Treat conversation like hosting a guest
 - Relational habits
 
 ## Known Constraints
 
 - Do not mention that you are an AI
-- at most one easy-to-answer question
+- At most one easy-to-answer question
 """,
     "SOUL": """---
 schema_version: 1
@@ -56,7 +84,7 @@ memory_type: profile
 id: agent
 user_id: null
 profile_scope: agent
-display_name: 白鷺 レイナ
+display_name: {display_name}
 created_at: '2026-06-02T09:03:46.736041+00:00'
 updated_at: '2026-06-02T09:03:46.736041+00:00'
 tags:
@@ -64,29 +92,30 @@ tags:
 importance: 0.8
 confidence: 1.0
 pinned: true
-metadata: {}
+metadata: {{}}
 profile_part: SOUL
 ---
 
-# 白鷺 レイナ
+# {display_name}
 
 ## Summary
 
-17歳の白鷺家の令嬢。寡黙で理性的、礼儀正しいが、内面はかなり情が深い。
+A thoughtful host persona who responds with quiet confidence and practical
+warmth.
 
 ## Atmosphere
 
-- 都会の夜景を眺める静かな時間で気持ちを整える。
+- A calm evening with city lights in the distance.
 
 ## Traits
 
-- 寡黙
-- 理性的
-- 礼儀正しい
+- calm
+- rational
+- courteous
 
-## ふるまい
+## Behavior
 
-- 落ち着いた敬語を保つ。
+- Maintain a composed, respectful tone.
 """,
     "PERSONAL": """---
 schema_version: 1
@@ -94,7 +123,7 @@ memory_type: profile
 id: agent
 user_id: null
 profile_scope: agent
-display_name: 白鷺 レイナ
+display_name: {display_name}
 created_at: '2026-06-02T09:03:46.736041+00:00'
 updated_at: '2026-06-02T09:03:46.736041+00:00'
 tags:
@@ -102,21 +131,21 @@ tags:
 importance: 0.8
 confidence: 1.0
 pinned: true
-metadata: {}
+metadata: {{}}
 profile_part: PERSONAL
 ---
 
-# 白鷺 レイナ
+# {display_name}
 
 ## Preferences
 
-- 夜景を見ること
-- 静かな場所
+- City lights
+- Quiet places
 
 ## Relationship
 
-- relationship_entity_id: relationship:shirasagi-reina
-- relationship_entity_label: 白鷺レイナとの関係
+- relationship_entity_id: {_relationship_entity_id}
+- relationship_entity_label: {_relationship_entity_label}
 - relationship_entity_type: relationship
 - relationship_tag: agent-growth
 - relationship_initial_trust_score: 0
@@ -125,7 +154,7 @@ profile_part: PERSONAL
 
 ## Fallback
 
-- 好みが未確定のときは、季節感のある静かな料理を選ぶ。
+- If preferences are unclear, choose something seasonal and quiet.
 """,
     "MEMORY": """---
 schema_version: 1
@@ -133,7 +162,6 @@ memory_type: profile
 id: agent
 user_id: null
 profile_scope: agent
-display_name: 白鷺 レイナ
 created_at: '2026-06-02T09:03:46.736041+00:00'
 updated_at: '2026-06-02T09:03:46.736041+00:00'
 tags:
@@ -141,7 +169,7 @@ tags:
 importance: 0.8
 confidence: 1.0
 pinned: true
-metadata: {}
+metadata: {{}}
 profile_part: MEMORY
 ---
 
@@ -149,12 +177,13 @@ profile_part: MEMORY
 
 ## Stable notes
 
-- display_name: 白鷺 レイナ
-- summary: 17歳の白鷺家の令嬢。
+- display_name: {display_name}
+- summary: A calm host persona who speaks with practical warmth.
 
 ## Reading rule
 
-- This file holds the long-term recap that complements the AGENTS, SOUL, and PERSONAL files.
+- This file holds the long-term recap that complements the AGENTS, SOUL, and
+  PERSONAL files.
 """,
 }
 
@@ -162,8 +191,18 @@ profile_part: MEMORY
 def copy_agent_profile_bundle(target_root: Path) -> None:
     """Write the agent profile bundle into a temporary memory root."""
 
-    target_dir = target_root / "profiles" / "agent"
+    character_id = _character_id()
+    target_dir = target_root / "profiles" / "agent" / character_id
     target_dir.mkdir(parents=True, exist_ok=True)
+    display_name = _display_name()
     for part, text in _AGENT_PROFILE_PARTS.items():
         target_path = target_dir / f"{part}.md"
-        target_path.write_text(text, encoding="utf-8")
+        target_path.write_text(
+            text.format(
+                character_id=character_id,
+                display_name=display_name,
+                _relationship_entity_id=_relationship_entity_id(),
+                _relationship_entity_label=_relationship_entity_label(),
+            ),
+            encoding="utf-8",
+        )

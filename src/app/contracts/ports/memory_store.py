@@ -12,7 +12,7 @@ class IMemoryStore(Protocol):
 
     root: Path
 
-    def agent_profile_dir(self, character_id: str | None = None) -> Path:
+    def agent_profile_dir(self, character_id: str) -> Path:
         """Return the agent profile bundle directory."""
         ...
 
@@ -20,7 +20,7 @@ class IMemoryStore(Protocol):
         self,
         part: str,
         *,
-        character_id: str | None = None,
+        character_id: str,
     ) -> Path:
         """Return one agent profile bundle file path."""
         ...
@@ -28,7 +28,7 @@ class IMemoryStore(Protocol):
     def agent_profile_bundle_paths(
         self,
         *,
-        character_id: str | None = None,
+        character_id: str,
     ) -> dict[str, Path]:
         """Return all agent profile bundle paths keyed by part name."""
         ...

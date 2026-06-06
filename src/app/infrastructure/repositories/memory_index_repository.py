@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.contracts.messages.memory_index import MemoryIndexRecord
 from app.infrastructure.orm_models.memory_index_orm import MemoryIndexDocumentORM
 
-_AGENT_PROFILE_PATH = "profiles/agent/SOUL.md"
 _AGENT_PROFILE_PREFIX = "profiles/agent/%"
 
 _source_path = cast(Any, MemoryIndexDocumentORM.source_path)
@@ -34,7 +33,6 @@ class MemoryIndexRepository:
                     _user_id == user_id,
                     or_(
                         _user_id.is_(None),
-                        _source_path == _AGENT_PROFILE_PATH,
                         _source_path.like(_AGENT_PROFILE_PREFIX),
                     ),
                 )
@@ -66,7 +64,6 @@ class MemoryIndexRepository:
                     _user_id == user_id,
                     or_(
                         _user_id.is_(None),
-                        _source_path == _AGENT_PROFILE_PATH,
                         _source_path.like(_AGENT_PROFILE_PREFIX),
                     ),
                 )
@@ -92,7 +89,6 @@ class MemoryIndexRepository:
                     _user_id == user_id,
                     or_(
                         _user_id.is_(None),
-                        _source_path == _AGENT_PROFILE_PATH,
                         _source_path.like(_AGENT_PROFILE_PREFIX),
                     ),
                 )

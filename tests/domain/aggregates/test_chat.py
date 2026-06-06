@@ -61,6 +61,11 @@ class TestMessageContent:
         [
             (MessageContent.text("hello"), MessageContentType.TEXT, {"text": "hello"}),
             (
+                MessageContent.texts(["hello", "world"]),
+                MessageContentType.TEXT,
+                {"texts": ["hello", "world"]},
+            ),
+            (
                 MessageContent.image(
                     image_id="image-1", url="https://example.com/1.png"
                 ),
@@ -79,7 +84,7 @@ class TestMessageContent:
         self,
         content: MessageContent,
         expected_type: MessageContentType,
-        expected_payload: dict[str, str],
+        expected_payload: dict[str, object],
     ) -> None:
         """Test supported message content variants."""
         assert content.type == expected_type
@@ -101,6 +106,19 @@ class TestMessageContent:
         assert is_ok(result)
         content = result.expect("MessageContent.from_primitive should succeed")
         assert content == MessageContent.text("hello")
+
+    def test_message_content_from_primitive_with_texts(self) -> None:
+        """Test restoring multiple text units from persistence payload."""
+        result = MessageContent.from_primitive(
+            {
+                "type": "text",
+                "payload": {"texts": ["hello", "world"]},
+            }
+        )
+
+        assert is_ok(result)
+        content = result.expect("MessageContent.from_primitive should succeed")
+        assert content == MessageContent.texts(["hello", "world"])
 
     def test_message_content_rejects_invalid_type(self) -> None:
         """Test rejecting invalid content type."""

@@ -28,6 +28,7 @@ def test_search_tool_arguments_shape() -> None:
 def test_retrieved_context_uses_tool_call_id() -> None:
     context = RetrievedContext(
         tool_call_id="tool-1",
+        character_id="reina",
         query="ollama web search",
         tool_name="web_search",
         items=[],
@@ -47,6 +48,7 @@ def test_generated_content_uses_tool_calls_as_the_only_tool_request_shape() -> N
                 agent_run_id="run-2",
                 agent_turn_id="turn-2",
                 tool_call_id="tool-2",
+                character_id="reina",
                 tool_name="web_search",
                 arguments={
                     "query": "ollama web search",
@@ -56,6 +58,7 @@ def test_generated_content_uses_tool_calls_as_the_only_tool_request_shape() -> N
                 user_message="ちょっと検索してみます",
             ),
             ToolCall(
+                character_id="reina",
                 tool_name="memory.search",
                 arguments={"query": "memory lookup"},
                 user_message="memory lookup",
@@ -67,6 +70,65 @@ def test_generated_content_uses_tool_calls_as_the_only_tool_request_shape() -> N
     assert content.tool_calls[0].tool_call_id == "tool-2"
     assert content.tool_calls[0].tool_name == "web_search"
     assert content.tool_calls[1].tool_name == "memory.search"
+
+
+def test_generated_content_normalizes_legacy_tool_call_arrays() -> None:
+    payload = [
+        {
+            "id": "call_1",
+            "name": "line.reply",
+            "arguments": {
+                "content": "こんにちは。",
+            },
+        }
+    ]
+
+    content = GeneratedContent.model_validate(payload)
+
+    assert content.contents == []
+    assert len(content.tool_calls) == 1
+    assert content.tool_calls[0].tool_call_id == "call_1"
+    assert content.tool_calls[0].tool_name == "line.reply"
+    assert content.tool_calls[0].arguments == {"content": "こんにちは。"}
+    assert content.tool_calls[0].user_message == "こんにちは。"
+
+
+def test_generated_content_normalizes_single_item_wrapper_with_tool_calls() -> None:
+    payload = [
+        {
+            "contents": [],
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "name": "memory.search",
+                    "arguments": {
+                        "query": "memory lookup",
+                    },
+                }
+            ],
+        }
+    ]
+
+    content = GeneratedContent.model_validate(payload)
+
+    assert content.contents == []
+    assert len(content.tool_calls) == 1
+    assert content.tool_calls[0].tool_call_id == "call_1"
+    assert content.tool_calls[0].tool_name == "memory.search"
+    assert content.tool_calls[0].user_message == "memory lookup"
+
+
+def test_generated_content_normalizes_scalar_contents_into_a_list() -> None:
+    payload = {
+        "contents": "ええ、よくわかります。夕暮れ時は一日の疲れが出始める頃です。",
+    }
+
+    content = GeneratedContent.model_validate(payload)
+
+    assert content.contents == [
+        "ええ、よくわかります。夕暮れ時は一日の疲れが出始める頃です。"
+    ]
+    assert content.tool_calls == []
 
 
 def test_generic_tool_payload_builders_merge_agent_metadata() -> None:

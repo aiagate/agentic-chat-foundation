@@ -35,7 +35,7 @@ class IToolCallStore(ABC):
         self,
         tool_call_id: str,
         *,
-        character_id: str | None = None,
+        character_id: str,
     ) -> Result[ToolCall, ToolCallStoreError]:
         """Load a tool call by ID."""
         raise NotImplementedError

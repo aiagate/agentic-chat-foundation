@@ -1,5 +1,7 @@
 """Cog to handle automated responses to direct messages."""
 
+import logging
+
 import discord
 from discord.ext import commands
 from flow_med import Mediator
@@ -7,6 +9,8 @@ from flow_res import is_err
 
 from app.presentation.bot.cogs.base_cog import BaseCog
 from app.usecases.chat.save_discord_chat import SaveDiscordChatCommand
+
+logger = logging.getLogger(__name__)
 
 
 class DirectMessageResponseCog(BaseCog, name="DM Response"):
@@ -24,6 +28,15 @@ class DirectMessageResponseCog(BaseCog, name="DM Response"):
         if not isinstance(message.channel, discord.DMChannel):
             return
 
+        content = _normalize_message_content(message.content)
+        if content is None:
+            logger.warning(
+                "Skipping Discord DM without text content: author_id=%s channel_id=%s",
+                getattr(message.author, "id", None),
+                getattr(message.channel, "id", None),
+            )
+            return
+
         guild_id = "DM"
         channel_id = str(message.channel.id)
 
@@ -32,9 +45,18 @@ class DirectMessageResponseCog(BaseCog, name="DM Response"):
                 user_id=str(message.author.id),
                 guild_id=guild_id,
                 channel_id=channel_id,
-                content=message.content,
+                content=content,
             )
         )
         if is_err(save_result):
             await message.channel.send("メッセージの保存に失敗しました。")
             return
+
+
+def _normalize_message_content(content: str | None) -> str | None:
+    if content is None:
+        return None
+    normalized = content.strip()
+    if not normalized:
+        return None
+    return normalized

@@ -41,6 +41,7 @@ async def test_discord_chat_saved_handler_triggers_generation(
             "user_id": "u1",
             "guild_id": "DM",
             "channel_id": "123",
+            "character_id": "shirasagi-reina",
             "event_id": "event-1",
             "agent_run_id": "run-1",
             "tool_call_id": "tool-1",
@@ -68,6 +69,7 @@ async def test_line_chat_saved_handler_triggers_generation(
         {
             "chat_id": "chat-1",
             "user_id": "u1",
+            "character_id": "shirasagi-reina",
             "event_id": "event-2",
             "agent_run_id": "run-2",
             "tool_call_id": "tool-2",
@@ -81,6 +83,32 @@ async def test_line_chat_saved_handler_triggers_generation(
     assert request.user_id == "u1"
     assert request.agent_context is not None
     assert request.agent_context.agent_run_id == "run-2"
+
+
+@pytest.mark.anyio
+async def test_line_chat_saved_handler_falls_back_to_active_character(
+    mocker: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that LINE saved events can run without an explicit character_id."""
+
+    monkeypatch.setenv("ACTIVE_CHARACTER_ID", "shirasagi-reina")
+    send_async = AsyncMock(return_value=None)
+    mocker.patch.object(Mediator, "send_async", send_async)
+
+    await on_line_chat_saved(
+        {
+            "chat_id": "chat-1",
+            "user_id": "u1",
+        }
+    )
+
+    send_async.assert_awaited_once()
+    request = cast(Any, send_async.await_args).args[0]
+    assert isinstance(request, RunAgentTurnQuery)
+    assert request.character_id == "shirasagi-reina"
+    assert request.chat_type is ChatType.LINE
+    assert request.user_id == "u1"
 
 
 @pytest.mark.anyio
@@ -140,6 +168,7 @@ async def test_chat_tool_completed_error_for_web_search_keeps_reprompting(
             "user_id": "u1",
             "guild_id": "DM",
             "channel_id": "123",
+            "character_id": "shirasagi-reina",
             "tool_name": "web_search",
             "error": "HTTP 500",
             "event_id": "event-5",
@@ -171,6 +200,7 @@ async def test_chat_tool_requested_handler_triggers_execution(
             "chat_type": "DISCORD",
             "tool_call_id": "tool-6",
             "tool_name": "web_search",
+            "character_id": "shirasagi-reina",
             "event_id": "event-6",
             "agent_run_id": "run-6",
         }
@@ -184,10 +214,10 @@ async def test_chat_tool_requested_handler_triggers_execution(
 
 
 @pytest.mark.anyio
-async def test_chat_tool_completed_error_status_is_ignored_for_non_search_tools(
+async def test_chat_tool_completed_error_status_for_memory_search_keeps_reprompting(
     mocker: Any,
 ) -> None:
-    """Test that non-search tool completion errors do not re-enter the agent loop."""
+    """Test that failed memory search completions still re-enter the agent loop."""
 
     send_async = AsyncMock(return_value=None)
     mocker.patch.object(Mediator, "send_async", send_async)
@@ -200,7 +230,42 @@ async def test_chat_tool_completed_error_status_is_ignored_for_non_search_tools(
             "user_id": "u1",
             "guild_id": "DM",
             "channel_id": "123",
+            "character_id": "shirasagi-reina",
             "tool_name": "memory.search",
+            "error": "Memory backend timeout",
+            "event_id": "event-5",
+            "agent_run_id": "run-5",
+            "tool_call_id": "tool-5",
+        }
+    )
+
+    send_async.assert_awaited_once()
+    request = cast(Any, send_async.await_args).args[0]
+    assert isinstance(request, RunAgentTurnQuery)
+    assert request.tool_failure_context is not None
+    assert "Memory backend timeout" in request.tool_failure_context
+
+
+@pytest.mark.anyio
+async def test_chat_tool_completed_error_status_is_ignored_for_non_search_tools(
+    mocker: Any,
+) -> None:
+    """Test that send-only tool completion errors do not re-enter the agent loop."""
+
+    send_async = AsyncMock(return_value=None)
+    mocker.patch.object(Mediator, "send_async", send_async)
+
+    await on_chat_tool_completed(
+        {
+            "chat_id": "chat-1",
+            "chat_type": "DISCORD",
+            "status": "error",
+            "user_id": "u1",
+            "guild_id": "DM",
+            "channel_id": "123",
+            "character_id": "shirasagi-reina",
+            "tool_name": "discord.reply",
+            "error": "message send failed",
             "event_id": "event-5",
             "agent_run_id": "run-5",
             "tool_call_id": "tool-5",
@@ -224,6 +289,7 @@ async def test_app_error_detected_handler_triggers_agent_reentry(
             "operation": "RunWebSearchCommand",
             "error_code": "unexpected",
             "message": "Search failed",
+            "character_id": "shirasagi-reina",
             "chat_id": "chat-1",
             "chat_type": "DISCORD",
             "user_id": "u1",

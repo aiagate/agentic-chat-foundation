@@ -6,7 +6,7 @@ from typing import cast
 import injector
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.contracts.messages.character_definition import selected_character_definition
+from app.bootstrap.character_selection import resolve_active_character_id
 from app.contracts.messages.memory_index import (
     MemoryIndexDocument,
     MemorySearchFilters,
@@ -176,16 +176,22 @@ class MemoryModule(injector.Module):
 
     @injector.provider
     @injector.singleton
+    def provide_character_id(self) -> str:
+        """Provide the active character identifier for this process."""
+        return resolve_active_character_id()
+
+    @injector.provider
+    @injector.singleton
     def provide_agent_profile_service(
         self,
         memory_store: IMemoryStore,
+        character_id: str,
     ) -> IAgentProfileService:
         """Provide the filesystem-backed agent profile bundle service."""
         filesystem_store = cast(FilesystemMemoryStore, memory_store)
-        character = selected_character_definition()
         service = FilesystemAgentProfileService(
             store=filesystem_store,
-            character=character,
+            character_id=character_id,
         )
         service.ensure_agent_profile_bundle()
         return service
@@ -216,11 +222,13 @@ class MemoryModule(injector.Module):
     def provide_memory_index_maintenance(
         self,
         session_factory: async_sessionmaker[AsyncSession],
+        character_id: str,
     ) -> IMemoryIndexMaintenance:
         """Provide the memory index maintenance service."""
         return MemoryIndexMaintenanceService(
             session_factory=session_factory,
             embedding_service=GeminiEmbeddingService(),
+            character_id=character_id,
         )
 
     @injector.provider
@@ -257,15 +265,15 @@ class MemoryModule(injector.Module):
         self,
         memory_store: IMemoryStore,
         agent_profile_service: IAgentProfileService,
+        character_id: str,
     ) -> IMemoryService:
         """Provide the filesystem-backed memory service."""
         filesystem_store = cast(FilesystemMemoryStore, memory_store)
-        character = selected_character_definition()
         return FilesystemMemoryService(
             store=filesystem_store,
             embedding_service=GeminiEmbeddingService(),
             agent_profile_service=agent_profile_service,
-            character=character,
+            character_id=character_id,
         )
 
     @injector.provider

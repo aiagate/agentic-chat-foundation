@@ -20,6 +20,8 @@ from app.usecases.agent.handle_tool_execution import (
     HandleToolExecutionHandler,
 )
 
+CHARACTER_ID = "shirasagi-reina"
+
 
 @pytest.mark.anyio
 async def test_handle_tool_execution_publishes_completion(
@@ -43,6 +45,7 @@ async def test_handle_tool_execution_publishes_completion(
     await tool_call_store.save(
         ToolCall(
             tool_call_id="tool-1",
+            character_id=CHARACTER_ID,
             tool_name="line.reply",
             arguments={"content": "hello"},
             user_message="reply",
@@ -62,6 +65,7 @@ async def test_handle_tool_execution_publishes_completion(
             user_id="u1",
             chat_type=ChatType.LINE,
             tool_name="line.reply",
+            character_id=CHARACTER_ID,
         )
     )
 
@@ -96,6 +100,7 @@ async def test_handle_tool_execution_surfaces_executor_error(
     await tool_call_store.save(
         ToolCall(
             tool_call_id="tool-1",
+            character_id=CHARACTER_ID,
             tool_name="line.reply",
             arguments={"content": "hello"},
             user_message="reply",
@@ -115,6 +120,7 @@ async def test_handle_tool_execution_surfaces_executor_error(
             user_id="u1",
             chat_type=ChatType.LINE,
             tool_name="line.reply",
+            character_id=CHARACTER_ID,
         )
     )
 
@@ -153,6 +159,7 @@ async def test_handle_tool_execution_reports_missing_tool_call(
             user_id="u1",
             chat_type=ChatType.LINE,
             tool_name="line.reply",
+            character_id=CHARACTER_ID,
         )
     )
 
@@ -188,7 +195,7 @@ async def test_handle_tool_execution_skips_duplicate_execution(
     await tool_call_store.save(
         ToolCall(
             tool_call_id="tool-1",
-            character_id="reina",
+            character_id=CHARACTER_ID,
             tool_name="web_search",
             arguments={"query": "hello"},
             user_message="search",
@@ -203,7 +210,7 @@ async def test_handle_tool_execution_skips_duplicate_execution(
     command = HandleToolExecutionCommand(
         chat_id="chat-1",
         tool_call_id="tool-1",
-        character_id="reina",
+        character_id=CHARACTER_ID,
         user_id="u1",
         chat_type=ChatType.DISCORD,
         tool_name="web_search",

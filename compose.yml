@@ -1,4 +1,11 @@
 services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: agentic-chat-foundation-cloudflared
+    command: tunnel run
+    env_file:
+      - .env.cloudflared
+
   postgres:
     image: postgres:16-alpine
     container_name: agentic-chat-foundation-postgres

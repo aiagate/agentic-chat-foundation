@@ -1,5 +1,7 @@
 """Mock AI service implementation."""
 
+import logging
+
 from flow_res import Ok, Result
 
 from app.contracts.messages.chat_history import ChatHistoryItem
@@ -9,6 +11,13 @@ from app.contracts.ports.ai_service import (
     AIServiceError,
     IAIService,
 )
+from app.infrastructure.services.ai_request_logging import (
+    log_ai_request_context,
+    serialize_history,
+    serialize_tool_definitions,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class MockAIService(IAIService):
@@ -22,9 +31,16 @@ class MockAIService(IAIService):
         tool_definitions: list[ToolDefinition] | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
         """Return a simple structured mock response."""
-        _ = history
-        _ = system_instruction
-        _ = tool_definitions
+        log_ai_request_context(
+            logger,
+            service_name="MockAI",
+            payload={
+                "history": serialize_history(history),
+                "system_instruction": system_instruction,
+                "prompt": prompt,
+                "tool_definitions": serialize_tool_definitions(tool_definitions),
+            },
+        )
         return Ok(
             GeneratedContent(
                 contents=[

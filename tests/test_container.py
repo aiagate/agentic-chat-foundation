@@ -1,5 +1,7 @@
 """Tests for the dependency injection container."""
 
+from pathlib import Path
+
 import pytest
 from injector import Injector
 
@@ -19,11 +21,20 @@ from app.infrastructure.services.memory_consolidation import (
 from app.infrastructure.services.memory_service import FilesystemMemoryService
 from app.infrastructure.stores.tool_execution_lock import RedisToolExecutionLock
 from app.infrastructure.unit_of_work import SQLAlchemyUnitOfWork
+from tests._agent_profile_fixture import copy_agent_profile_bundle
 
 
 @pytest.mark.anyio
-async def test_di_container_bindings(test_db_engine: None) -> None:
+async def test_di_container_bindings(
+    test_db_engine: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     """Test that the DI container is configured correctly."""
+    memory_root = tmp_path / "memory"
+    monkeypatch.setenv("MEMORY_ROOT", str(memory_root))
+    copy_agent_profile_bundle(memory_root)
+
     injector = Injector([container.configure])
 
     # Test that requesting the IUnitOfWork interface returns the correct implementation
@@ -48,6 +59,7 @@ async def test_di_container_event_bus_defaults_to_memory(test_db_engine: None) -
 
     os.environ.pop("EVENT_BUS_PROVIDER", None)
     os.environ.pop("REDIS_URL", None)
+    os.environ.pop("DATABASE_URL", None)
     injector = Injector([container.configure])
     event_bus = injector.get(IEventBus)
 

@@ -24,12 +24,22 @@ from app.usecases.agent.run_agent_turn import RunAgentTurnQuery
 logger = logging.getLogger(__name__)
 
 _RETRIEVED_CONTEXT_TOOL_NAMES = {"web_search", "memory.search"}
+_RETRIED_ON_ERROR_TOOL_NAMES = {"web_search", "memory.search"}
 
 
 def _require_str(payload: Mapping[str, object], key: str) -> str | None:
     value = payload.get(key)
     if isinstance(value, str) and value:
         return value
+    return None
+
+
+def _require_character_id(
+    character_id: str | None, payload: Mapping[str, object]
+) -> str | None:
+    if character_id is not None:
+        return character_id
+    logger.warning("Tool payload missing character_id: %s", payload)
     return None
 
 
@@ -48,6 +58,9 @@ async def on_chat_tool_requested(payload: Mapping[str, object]) -> None:
     if event.tool_call_id is None:
         logger.warning("Tool requested payload missing tool_call_id: %s", payload)
         return
+    character_id = _require_character_id(event.character_id, payload)
+    if character_id is None:
+        return
 
     await Mediator.send_async(
         HandleToolExecutionCommand(
@@ -56,7 +69,7 @@ async def on_chat_tool_requested(payload: Mapping[str, object]) -> None:
             user_id=event.user_id,
             chat_type=event.chat_type,
             tool_name=event.tool_name,
-            character_id=event.character_id,
+            character_id=character_id,
             guild_id=event.guild_id,
             channel_id=event.channel_id,
             agent_context=extract_agent_envelope(event),
@@ -75,9 +88,12 @@ async def on_chat_tool_completed(payload: Mapping[str, object]) -> None:
     )
     if event is None:
         return
+    character_id = _require_character_id(event.character_id, payload)
+    if character_id is None:
+        return
 
     if event.status != "ok":
-        if event.tool_name != "web_search":
+        if event.tool_name not in _RETRIED_ON_ERROR_TOOL_NAMES:
             return
         await Mediator.send_async(
             RunAgentTurnQuery(
@@ -87,7 +103,7 @@ async def on_chat_tool_completed(payload: Mapping[str, object]) -> None:
                 channel_id=event.channel_id or event.chat_id,
                 user_id=event.user_id or event.chat_id,
                 chat_type=event.chat_type,
-                character_id=event.character_id,
+                character_id=character_id,
                 tool_failure_context=_tool_failure_context(
                     tool_name=event.tool_name,
                     error=event.error,
@@ -118,7 +134,7 @@ async def on_chat_tool_completed(payload: Mapping[str, object]) -> None:
             channel_id=event.channel_id or event.chat_id,
             user_id=event.user_id or event.chat_id,
             chat_type=event.chat_type,
-            character_id=event.character_id,
+            character_id=character_id,
             agent_context=extract_agent_envelope(event),
         )
     )

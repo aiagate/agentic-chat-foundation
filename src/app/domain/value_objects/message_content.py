@@ -34,6 +34,12 @@ class MessageContent:
         return cls(_type=MessageContentType.TEXT, _payload={"text": text})
 
     @classmethod
+    def texts(cls, texts: list[str]) -> MessageContent:
+        """複数テキストメッセージを生成する。"""
+        normalized_texts = [text for text in texts if text]
+        return cls(_type=MessageContentType.TEXT, _payload={"texts": normalized_texts})
+
+    @classmethod
     def image(cls, image_id: str, url: str | None = None) -> MessageContent:
         """画像メッセージを生成する。"""
         payload: dict[str, Any] = {"image_id": image_id}
@@ -83,6 +89,18 @@ class MessageContent:
         except ValueError:
             return Err(ValueError(f"Invalid message content type: {content_type}"))
 
+        if normalized_type is MessageContentType.TEXT:
+            texts = payload.get("texts")
+            if isinstance(texts, list):
+                normalized_texts = _normalize_texts_payload(payload)
+                if normalized_texts is not None:
+                    return Ok(
+                        cls(
+                            _type=normalized_type,
+                            _payload={"texts": normalized_texts},
+                        )
+                    )
+
         return Ok(cls(_type=normalized_type, _payload=payload.copy()))
 
     def to_primitive(self) -> dict[str, Any]:
@@ -94,3 +112,28 @@ class MessageContent:
 
 
 MassageContent = MessageContent
+
+
+def _normalize_texts_payload(payload: dict[str, Any]) -> list[str] | None:
+    texts = payload.get("texts")
+    if isinstance(texts, list):
+        normalized_texts = [item for item in texts if isinstance(item, str) and item]
+        return normalized_texts
+
+    text = payload.get("text")
+    if isinstance(text, str) and text:
+        return [text]
+
+    return None
+
+
+def render_message_content_text(
+    payload: dict[str, Any],
+    *,
+    separator: str = "\n\n",
+) -> str | None:
+    """Render text-like payloads into a single string."""
+    texts = _normalize_texts_payload(payload)
+    if texts is None:
+        return None
+    return separator.join(texts)

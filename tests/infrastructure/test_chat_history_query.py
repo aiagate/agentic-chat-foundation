@@ -40,7 +40,7 @@ async def test_get_recent_history_returns_chronological_order(
         ]
         assert [item.content for item in history] == [
             "first",
-            "assistant reply",
+            "assistant reply\n\nfollow-up",
             "second",
         ]
         assert [item.id for item in history] == [
@@ -106,7 +106,7 @@ async def _seed_chat_rows(
                     role="assistant",
                     message_content={
                         "type": "TEXT",
-                        "payload": {"text": "assistant reply"},
+                        "payload": {"texts": ["assistant reply", "follow-up"]},
                     },
                     version=0,
                     created_at=datetime(2026, 5, 18, 10, 5, tzinfo=UTC),

@@ -6,9 +6,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 from flow_res import Err, Ok, is_err
+from sqlalchemy import desc, select
 
 from app.contracts.messages.agent_profile import AgentProfileBundle
-from app.contracts.messages.character_definition import CharacterDefinition
+from app.contracts.messages.character_definition import (
+    CharacterDefinition,
+)
 from app.contracts.messages.chat_events import (
     CHAT_TOOL_REQUESTED_TOPIC,
     DISCORD_CHAT_REPLY_READY_TOPIC,
@@ -57,6 +60,8 @@ from app.usecases.agent.run_agent_turn import (
 from app.usecases.memory.retrieve_memory_context import RetrieveMemoryContextQuery
 
 RUN_AGENT_MODULE = "app.usecases.agent.run_agent_turn"
+CHARACTER_ID = "shirasagi-reina"
+RELATIONSHIP_ENTITY_ID = f"relationship:{CHARACTER_ID}"
 
 
 class _FakeAgentProfileService(IAgentProfileService):
@@ -70,28 +75,40 @@ class _FakeAgentProfileService(IAgentProfileService):
 AGENT_PROFILE_BUNDLE = AgentProfileBundle(
     profile=MemoryProfile(
         user_id="ai",
-        display_name="テストエージェント",
-        summary="テスト用の人格。",
-        traits=["寡黙"],
-        preferences=["静かな場所"],
+        display_name="Jon Due",
+        summary="A test host persona.",
+        traits=["calm"],
+        preferences=["quiet places"],
     ),
     character=CharacterDefinition(
-        character_id="test-agent",
-        display_name="テストエージェント",
-        relationship_entity_id="relationship:test-agent",
-        relationship_entity_label="テストエージェントとの関係",
+        character_id=CHARACTER_ID,
+        display_name="Jon Due",
+        relationship_entity_id=RELATIONSHIP_ENTITY_ID,
+        relationship_entity_label="Relationship with Jon Due",
     ),
-    persona_context="Persona Contract:\n- test persona",
-    communication_style=("日本語で自然に話す",),
-    known_constraints=("AI と名乗らない",),
-    atmosphere=("静かな夜",),
-    behavior=("落ち着いた敬語を保つ。",),
-    relationship_entity_id="relationship:test-agent",
-    relationship_entity_label="テストエージェントとの関係",
+    persona_context=(
+        "## Persona Contract\n"
+        "Identity:\n"
+        "- You are Jon Due, a calm host persona.\n"
+        "- Speak in natural English with a composed tone.\n"
+        "- Do not mention that you are an AI, model, bot, or language model.\n\n"
+        "Character:\n"
+        "- Treat conversation like hosting a guest: anticipate comfort, answer "
+        "clearly, and avoid brusque wording.\n"
+        "Relational habits:\n"
+        "- Leave a conversational opening with at most one easy-to-answer "
+        "question when the topic is not complete."
+    ),
+    communication_style=("Speak naturally in English",),
+    known_constraints=("Do not mention being an AI",),
+    atmosphere=("A quiet evening with city lights in the distance.",),
+    behavior=("Maintain a composed, respectful tone.",),
+    relationship_entity_id=RELATIONSHIP_ENTITY_ID,
+    relationship_entity_label="Relationship with Jon Due",
     relationship_entity_type="relationship",
     relationship_tag="agent-growth",
-    relationship=("最小限の自己開示",),
-    fallback=("季節感のある料理を選ぶ",),
+    relationship=("Minimal self-disclosure",),
+    fallback=("Choose something seasonal and quiet",),
     memory_reading_rules=("Test bundle is read from memory files.",),
 )
 
@@ -124,6 +141,7 @@ def mock_retrieved_context_store(mocker: Any) -> IRetrievedContextStore:
         return_value=Ok(
             RetrievedContext(
                 tool_call_id="tool-1",
+                character_id=CHARACTER_ID,
                 query="ollama web search",
                 tool_name="web_search",
                 items=[
@@ -177,6 +195,7 @@ async def test_run_agent_turn_persists_reply(
     uow: IUnitOfWork,
     mock_ai_service: IAIService,
     mock_event_bus: Any,
+    mock_agent_profile_service: IAgentProfileService,
     mock_retrieved_context_store: IRetrievedContextStore,
     mock_tool_catalog: StaticToolCatalog,
     mocker: Any,
@@ -212,6 +231,7 @@ async def test_run_agent_turn_persists_reply(
         mock_tool_catalog,
         uow,
         mock_event_bus,
+        agent_profile_service=mock_agent_profile_service,
     )
     result = await handler.handle(
         RunAgentTurnQuery(
@@ -221,11 +241,31 @@ async def test_run_agent_turn_persists_reply(
             channel_id="123",
             user_id="u1",
             chat_type=ChatType.DISCORD,
+            character_id=CHARACTER_ID,
         )
     )
 
     assert not is_err(result)
     assert result.value.contents == ["Generated Content"]
+    async with uow:
+        session = cast(Any, getattr(uow, "_session", None))
+        if session is None:
+            raise RuntimeError("Unit of work session is not available")
+        statement = (
+            select(ChatORM)
+            .where(
+                ChatORM.type == ChatType.DISCORD.to_primitive(),
+                ChatORM.user_id == "u1",
+                ChatORM.role == "assistant",
+            )
+            .order_by(desc(ChatORM.created_at), desc(ChatORM.id))
+            .limit(1)
+        )
+        saved_result = await session.execute(statement)
+        saved_chat = saved_result.scalars().one()
+        assert saved_chat.message_content["payload"]["texts"] == [
+            "Generated Content"
+        ]
     ai_stub: Any = mock_ai_service.generate_content
     ai_stub.assert_awaited_once()
     tool_definitions = ai_stub.call_args.kwargs["tool_definitions"]
@@ -246,7 +286,7 @@ async def test_run_agent_turn_persists_reply(
             "contents": ["Generated Content"],
             "guild_id": "DM",
             "channel_id": "123",
-            "character_id": "shirasagi-reina",
+            "character_id": CHARACTER_ID,
         },
     )
 
@@ -256,6 +296,7 @@ async def test_run_agent_turn_resolves_prompt_from_chat_id(
     uow: IUnitOfWork,
     mock_ai_service: IAIService,
     mock_event_bus: Any,
+    mock_agent_profile_service: IAgentProfileService,
     mock_retrieved_context_store: IRetrievedContextStore,
     mock_tool_catalog: StaticToolCatalog,
     mocker: Any,
@@ -291,6 +332,7 @@ async def test_run_agent_turn_resolves_prompt_from_chat_id(
         mock_tool_catalog,
         uow,
         mock_event_bus,
+        agent_profile_service=mock_agent_profile_service,
     )
     result = await handler.handle(
         RunAgentTurnQuery(
@@ -299,6 +341,7 @@ async def test_run_agent_turn_resolves_prompt_from_chat_id(
             channel_id="123",
             user_id="u1",
             chat_type=ChatType.DISCORD,
+            character_id=CHARACTER_ID,
         )
     )
 
@@ -312,6 +355,7 @@ async def test_run_agent_turn_filters_previous_session_history(
     uow: IUnitOfWork,
     mock_ai_service: IAIService,
     mock_event_bus: Any,
+    mock_agent_profile_service: IAgentProfileService,
     mock_retrieved_context_store: IRetrievedContextStore,
     mock_tool_catalog: StaticToolCatalog,
     mocker: Any,
@@ -369,6 +413,7 @@ async def test_run_agent_turn_filters_previous_session_history(
         mock_tool_catalog,
         uow,
         mock_event_bus,
+        agent_profile_service=mock_agent_profile_service,
     )
     result = await handler.handle(
         RunAgentTurnQuery(
@@ -378,6 +423,7 @@ async def test_run_agent_turn_filters_previous_session_history(
             channel_id="123",
             user_id="u1",
             chat_type=ChatType.DISCORD,
+            character_id=CHARACTER_ID,
         )
     )
 
@@ -399,6 +445,7 @@ async def test_run_agent_turn_limits_tools_for_line_chat(
     uow: IUnitOfWork,
     mock_ai_service: IAIService,
     mock_event_bus: Any,
+    mock_agent_profile_service: IAgentProfileService,
     mock_retrieved_context_store: IRetrievedContextStore,
     mock_tool_catalog: StaticToolCatalog,
     mocker: Any,
@@ -433,6 +480,7 @@ async def test_run_agent_turn_limits_tools_for_line_chat(
         mock_tool_catalog,
         uow,
         mock_event_bus,
+        agent_profile_service=mock_agent_profile_service,
     )
     result = await handler.handle(
         RunAgentTurnQuery(
@@ -442,6 +490,7 @@ async def test_run_agent_turn_limits_tools_for_line_chat(
             channel_id="chat-1",
             user_id="U1234567890",
             chat_type=ChatType.LINE,
+            character_id=CHARACTER_ID,
         )
     )
 
@@ -461,6 +510,7 @@ async def test_run_agent_turn_includes_retrieved_context(
     uow: IUnitOfWork,
     mock_ai_service: IAIService,
     mock_event_bus: Any,
+    mock_agent_profile_service: IAgentProfileService,
     mock_retrieved_context_store: IRetrievedContextStore,
     mock_tool_catalog: StaticToolCatalog,
     mocker: Any,
@@ -483,6 +533,7 @@ async def test_run_agent_turn_includes_retrieved_context(
         mock_tool_catalog,
         uow,
         mock_event_bus,
+        agent_profile_service=mock_agent_profile_service,
     )
     result = await handler.handle(
         RunAgentTurnQuery(
@@ -493,6 +544,7 @@ async def test_run_agent_turn_includes_retrieved_context(
             user_id="u1",
             chat_type=ChatType.DISCORD,
             tool_call_id="tool-1",
+            character_id=CHARACTER_ID,
         )
     )
 
@@ -509,7 +561,7 @@ async def test_run_agent_turn_includes_retrieved_context(
     retrieved_store_mock: Any = mock_retrieved_context_store.get
     retrieved_store_mock.assert_awaited_once_with(
         "tool-1",
-        character_id="shirasagi-reina",
+        character_id=CHARACTER_ID,
     )
 
 
@@ -518,6 +570,7 @@ async def test_run_agent_turn_prefers_direct_answering_in_system_instruction(
     uow: IUnitOfWork,
     mock_ai_service: IAIService,
     mock_event_bus: Any,
+    mock_agent_profile_service: IAgentProfileService,
     mock_retrieved_context_store: IRetrievedContextStore,
     mock_tool_catalog: StaticToolCatalog,
     mocker: Any,
@@ -540,15 +593,17 @@ async def test_run_agent_turn_prefers_direct_answering_in_system_instruction(
         mock_tool_catalog,
         uow,
         mock_event_bus,
+        agent_profile_service=mock_agent_profile_service,
     )
     result = await handler.handle(
         RunAgentTurnQuery(
-            prompt="君が好きな料理は？",
+            prompt="What kind of food do you like?",
             chat_id="chat-1",
             guild_id="DM",
             channel_id="123",
             user_id="u1",
             chat_type=ChatType.DISCORD,
+            character_id=CHARACTER_ID,
         )
     )
 
@@ -556,9 +611,7 @@ async def test_run_agent_turn_prefers_direct_answering_in_system_instruction(
     ai_stub: Any = mock_ai_service.generate_content
     system_instruction = ai_stub.call_args.kwargs["system_instruction"]
     assert "Treat conversation like hosting a guest" in system_instruction
-    assert "It is acceptable to use a soft 'ですわ' style occasionally" in (
-        system_instruction
-    )
+    assert "Speak in natural English with a composed tone" in system_instruction
 
 
 @pytest.mark.anyio
@@ -568,6 +621,7 @@ async def test_in_memory_retrieved_context_store_returns_copy() -> None:
     store = InMemoryRetrievedContextStore()
     saved = RetrievedContext(
         tool_call_id="tool-1",
+        character_id=CHARACTER_ID,
         query="ollama web search",
         tool_name="web_search",
         items=[
@@ -581,7 +635,7 @@ async def test_in_memory_retrieved_context_store_returns_copy() -> None:
     )
     await store.save(saved)
 
-    result = await store.get("tool-1")
+    result = await store.get("tool-1", character_id=CHARACTER_ID)
 
     assert not is_err(result)
     assert result.value.tool_call_id == "tool-1"
@@ -593,6 +647,7 @@ async def test_run_agent_turn_continues_when_search_context_is_missing(
     uow: IUnitOfWork,
     mock_ai_service: IAIService,
     mock_event_bus: Any,
+    mock_agent_profile_service: IAgentProfileService,
     mock_retrieved_context_store: IRetrievedContextStore,
     mock_tool_catalog: StaticToolCatalog,
     mocker: Any,
@@ -619,6 +674,7 @@ async def test_run_agent_turn_continues_when_search_context_is_missing(
         mock_tool_catalog,
         uow,
         mock_event_bus,
+        agent_profile_service=mock_agent_profile_service,
     )
     result = await handler.handle(
         RunAgentTurnQuery(
@@ -629,6 +685,7 @@ async def test_run_agent_turn_continues_when_search_context_is_missing(
             user_id="u1",
             chat_type=ChatType.DISCORD,
             tool_call_id="tool-1",
+            character_id=CHARACTER_ID,
         )
     )
 
@@ -637,7 +694,7 @@ async def test_run_agent_turn_continues_when_search_context_is_missing(
     retrieved_store_mock: Any = mock_retrieved_context_store.get
     retrieved_store_mock.assert_awaited_once_with(
         "tool-1",
-        character_id="shirasagi-reina",
+        character_id=CHARACTER_ID,
     )
     publish_mock = mock_event_bus.publish
     publish_mock.assert_awaited_once()
@@ -648,6 +705,7 @@ async def test_run_agent_turn_includes_tool_failure_context(
     uow: IUnitOfWork,
     mock_ai_service: IAIService,
     mock_event_bus: Any,
+    mock_agent_profile_service: IAgentProfileService,
     mock_retrieved_context_store: IRetrievedContextStore,
     mock_tool_catalog: StaticToolCatalog,
     mocker: Any,
@@ -670,6 +728,7 @@ async def test_run_agent_turn_includes_tool_failure_context(
         mock_tool_catalog,
         uow,
         mock_event_bus,
+        agent_profile_service=mock_agent_profile_service,
     )
     result = await handler.handle(
         RunAgentTurnQuery(
@@ -682,6 +741,7 @@ async def test_run_agent_turn_includes_tool_failure_context(
             tool_failure_context=(
                 "Tool failure context: web_search failed with error: HTTP 500."
             ),
+            character_id=CHARACTER_ID,
         )
     )
 
@@ -698,6 +758,7 @@ async def test_run_agent_turn_includes_tool_failure_context(
 @pytest.mark.anyio
 async def test_run_agent_turn_preserves_ai_service_error_message(
     uow: IUnitOfWork,
+    mock_agent_profile_service: IAgentProfileService,
     mock_event_bus: Any,
     mock_retrieved_context_store: IRetrievedContextStore,
     mock_tool_catalog: StaticToolCatalog,
@@ -726,6 +787,7 @@ async def test_run_agent_turn_preserves_ai_service_error_message(
         mock_tool_catalog,
         uow,
         mock_event_bus,
+        agent_profile_service=mock_agent_profile_service,
     )
     result = await handler.handle(
         RunAgentTurnQuery(
@@ -735,6 +797,7 @@ async def test_run_agent_turn_preserves_ai_service_error_message(
             channel_id="123",
             user_id="u1",
             chat_type=ChatType.DISCORD,
+            character_id=CHARACTER_ID,
         )
     )
 
@@ -745,6 +808,7 @@ async def test_run_agent_turn_preserves_ai_service_error_message(
 @pytest.mark.anyio
 async def test_run_agent_turn_routes_generic_tool_calls(
     uow: IUnitOfWork,
+    mock_agent_profile_service: IAgentProfileService,
     mock_event_bus: Any,
     mock_retrieved_context_store: IRetrievedContextStore,
     mock_tool_catalog: StaticToolCatalog,
@@ -760,6 +824,7 @@ async def test_run_agent_turn_routes_generic_tool_calls(
                 contents=[],
                 tool_calls=[
                     ToolCall(
+                        character_id=CHARACTER_ID,
                         tool_name="web_search",
                         arguments={
                             "query": "ollama web search",
@@ -796,6 +861,7 @@ async def test_run_agent_turn_routes_generic_tool_calls(
         mock_tool_catalog,
         uow,
         mock_event_bus,
+        agent_profile_service=mock_agent_profile_service,
     )
     result = await handler.handle(
         RunAgentTurnQuery(
@@ -805,6 +871,7 @@ async def test_run_agent_turn_routes_generic_tool_calls(
             channel_id="123",
             user_id="u1",
             chat_type=ChatType.DISCORD,
+            character_id=CHARACTER_ID,
         )
     )
 
@@ -815,21 +882,22 @@ async def test_run_agent_turn_routes_generic_tool_calls(
     topic, payload = publish_mock.await_args.args
     assert topic == CHAT_TOOL_REQUESTED_TOPIC
     assert payload["tool_name"] == "web_search"
-    assert payload["character_id"] == "shirasagi-reina"
+    assert payload["character_id"] == CHARACTER_ID
     assert "arguments" not in payload
     assert "user_message" not in payload
     stored = await tool_call_store.get(
         payload["tool_call_id"],
-        character_id="shirasagi-reina",
+        character_id=CHARACTER_ID,
     )
     assert not is_err(stored)
-    assert stored.value.character_id == "shirasagi-reina"
+    assert stored.value.character_id == CHARACTER_ID
     assert stored.value.user_message == "ちょっと検索してみます"
 
 
 @pytest.mark.anyio
 async def test_run_agent_turn_routes_memory_search_tool_calls(
     uow: IUnitOfWork,
+    mock_agent_profile_service: IAgentProfileService,
     mock_event_bus: Any,
     mock_retrieved_context_store: IRetrievedContextStore,
     mock_tool_catalog: StaticToolCatalog,
@@ -845,6 +913,7 @@ async def test_run_agent_turn_routes_memory_search_tool_calls(
                 contents=[],
                 tool_calls=[
                     ToolCall(
+                        character_id=CHARACTER_ID,
                         tool_name="memory.search",
                         arguments={
                             "query": "memory lookup",
@@ -879,6 +948,7 @@ async def test_run_agent_turn_routes_memory_search_tool_calls(
         mock_tool_catalog,
         uow,
         mock_event_bus,
+        agent_profile_service=mock_agent_profile_service,
     )
     result = await handler.handle(
         RunAgentTurnQuery(
@@ -888,6 +958,7 @@ async def test_run_agent_turn_routes_memory_search_tool_calls(
             channel_id="123",
             user_id="u1",
             chat_type=ChatType.DISCORD,
+            character_id=CHARACTER_ID,
         )
     )
 
@@ -900,7 +971,10 @@ async def test_run_agent_turn_routes_memory_search_tool_calls(
     assert payload["tool_name"] == "memory.search"
     assert "arguments" not in payload
     assert "user_message" not in payload
-    stored = await tool_call_store.get(payload["tool_call_id"])
+    stored = await tool_call_store.get(
+        payload["tool_call_id"],
+        character_id=CHARACTER_ID,
+    )
     assert not is_err(stored)
     assert stored.value.arguments == {"query": "memory lookup"}
 
@@ -908,6 +982,7 @@ async def test_run_agent_turn_routes_memory_search_tool_calls(
 @pytest.mark.anyio
 async def test_run_agent_turn_routes_only_one_retrieval_tool_call_per_turn(
     uow: IUnitOfWork,
+    mock_agent_profile_service: IAgentProfileService,
     mock_event_bus: Any,
     mock_retrieved_context_store: IRetrievedContextStore,
     mock_tool_catalog: StaticToolCatalog,
@@ -923,6 +998,7 @@ async def test_run_agent_turn_routes_only_one_retrieval_tool_call_per_turn(
                 contents=[],
                 tool_calls=[
                     ToolCall(
+                        character_id=CHARACTER_ID,
                         tool_name="web_search",
                         arguments={
                             "query": "ollama web search",
@@ -932,6 +1008,7 @@ async def test_run_agent_turn_routes_only_one_retrieval_tool_call_per_turn(
                         user_message="ちょっと検索してみます",
                     ),
                     ToolCall(
+                        character_id=CHARACTER_ID,
                         tool_name="memory.search",
                         arguments={
                             "query": "memory lookup",
@@ -966,6 +1043,7 @@ async def test_run_agent_turn_routes_only_one_retrieval_tool_call_per_turn(
         mock_tool_catalog,
         uow,
         mock_event_bus,
+        agent_profile_service=mock_agent_profile_service,
     )
     result = await handler.handle(
         RunAgentTurnQuery(
@@ -975,6 +1053,7 @@ async def test_run_agent_turn_routes_only_one_retrieval_tool_call_per_turn(
             channel_id="123",
             user_id="u1",
             chat_type=ChatType.DISCORD,
+            character_id=CHARACTER_ID,
         )
     )
 

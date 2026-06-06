@@ -32,6 +32,7 @@ from app.contracts.ports.memory_semantic_extraction import (
 )
 from app.contracts.ports.memory_store import IMemoryStore
 from app.domain.queries.raw_chat_log_query import RawChatLog
+from app.domain.value_objects.message_content import render_message_content_text
 from app.infrastructure.memory.markdown import (
     MemoryMarkdownDocument,
     MemoryMarkdownError,
@@ -706,7 +707,7 @@ def _raw_chat_log_observed_at(raw_log: RawChatLog) -> datetime | None:
 def _raw_chat_log_text(raw_log: RawChatLog) -> str:
     payload = raw_log.message_content.get("payload")
     if isinstance(payload, dict):
-        text = payload.get("text")
+        text = render_message_content_text(payload)
         if isinstance(text, str):
             return text
     return front_matter_string(raw_log.message_content)

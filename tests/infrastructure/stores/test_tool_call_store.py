@@ -25,6 +25,8 @@ from app.infrastructure.stores.tool_execution_lock import (
     RedisToolExecutionLock,
 )
 
+CHARACTER_ID = "shirasagi-reina"
+
 
 @pytest.mark.anyio
 async def test_in_memory_tool_call_store_returns_copy() -> None:
@@ -33,18 +35,19 @@ async def test_in_memory_tool_call_store_returns_copy() -> None:
     store = InMemoryToolCallStore()
     tool_call = ToolCall(
         tool_call_id="tool-1",
+        character_id=CHARACTER_ID,
         tool_name="web_search",
         arguments={"query": "hello"},
         user_message="searching",
     )
 
     save_result = await store.save(tool_call)
-    loaded_result = await store.get("tool-1")
+    loaded_result = await store.get("tool-1", character_id=CHARACTER_ID)
 
     assert not is_err(save_result)
     assert not is_err(loaded_result)
     loaded_result.value.arguments["query"] = "changed"
-    reloaded_result = await store.get("tool-1")
+    reloaded_result = await store.get("tool-1", character_id=CHARACTER_ID)
     assert not is_err(reloaded_result)
     assert reloaded_result.value.arguments["query"] == "hello"
 
@@ -109,12 +112,13 @@ async def test_redis_tool_call_store_round_trips_payload(mocker: Any) -> None:
     save_result = await store.save(
         ToolCall(
             tool_call_id="tool-1",
+            character_id=CHARACTER_ID,
             tool_name="memory.search",
             arguments={"query": "memory"},
             user_message="checking memory",
         )
     )
-    loaded_result = await store.get("tool-1")
+    loaded_result = await store.get("tool-1", character_id=CHARACTER_ID)
 
     assert not is_err(save_result)
     assert redis_stub.ttl == 30
@@ -147,18 +151,18 @@ async def test_redis_tool_call_store_uses_character_namespaced_keys(
     await store.save(
         ToolCall(
             tool_call_id="tool-1",
-            character_id="reina",
+            character_id=CHARACTER_ID,
             tool_name="web_search",
             arguments={"query": "reina"},
             user_message="searching",
         )
     )
 
-    assert "agent:reina:tool_call:tool-1" in redis_stub.values
+    assert f"agent:{CHARACTER_ID}:tool_call:tool-1" in redis_stub.values
     assert is_err(await store.get("tool-1", character_id="mio"))
-    loaded = await store.get("tool-1", character_id="reina")
+    loaded = await store.get("tool-1", character_id=CHARACTER_ID)
     assert not is_err(loaded)
-    assert loaded.value.character_id == "reina"
+    assert loaded.value.character_id == CHARACTER_ID
 
 
 @pytest.mark.anyio

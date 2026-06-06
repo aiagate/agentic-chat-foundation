@@ -9,7 +9,6 @@ import redis.asyncio as redis
 from flow_res import Err, Ok, Result
 from pydantic import ValidationError
 
-from app.contracts.messages.character_definition import selected_character_id
 from app.contracts.messages.tool_contracts import ToolCall
 from app.contracts.ports.tool_call_store import IToolCallStore, ToolCallStoreError
 
@@ -27,7 +26,9 @@ class InMemoryToolCallStore(IToolCallStore):
         if not tool_call_id:
             return Err(ToolCallStoreError("Tool call ID is required"))
 
-        character_id = _character_id(tool_call.character_id)
+        character_id = _require_character_id(tool_call.character_id)
+        if character_id is None:
+            return Err(ToolCallStoreError("character_id is required"))
         self._store[(character_id, tool_call_id)] = tool_call.model_copy(deep=True)
         logger.debug(
             "Saved tool call: tool_call_id=%s tool_name=%s",
@@ -40,9 +41,9 @@ class InMemoryToolCallStore(IToolCallStore):
         self,
         tool_call_id: str,
         *,
-        character_id: str | None = None,
+        character_id: str,
     ) -> Result[ToolCall, ToolCallStoreError]:
-        tool_call = self._store.get((_character_id(character_id), tool_call_id))
+        tool_call = self._store.get((character_id, tool_call_id))
         if tool_call is None:
             logger.debug("Tool call miss: tool_call_id=%s", tool_call_id)
             return Err(ToolCallStoreError(f"Tool call not found: {tool_call_id}"))
@@ -76,8 +77,14 @@ class RedisToolCallStore(IToolCallStore):
             return Err(ToolCallStoreError("Tool call ID is required"))
 
         try:
+            stored_character_id = _require_character_id(tool_call.character_id)
+            if stored_character_id is None:
+                return Err(ToolCallStoreError("character_id is required"))
             await self._redis.set(
-                _key(tool_call_id, character_id=_character_id(tool_call.character_id)),
+                _key(
+                    tool_call_id,
+                    character_id=stored_character_id,
+                ),
                 tool_call.model_dump_json(exclude_none=True),
                 ex=self._ttl_seconds,
             )
@@ -96,11 +103,11 @@ class RedisToolCallStore(IToolCallStore):
         self,
         tool_call_id: str,
         *,
-        character_id: str | None = None,
+        character_id: str,
     ) -> Result[ToolCall, ToolCallStoreError]:
         try:
             payload = await self._redis.get(
-                _key(tool_call_id, character_id=_character_id(character_id))
+                _key(tool_call_id, character_id=character_id)
             )
         except Exception as exc:
             logger.exception("Failed to load tool call: tool_call_id=%s", tool_call_id)
@@ -127,8 +134,8 @@ class RedisToolCallStore(IToolCallStore):
         return Ok(tool_call)
 
 
-def _character_id(value: str | None) -> str:
-    return value or selected_character_id()
+def _require_character_id(value: str | None) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
 def _key(tool_call_id: str, *, character_id: str) -> str:

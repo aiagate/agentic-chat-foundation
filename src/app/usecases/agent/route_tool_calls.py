@@ -11,7 +11,6 @@ from flow_res import Err, Ok, Result, is_err
 from injector import inject
 
 from app.contracts.messages.agentic import AgentEnvelope
-from app.contracts.messages.character_definition import selected_character_id
 from app.contracts.messages.chat_events import (
     CHAT_TOOL_REQUESTED_TOPIC,
     build_chat_tool_requested_payload,
@@ -40,11 +39,11 @@ class RouteToolCallsCommand(Request[Result[RouteToolCallsResult, UseCaseError]])
     chat_id: str
     guild_id: str
     channel_id: str
+    character_id: str
     user_id: str
     chat_type: ChatType
     tool_calls: list[ToolCall]
     source_request_id: str | None = None
-    character_id: str | None = None
     agent_context: AgentEnvelope | None = None
 
 
@@ -85,10 +84,7 @@ class RouteToolCallsHandler(
         for raw_tool_call in request.tool_calls:
             tool_call = _with_tool_call_metadata(
                 raw_tool_call,
-                character_id=_resolve_character_id(
-                    request.character_id,
-                    request.agent_context,
-                ),
+                character_id=request.character_id,
             )
             validation_error = _validate_tool_call(
                 tool_call,
@@ -193,17 +189,6 @@ def _with_tool_call_metadata(
     if updated.character_id == character_id:
         return updated
     return updated.model_copy(update={"character_id": character_id})
-
-
-def _resolve_character_id(
-    character_id: str | None,
-    agent_context: AgentEnvelope | None,
-) -> str:
-    if character_id:
-        return character_id
-    if agent_context is not None and agent_context.character_id:
-        return agent_context.character_id
-    return selected_character_id()
 
 
 def _requires_retrieved_context(tool_name: str) -> bool:

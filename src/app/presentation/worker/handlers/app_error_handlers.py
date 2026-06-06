@@ -47,7 +47,8 @@ async def on_app_error_detected(payload: Mapping[str, object]) -> None:
     chat_type = event.chat_type
     chat_id = event.chat_id
     user_id = event.user_id or chat_id
-    if chat_type is None or chat_id is None or user_id is None:
+    character_id = event.character_id
+    if chat_type is None or chat_id is None or user_id is None or character_id is None:
         logger.warning("App error payload missing agent route fields: %s", payload)
         return
 
@@ -68,6 +69,7 @@ async def on_app_error_detected(payload: Mapping[str, object]) -> None:
             channel_id=channel_id,
             user_id=user_id,
             chat_type=chat_type,
+            character_id=character_id,
             tool_failure_context=_tool_failure_context(event),
             agent_context=extract_agent_envelope(event),
         )

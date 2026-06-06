@@ -5,6 +5,7 @@ from collections.abc import Mapping
 
 from flow_med import Mediator
 
+from app.bootstrap.character_selection import resolve_active_character_id
 from app.contracts.messages.chat_events import (
     DISCORD_CHAT_SAVED_TOPIC,
     LINE_CHAT_SAVED_TOPIC,
@@ -22,6 +23,20 @@ from app.usecases.agent.run_agent_turn import RunAgentTurnQuery
 logger = logging.getLogger(__name__)
 
 
+def _resolve_character_id(
+    character_id: str | None, payload: Mapping[str, object]
+) -> str:
+    if character_id is not None:
+        return character_id
+    resolved_character_id = resolve_active_character_id()
+    logger.warning(
+        "Chat saved payload missing character_id; using active character %s: %s",
+        resolved_character_id,
+        payload,
+    )
+    return resolved_character_id
+
+
 @event_handler(DISCORD_CHAT_SAVED_TOPIC)
 async def on_discord_chat_saved(payload: Mapping[str, object]) -> None:
     """Handle a saved Discord chat message."""
@@ -33,6 +48,7 @@ async def on_discord_chat_saved(payload: Mapping[str, object]) -> None:
     )
     if event is None:
         return
+    character_id = _resolve_character_id(event.character_id, payload)
 
     await Mediator.send_async(
         RunAgentTurnQuery(
@@ -41,7 +57,7 @@ async def on_discord_chat_saved(payload: Mapping[str, object]) -> None:
             channel_id=event.channel_id,
             user_id=event.user_id,
             chat_type=ChatType.DISCORD,
-            character_id=event.character_id,
+            character_id=character_id,
             agent_context=extract_agent_envelope(event),
         )
     )
@@ -58,6 +74,7 @@ async def on_line_chat_saved(payload: Mapping[str, object]) -> None:
     )
     if event is None:
         return
+    character_id = _resolve_character_id(event.character_id, payload)
 
     await Mediator.send_async(
         RunAgentTurnQuery(
@@ -66,7 +83,7 @@ async def on_line_chat_saved(payload: Mapping[str, object]) -> None:
             channel_id=event.chat_id,
             user_id=event.user_id,
             chat_type=ChatType.LINE,
-            character_id=event.character_id,
+            character_id=character_id,
             agent_context=extract_agent_envelope(event),
         )
     )

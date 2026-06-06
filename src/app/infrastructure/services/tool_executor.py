@@ -307,14 +307,8 @@ def _search_arguments(arguments: dict[str, object]) -> Result[Any, ToolExecutorE
     )
 
 
-def _context_character_id(context: ToolExecutionContext) -> str | None:
-    if context.character_id is not None:
-        return context.character_id
-    if context.tool_call.character_id is not None:
-        return context.tool_call.character_id
-    if context.agent_context is not None:
-        return context.agent_context.character_id
-    return None
+def _context_character_id(context: ToolExecutionContext) -> str:
+    return context.character_id
 
 
 def _normalize_contents(

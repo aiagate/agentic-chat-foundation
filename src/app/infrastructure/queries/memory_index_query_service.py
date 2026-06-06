@@ -43,7 +43,6 @@ from app.infrastructure.memory.store import (
 
 _TERM_PATTERN = re.compile(r"[\w一-龯ぁ-んァ-ヶー]+", re.UNICODE)
 _SEMANTIC_FALLBACK_THRESHOLD = 0.55
-_AGENT_PROFILE_PATH = "profiles/agent/SOUL.md"
 
 
 class FilesystemMemoryIndex(
@@ -86,6 +85,7 @@ class FilesystemMemoryIndex(
         documents: Sequence[MemoryIndexDocument],
         filters: MemorySearchFilters,
         *,
+        character_id: str,
         root: Path | None = None,
         index_db_path: Path | None = None,
         embedding_service: object | None = None,
@@ -101,11 +101,14 @@ class FilesystemMemoryIndex(
             resolved_documents = self._load_documents_from_index(
                 filters.user_id,
                 relationship_entity_id=filters.relationship_entity_id,
+                character_id=character_id,
             )
         if not resolved_documents:
             return []
         index_embeddings = _load_embeddings_from_index_db(
-            index_db_path, filters.user_id
+            index_db_path,
+            filters.user_id,
+            character_id=character_id,
         )
 
         query_terms = _query_terms(query)
@@ -135,11 +138,13 @@ class FilesystemMemoryIndex(
         user_id: str,
         *,
         relationship_entity_id: str | None,
+        character_id: str,
     ) -> list[MemoryIndexDocument]:
         documents = _stored_documents_for_scope(
             self._store,
             user_id=user_id,
             relationship_entity_id=relationship_entity_id,
+            character_id=character_id,
         )
         return [
             MemoryIndexDocument(
@@ -298,6 +303,8 @@ def record_from_memory_index_document(
 def _load_embeddings_from_index_db(
     index_db_path: Path | None,
     user_id: str,
+    *,
+    character_id: str,
 ) -> dict[str, list[float]]:
     if index_db_path is None or not index_db_path.exists():
         return {}
@@ -307,6 +314,7 @@ def _load_embeddings_from_index_db(
         return {}
     try:
         connection.row_factory = sqlite3.Row
+        agent_profile_prefix = f"profiles/agent/{character_id}/"
         cursor = connection.execute(
             """
             select source_path, embedding
@@ -314,13 +322,10 @@ def _load_embeddings_from_index_db(
             where user_id = ?
                or (
                    user_id is null
-                   and (
-                       source_path = ?
-                       or source_path like 'profiles/agent/%'
-                   )
+                   and source_path like ?
                )
             """,
-            (user_id, _AGENT_PROFILE_PATH),
+            (user_id, f"{agent_profile_prefix}%"),
         )
         embeddings: dict[str, list[float]] = {}
         for row in cursor.fetchall():
@@ -338,10 +343,14 @@ def _stored_documents_for_scope(
     *,
     user_id: str | None,
     relationship_entity_id: str | None = None,
+    character_id: str,
 ) -> list[MemoryIndexDocument]:
     documents: list[MemoryIndexDocument] = []
     if user_id is None:
-        for agent_profile_path in _agent_profile_paths(store):
+        for agent_profile_path in _agent_profile_paths(
+            store,
+            character_id=character_id,
+        ):
             if agent_profile_path.exists():
                 documents.append(
                     MemoryIndexDocument(
@@ -406,7 +415,10 @@ def _stored_documents_for_scope(
             )
         return documents
 
-    for agent_profile_path in _agent_profile_paths(store):
+    for agent_profile_path in _agent_profile_paths(
+        store,
+        character_id=character_id,
+    ):
         if agent_profile_path.exists():
             documents.append(
                 MemoryIndexDocument(
@@ -786,12 +798,16 @@ def _always_include(front_matter: Mapping[str, object]) -> bool:
     )
 
 
-def _agent_profile_paths(store: FilesystemMemoryStore) -> list[Path]:
+def _agent_profile_paths(
+    store: FilesystemMemoryStore,
+    *,
+    character_id: str,
+) -> list[Path]:
     bundle_paths = [
-        store.agent_profile_part_path("AGENTS"),
-        store.agent_profile_part_path("SOUL"),
-        store.agent_profile_part_path("PERSONAL"),
-        store.agent_profile_part_path("MEMORY"),
+        store.agent_profile_part_path("AGENTS", character_id=character_id),
+        store.agent_profile_part_path("SOUL", character_id=character_id),
+        store.agent_profile_part_path("PERSONAL", character_id=character_id),
+        store.agent_profile_part_path("MEMORY", character_id=character_id),
     ]
     if any(path.exists() for path in bundle_paths):
         return bundle_paths

@@ -103,6 +103,7 @@ def _build_payload(request: Any, error: Any, *, status: str) -> Mapping[str, obj
         retryable=retryable,
         request_type=request_type,
         chat_type=cast(str | None, request_fields.get("chat_type")),
+        character_id=cast(str | None, request_fields.get("character_id")),
         chat_id=cast(str | None, request_fields.get("chat_id")),
         user_id=cast(str | None, request_fields.get("user_id")),
         guild_id=cast(str | None, request_fields.get("guild_id")),
@@ -159,6 +160,7 @@ def _request_fields(request: Any) -> dict[str, object]:
     selected: dict[str, object] = {}
     for key in (
         "chat_type",
+        "character_id",
         "chat_id",
         "user_id",
         "guild_id",
@@ -199,6 +201,7 @@ def _event_fields(
             "causation_id",
             "agent_run_id",
             "agent_turn_id",
+            "character_id",
             "tool_call_id",
             "source_message_id",
             "decision_summary",

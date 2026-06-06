@@ -55,6 +55,7 @@
 
 ## このリポジトリでの具体例
 
+- `docs/architecture/message-content-persistence-spec.md` では、`payload.text` と `payload.texts` の残存互換と削除条件を別途定義している。
 - `src/app/contracts/messages/tool_use.py` は削除され、tool の共有 DTO は `src/app/contracts/messages/tool_contracts.py` に集約された。
 - `src/app/contracts/ports/search_context_store.py` は削除され、短期 retrieved context の契約は `src/app/contracts/ports/retrieved_context_store.py` に移った。
 - `src/app/infrastructure/services/search_context_store.py` は削除され、実装は `src/app/infrastructure/stores/retrieved_context_store.py` に移った。

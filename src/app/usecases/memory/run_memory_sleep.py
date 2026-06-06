@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -16,6 +17,8 @@ from app.infrastructure.queries.memory_sleep_query_service import (
     MemorySleepQueryService,
 )
 from app.usecases.result import ErrorType, UseCaseError
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -66,10 +69,18 @@ class RunMemorySleepHandler(
                     reference_time = reference_time.replace(tzinfo=UTC)
                 else:
                     reference_time = reference_time.astimezone(UTC)
+                logger.info(
+                    "Starting memory sleep run for reference_time=%s",
+                    reference_time.isoformat(),
+                )
                 raw_chat_log_query = self._uow.GetRawChatLogQuery()
                 targets = await self._memory_sleep_query_service.list_pending_targets(
                     raw_chat_log_query,
                     reference_time=reference_time,
+                )
+                logger.info(
+                    "Memory sleep targets resolved: %s",
+                    len(targets),
                 )
                 consolidated_count = 0
                 for target in targets:
@@ -82,8 +93,17 @@ class RunMemorySleepHandler(
                             reference_time=reference_time,
                         )
                     )
+                logger.info(
+                    "Memory sleep run completed: consolidated_count=%s",
+                    consolidated_count,
+                )
                 return Ok(RunMemorySleepResult(consolidated_count=consolidated_count))
             except Exception as exc:
+                logger.error(
+                    "Failed to run memory sleep job: %s",
+                    exc,
+                    exc_info=True,
+                )
                 return Err(
                     UseCaseError(
                         type=ErrorType.UNEXPECTED,

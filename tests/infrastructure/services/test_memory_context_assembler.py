@@ -16,10 +16,12 @@ from app.infrastructure.memory.markdown import (
 from app.infrastructure.queries.memory_index_query_service import (
     FilesystemMemoryIndex,
 )
+from tests._agent_profile_fixture import _character_id
 
 
 def test_assemble_context_frame_orders_sections_with_source_headers() -> None:
     """Assembler should emit Primary, Functional, then Peripheral sections."""
+    character_id = _character_id()
     results = FilesystemMemoryIndex().search_memory_index(
         "desk concise summary",
         [
@@ -36,7 +38,7 @@ def test_assemble_context_frame_orders_sections_with_source_headers() -> None:
                 "# Desk\n\nThe desk is gray.",
             ),
             _document(
-                "profiles/agent/AGENTS.md",
+                f"profiles/agent/{character_id}/AGENTS.md",
                 {
                     "memory_type": "profile",
                     "id": "agent",
@@ -56,7 +58,7 @@ def test_assemble_context_frame_orders_sections_with_source_headers() -> None:
                         "",
                         "## Communication Style",
                         "",
-                        "- Japanese",
+                        "- English",
                         "- direct answers",
                         "",
                         "## Known Constraints",
@@ -66,7 +68,7 @@ def test_assemble_context_frame_orders_sections_with_source_headers() -> None:
                 ),
             ),
             _document(
-                "profiles/agent/SOUL.md",
+                f"profiles/agent/{character_id}/SOUL.md",
                 {
                     "memory_type": "profile",
                     "id": "agent",
@@ -91,7 +93,7 @@ def test_assemble_context_frame_orders_sections_with_source_headers() -> None:
                 ),
             ),
             _document(
-                "profiles/agent/PERSONAL.md",
+                f"profiles/agent/{character_id}/PERSONAL.md",
                 {
                     "memory_type": "profile",
                     "id": "agent",
@@ -112,7 +114,7 @@ def test_assemble_context_frame_orders_sections_with_source_headers() -> None:
                 ),
             ),
             _document(
-                "profiles/agent/MEMORY.md",
+                f"profiles/agent/{character_id}/MEMORY.md",
                 {
                     "memory_type": "profile",
                     "id": "agent",
@@ -148,6 +150,7 @@ def test_assemble_context_frame_orders_sections_with_source_headers() -> None:
             ),
         ],
         MemorySearchFilters(user_id="u1"),
+        character_id=_character_id(),
     )
 
     frame = assemble_context_frame(results)
@@ -161,14 +164,22 @@ def test_assemble_context_frame_orders_sections_with_source_headers() -> None:
     assert "# Functional" in frame.assembled_context
     assert "# Peripheral" in frame.assembled_context
     assert "## Source: entities/u1/desk.md" in frame.assembled_context
-    assert "## Source: profiles/agent/AGENTS.md" in frame.assembled_context
-    assert "## Source: profiles/agent/SOUL.md" in frame.assembled_context
-    assert "## Source: profiles/agent/PERSONAL.md" in frame.assembled_context
-    assert "## Source: profiles/agent/MEMORY.md" in frame.assembled_context
+    assert f"## Source: profiles/agent/{character_id}/AGENTS.md" in (
+        frame.assembled_context
+    )
+    assert f"## Source: profiles/agent/{character_id}/SOUL.md" in (
+        frame.assembled_context
+    )
+    assert f"## Source: profiles/agent/{character_id}/PERSONAL.md" in (
+        frame.assembled_context
+    )
+    assert f"## Source: profiles/agent/{character_id}/MEMORY.md" in (
+        frame.assembled_context
+    )
     assert "profile_part: AGENTS" in frame.assembled_context
     assert "profile_part: SOUL" in frame.assembled_context
     assert "## Communication Style" in frame.assembled_context
-    assert "Japanese" in frame.assembled_context
+    assert "English" in frame.assembled_context
     assert "direct answers" in frame.assembled_context
     assert "## Known Constraints" in frame.assembled_context
     assert "Do not mention being AI" in frame.assembled_context
@@ -206,6 +217,7 @@ def test_assemble_context_frame_drops_peripheral_entries_under_budget() -> None:
             ),
         ],
         MemorySearchFilters(user_id="u1"),
+        character_id=_character_id(),
     )
 
     frame = assemble_context_frame(results, max_chars=360)
@@ -219,28 +231,29 @@ def test_assemble_context_frame_drops_peripheral_entries_under_budget() -> None:
 def test_assemble_context_frame_treats_relationship_entity_as_functional() -> None:
     """Relationship memory should guide behavior rather than become the answer."""
     results = FilesystemMemoryIndex().search_memory_index(
-        "relationship shirasagi reina",
+        "relationship jondue",
         [
             _document(
-                "entities/u1/relationship%3Ashirasagi-reina.md",
+                "entities/u1/relationship%3Ajondue.md",
                 {
                     "memory_type": "entity",
-                    "id": "relationship:shirasagi-reina",
+                    "id": "relationship:jondue",
                     "user_id": "u1",
-                    "label": "白鷺レイナとの関係",
+                    "label": "Relationship with Jon Due",
                     "entity_type": "relationship",
                     "properties": {
                         "stage": 1,
-                        "stage_name": "顔なじみ",
+                        "stage_name": "Acquaintance",
                         "trust_score": 12,
                         "warmth_score": 8,
                     },
                     "tags": ["relationship", "agent-growth"],
                 },
-                "# 白鷺レイナとの関係",
+                "# Relationship with Jon Due",
             )
         ],
         MemorySearchFilters(user_id="u1"),
+        character_id=_character_id(),
     )
 
     frame = assemble_context_frame(results)
@@ -248,7 +261,7 @@ def test_assemble_context_frame_treats_relationship_entity_as_functional() -> No
     assert [section.name for section in frame.sections] == ["functional"]
     assert "# Functional" in frame.assembled_context
     assert "entity_type: relationship" in frame.assembled_context
-    assert "stage_name: 顔なじみ" in frame.assembled_context
+    assert "stage_name: Acquaintance" in frame.assembled_context
 
 
 def _document(

@@ -34,6 +34,8 @@ from app.contracts.ports.tool_executor import ToolExecutionContext
 from app.domain.value_objects.chat_type import ChatType
 from app.infrastructure.services.tool_executor import GenericToolExecutor
 
+CHARACTER_ID = "shirasagi-reina"
+
 
 @pytest.fixture
 def event_bus(mocker: Any) -> IEventBus:
@@ -86,6 +88,7 @@ async def test_generic_tool_executor_web_search_runs_search(
     )
     context = ToolExecutionContext(
         chat_id="chat-1",
+        character_id=CHARACTER_ID,
         user_id="u1",
         chat_type=ChatType.DISCORD,
         tool_call=ToolCall(
@@ -93,6 +96,7 @@ async def test_generic_tool_executor_web_search_runs_search(
             arguments={"query": "search query", "max_results": 3},
             user_message="searching",
             tool_call_id="tool-1",
+            character_id=CHARACTER_ID,
         ),
         guild_id="DM",
         channel_id="123",
@@ -123,6 +127,7 @@ async def test_generic_tool_executor_memory_search_saves_context(
     )
     context = ToolExecutionContext(
         chat_id="chat-1",
+        character_id=CHARACTER_ID,
         user_id="u1",
         chat_type=ChatType.DISCORD,
         tool_call=ToolCall(
@@ -130,6 +135,7 @@ async def test_generic_tool_executor_memory_search_saves_context(
             arguments={"query": "memory lookup"},
             user_message="searching memory",
             tool_call_id="tool-1",
+            character_id=CHARACTER_ID,
         ),
         guild_id="DM",
         channel_id="123",
@@ -167,12 +173,14 @@ async def test_generic_tool_executor_line_reply_publishes_reply_ready(
     )
     context = ToolExecutionContext(
         chat_id="chat-1",
+        character_id=CHARACTER_ID,
         user_id="u1",
         chat_type=ChatType.LINE,
         tool_call=ToolCall(
             tool_name="line.reply",
             arguments={"content": "hello"},
             user_message="reply",
+            character_id=CHARACTER_ID,
         ),
     )
 
@@ -205,6 +213,7 @@ async def test_generic_tool_executor_discord_post_channel_publishes_reply_ready(
     )
     context = ToolExecutionContext(
         chat_id="chat-1",
+        character_id=CHARACTER_ID,
         user_id="u1",
         chat_type=ChatType.DISCORD,
         tool_call=ToolCall(
@@ -214,6 +223,7 @@ async def test_generic_tool_executor_discord_post_channel_publishes_reply_ready(
                 "contents": ["hello", "world"],
             },
             user_message="post",
+            character_id=CHARACTER_ID,
         ),
         guild_id="guild-1",
         channel_id="123",
@@ -249,12 +259,14 @@ async def test_generic_tool_executor_rejects_line_reply_in_discord_chat(
     )
     context = ToolExecutionContext(
         chat_id="chat-1",
+        character_id=CHARACTER_ID,
         user_id="u1",
         chat_type=ChatType.DISCORD,
         tool_call=ToolCall(
             tool_name="line.reply",
             arguments={"content": "hello"},
             user_message="reply",
+            character_id=CHARACTER_ID,
         ),
         guild_id="guild-1",
         channel_id="123",
@@ -284,6 +296,7 @@ async def test_generic_tool_executor_rejects_discord_post_channel_in_line_chat(
     )
     context = ToolExecutionContext(
         chat_id="chat-1",
+        character_id=CHARACTER_ID,
         user_id="U1234567890",
         chat_type=ChatType.LINE,
         tool_call=ToolCall(
@@ -293,6 +306,7 @@ async def test_generic_tool_executor_rejects_discord_post_channel_in_line_chat(
                 "content": "hello",
             },
             user_message="post",
+            character_id=CHARACTER_ID,
         ),
     )
 
@@ -320,6 +334,7 @@ async def test_generic_tool_executor_memory_write_candidate_writes_log(
     )
     context = ToolExecutionContext(
         chat_id="chat-1",
+        character_id=CHARACTER_ID,
         user_id="u1",
         chat_type=ChatType.DISCORD,
         tool_call=ToolCall(
@@ -332,6 +347,7 @@ async def test_generic_tool_executor_memory_write_candidate_writes_log(
             user_message="write memory",
             tool_call_id="tool-1",
             decision_summary="persist useful note",
+            character_id=CHARACTER_ID,
         ),
         guild_id="guild-1",
         channel_id="123",

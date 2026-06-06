@@ -56,6 +56,7 @@ class IMemoryIndex[TStored, TDocument, THit, TFilters](ABC):
         documents: Sequence[TDocument],
         filters: TFilters,
         *,
+        character_id: str,
         root: Path | None = None,
         index_db_path: Path | None = None,
         embedding_service: object | None = None,

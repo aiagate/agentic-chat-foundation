@@ -20,6 +20,11 @@ from app.contracts.ports.ai_service import (
     AIServiceError,
     IAIService,
 )
+from app.infrastructure.services.ai_request_logging import (
+    log_ai_request_context,
+    serialize_history,
+    serialize_tool_definitions,
+)
 
 logger = logging.getLogger(__name__)
 _MAX_ATTEMPTS = 4
@@ -58,6 +63,18 @@ class GptService(IAIService):
             )
             input_messages = _history_to_openai_input(history)
             input_messages.append({"role": "user", "content": prompt})
+            log_ai_request_context(
+                logger,
+                service_name="OpenAI",
+                payload={
+                    "model": "gpt-4o-mini",
+                    "instructions": instructions,
+                    "history": serialize_history(history),
+                    "prompt": prompt,
+                    "input_messages": input_messages,
+                    "tool_definitions": serialize_tool_definitions(tool_definitions),
+                },
+            )
 
             response = await _generate_with_retries(
                 lambda: client.responses.create(

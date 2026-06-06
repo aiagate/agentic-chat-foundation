@@ -9,7 +9,6 @@ import redis.asyncio as redis
 from flow_res import Err, Ok, Result
 from pydantic import ValidationError
 
-from app.contracts.messages.character_definition import selected_character_id
 from app.contracts.messages.retrieved_context import RetrievedContext
 from app.contracts.ports.retrieved_context_store import (
     IRetrievedContextStore,
@@ -29,7 +28,9 @@ class InMemoryRetrievedContextStore(IRetrievedContextStore):
         self,
         context: RetrievedContext,
     ) -> Result[None, RetrievedContextStoreError]:
-        character_id = _character_id(context.character_id)
+        character_id = _require_character_id(context.character_id)
+        if character_id is None:
+            return Err(RetrievedContextStoreError("character_id is required"))
         self._store[(character_id, context.tool_call_id)] = context.model_copy(
             deep=True
         )
@@ -45,9 +46,9 @@ class InMemoryRetrievedContextStore(IRetrievedContextStore):
         self,
         tool_call_id: str,
         *,
-        character_id: str | None = None,
+        character_id: str,
     ) -> Result[RetrievedContext, RetrievedContextStoreError]:
-        context = self._store.get((_character_id(character_id), tool_call_id))
+        context = self._store.get((character_id, tool_call_id))
         if context is None:
             logger.debug("Retrieved context miss: tool_call_id=%s", tool_call_id)
             return Err(
@@ -86,10 +87,13 @@ class RedisRetrievedContextStore(IRetrievedContextStore):
         context: RetrievedContext,
     ) -> Result[None, RetrievedContextStoreError]:
         try:
+            stored_character_id = _require_character_id(context.character_id)
+            if stored_character_id is None:
+                return Err(RetrievedContextStoreError("character_id is required"))
             await self._redis.set(
                 _key(
                     context.tool_call_id,
-                    character_id=_character_id(context.character_id),
+                    character_id=stored_character_id,
                 ),
                 context.model_dump_json(exclude_none=True),
                 ex=self._ttl_seconds,
@@ -106,11 +110,11 @@ class RedisRetrievedContextStore(IRetrievedContextStore):
         self,
         tool_call_id: str,
         *,
-        character_id: str | None = None,
+        character_id: str,
     ) -> Result[RetrievedContext, RetrievedContextStoreError]:
         try:
             payload = await self._redis.get(
-                _key(tool_call_id, character_id=_character_id(character_id))
+                _key(tool_call_id, character_id=character_id)
             )
         except Exception as exc:
             logger.exception(
@@ -132,8 +136,8 @@ class RedisRetrievedContextStore(IRetrievedContextStore):
             return Err(RetrievedContextStoreError(str(exc)))
 
 
-def _character_id(value: str | None) -> str:
-    return value or selected_character_id()
+def _require_character_id(value: str | None) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
 def _key(tool_call_id: str, *, character_id: str) -> str:

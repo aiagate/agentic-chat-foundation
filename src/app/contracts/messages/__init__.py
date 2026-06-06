@@ -13,14 +13,8 @@ from app.contracts.messages.app_error import (
     build_app_error_detected_payload,
 )
 from app.contracts.messages.character_definition import (
-    ACTIVE_CHARACTER_ID_ENV_VAR,
-    BUILTIN_CHARACTER_DEFINITIONS,
-    DEFAULT_CHARACTER_ID,
     CharacterDefinition,
     RelationshipDefaults,
-    resolve_character_definition,
-    selected_character_definition,
-    selected_character_id,
 )
 from app.contracts.messages.chat_events import (
     CHAT_TOOL_COMPLETED_TOPIC,
@@ -91,11 +85,8 @@ from app.contracts.messages.tool_contracts import (
 __all__ = [
     "AgentEnvelope",
     "AgentProfileBundle",
-    "ACTIVE_CHARACTER_ID_ENV_VAR",
-    "BUILTIN_CHARACTER_DEFINITIONS",
     "ConversationContext",
     "CharacterDefinition",
-    "DEFAULT_CHARACTER_ID",
     "RelationshipDefaults",
     "render_agent_persona_context",
     "render_conversation_context",
@@ -149,7 +140,4 @@ __all__ = [
     "relationship_growth_stage_lines",
     "reply_topic_for",
     "resolve_relationship_stage",
-    "resolve_character_definition",
-    "selected_character_definition",
-    "selected_character_id",
 ]

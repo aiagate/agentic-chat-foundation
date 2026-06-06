@@ -30,7 +30,7 @@ class ToolExecutionContext:
     user_id: str
     chat_type: ChatType
     tool_call: ToolCall
-    character_id: str | None = None
+    character_id: str
     guild_id: str | None = None
     channel_id: str | None = None
     agent_context: AgentEnvelope | None = None

@@ -17,6 +17,7 @@ from app.infrastructure.queries.memory_index_query_service import (
 )
 from app.infrastructure.services.memory_service import FilesystemMemoryService
 from scripts.memory_index_embedding import _rebuild_index_projection
+from tests._agent_profile_fixture import _character_id
 
 pytestmark = pytest.mark.scenario
 
@@ -73,6 +74,7 @@ async def test_live_gemini_embeddings_rank_matching_timeline_document(
         query,
         [],
         MemorySearchFilters(user_id="u1"),
+        character_id=_character_id(),
         index_db_path=index_db,
         query_embedding=query_embedding,
         limit=3,
@@ -124,8 +126,9 @@ async def test_live_gemini_memory_service_returns_same_day_hit(
 
     database.init_db(f"sqlite+aiosqlite:///{tmp_path / 'scenario.sqlite3'}")
     service = FilesystemMemoryService(
-        root=memory_root,
+        store=FilesystemMemoryStore(memory_root),
         embedding_service=embedding_service,
+        character_id=_character_id(),
     )
 
     result = await service.retrieve(

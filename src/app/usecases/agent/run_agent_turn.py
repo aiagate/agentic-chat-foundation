@@ -13,7 +13,6 @@ from flow_res import Err, Ok, Result, is_err
 from injector import inject
 
 from app.contracts.messages.agentic import AgentEnvelope
-from app.contracts.messages.character_definition import selected_character_id
 from app.contracts.messages.chat_events import (
     build_reply_ready_payload,
     reply_topic_for,
@@ -33,14 +32,13 @@ from app.domain.aggregates.chat import Chat, DiscordChat, LineChat
 from app.domain.repositories import IUnitOfWork
 from app.domain.value_objects.chat_id import ChatId
 from app.domain.value_objects.chat_type import ChatType
-from app.domain.value_objects.message_content import MessageContent
-from app.infrastructure.memory.store import FilesystemMemoryStore, default_memory_root
+from app.domain.value_objects.message_content import (
+    MessageContent,
+    render_message_content_text,
+)
 from app.infrastructure.messaging.null_event_bus import NullEventBus
 from app.infrastructure.orm_mapping import ORMMappingRegistry
 from app.infrastructure.orm_models.chat_orm import ChatORM
-from app.infrastructure.services.agent_profile_service import (
-    FilesystemAgentProfileService,
-)
 from app.usecases.agent.route_tool_calls import RouteToolCallsCommand
 from app.usecases.memory.retrieve_memory_context import RetrieveMemoryContextQuery
 from app.usecases.result import ErrorType, UseCaseError
@@ -73,13 +71,13 @@ class RunAgentTurnQuery(Request[Result[RunAgentTurnResult, UseCaseError]]):
     chat_id: str
     guild_id: str
     channel_id: str
+    character_id: str
     user_id: str = "default"
     chat_type: ChatType = ChatType.DISCORD
     prompt: str | None = None
     source_request_id: str | None = None
     tool_call_id: str | None = None
     tool_failure_context: str | None = None
-    character_id: str | None = None
     agent_context: AgentEnvelope | None = None
 
 
@@ -96,12 +94,11 @@ class RunAgentTurnHandler(
         tool_catalog: IToolCatalog,
         uow: IUnitOfWork,
         event_bus: IEventBus | None = None,
-        agent_profile_service: IAgentProfileService | None = None,
+        *,
+        agent_profile_service: IAgentProfileService,
     ) -> None:
         self._ai_service = ai_service
-        self._agent_profile_service = agent_profile_service or (
-            FilesystemAgentProfileService(FilesystemMemoryStore(default_memory_root()))
-        )
+        self._agent_profile_service = agent_profile_service
         self._retrieved_context_store = retrieved_context_store
         self._tool_catalog = tool_catalog
         self._uow = uow
@@ -113,7 +110,7 @@ class RunAgentTurnHandler(
         """Generate content, execute tool requests, and persist the reply."""
 
         async with self._uow:
-            character_id = _resolve_character_id(request)
+            character_id = request.character_id
             agent_context = _with_character_id(request.agent_context, character_id)
 
             prompt_result = await self._resolve_prompt(request)
@@ -145,6 +142,7 @@ class RunAgentTurnHandler(
                 profile_bundle.persona_context,
                 render_conversation_context(conversation_context),
                 memory_result.value.assembled_context,
+                _output_contract_instruction(),
             ]
 
             if request.tool_failure_context is not None:
@@ -230,18 +228,17 @@ class RunAgentTurnHandler(
                 )
 
             contents = ai_result.value.contents
-            content = _join_contents(contents)
             match request.chat_type:
                 case ChatType.LINE:
                     model_chat = LineChat.create_user_chat(
                         line_user_id=request.user_id,
-                        message_content=MessageContent.text(content),
+                        message_content=MessageContent.texts(contents),
                     )
                 case ChatType.DISCORD:
                     model_chat = DiscordChat.create(
                         guild_id=request.guild_id,
                         channel_id=request.channel_id,
-                        message_content=MessageContent.text(content),
+                        message_content=MessageContent.texts(contents),
                     )
 
             add_result = await _save_generated_chat(
@@ -379,14 +376,21 @@ def _join_context(parts: list[str | None]) -> str | None:
     return "\n\n".join(rendered)
 
 
-def _join_contents(contents: list[str]) -> str:
-    return "\n".join(content for content in contents if content)
+def _output_contract_instruction() -> str:
+    return (
+        "Output contract:\n"
+        "- Return a single JSON object that matches GeneratedContent.\n"
+        "- Put normal assistant text in contents.\n"
+        "- Put tool requests in tool_calls.\n"
+        "- Do not serialize tool calls as a JSON array inside contents.\n"
+        "- If you request a tool, keep contents empty unless you also need "
+        "user-visible text."
+    )
 
 
 def _chat_prompt(chat: Chat) -> str | None:
-    payload = chat.message_content.payload
-    text = payload.get("text")
-    if isinstance(text, str):
+    text = render_message_content_text(chat.message_content.payload)
+    if text is not None:
         normalized = _normalize_text(text)
         if normalized:
             return normalized
@@ -477,14 +481,6 @@ def _normalize_text(value: str | None) -> str:
     if value is None:
         return ""
     return " ".join(value.split())
-
-
-def _resolve_character_id(request: RunAgentTurnQuery) -> str:
-    if request.character_id:
-        return request.character_id
-    if request.agent_context is not None and request.agent_context.character_id:
-        return request.agent_context.character_id
-    return selected_character_id()
 
 
 def _with_character_id(

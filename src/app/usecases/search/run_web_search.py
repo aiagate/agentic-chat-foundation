@@ -36,9 +36,9 @@ class RunWebSearchCommand(Request[Result[RunWebSearchResult, UseCaseError]]):
     query: str
     user_message: str
     source_request_id: str
+    character_id: str
     tool_name: ToolName = "web_search"
     max_results: int | None = None
-    character_id: str | None = None
 
 
 class RunWebSearchHandler(
