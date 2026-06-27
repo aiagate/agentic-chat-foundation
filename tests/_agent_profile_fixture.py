@@ -35,10 +35,7 @@ _AGENT_PROFILE_PARTS: dict[str, str] = {
 schema_version: 1
 memory_type: profile
 id: agent
-user_id: null
 profile_scope: agent
-character_id: {character_id}
-display_name: {display_name}
 created_at: '2026-06-02T09:03:46.736041+00:00'
 updated_at: '2026-06-02T09:03:46.736041+00:00'
 tags:
@@ -47,7 +44,6 @@ importance: 0.8
 confidence: 1.0
 pinned: true
 metadata: {{}}
-profile_part: AGENTS
 ---
 
 # AGENTS
@@ -82,9 +78,7 @@ Relational habits:
 schema_version: 1
 memory_type: profile
 id: agent
-user_id: null
 profile_scope: agent
-display_name: {display_name}
 created_at: '2026-06-02T09:03:46.736041+00:00'
 updated_at: '2026-06-02T09:03:46.736041+00:00'
 tags:
@@ -93,7 +87,6 @@ importance: 0.8
 confidence: 1.0
 pinned: true
 metadata: {{}}
-profile_part: SOUL
 ---
 
 # {display_name}
@@ -121,9 +114,7 @@ warmth.
 schema_version: 1
 memory_type: profile
 id: agent
-user_id: null
 profile_scope: agent
-display_name: {display_name}
 created_at: '2026-06-02T09:03:46.736041+00:00'
 updated_at: '2026-06-02T09:03:46.736041+00:00'
 tags:
@@ -132,7 +123,13 @@ importance: 0.8
 confidence: 1.0
 pinned: true
 metadata: {{}}
-profile_part: PERSONAL
+relationship_entity_id: {_relationship_entity_id}
+relationship_entity_label: {_relationship_entity_label}
+relationship_entity_type: relationship
+relationship_tag: agent-growth
+relationship_initial_trust_score: 0
+relationship_initial_warmth_score: 0
+relationship_initial_stage: 0
 ---
 
 # {display_name}
@@ -151,16 +148,11 @@ profile_part: PERSONAL
 - relationship_initial_trust_score: 0
 - relationship_initial_warmth_score: 0
 - relationship_initial_stage: 0
-
-## Fallback
-
-- If preferences are unclear, choose something seasonal and quiet.
 """,
     "MEMORY": """---
 schema_version: 1
 memory_type: profile
 id: agent
-user_id: null
 profile_scope: agent
 created_at: '2026-06-02T09:03:46.736041+00:00'
 updated_at: '2026-06-02T09:03:46.736041+00:00'
@@ -170,7 +162,6 @@ importance: 0.8
 confidence: 1.0
 pinned: true
 metadata: {{}}
-profile_part: MEMORY
 ---
 
 # Long-term Memory

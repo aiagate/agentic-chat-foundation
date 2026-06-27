@@ -279,7 +279,7 @@ def record_from_memory_index_document(
         source_id=front_matter_string(front_matter.get("id")),
         user_id=user_id,
         memory_type=front_matter_string(front_matter.get("memory_type")),
-        title=_title(front_matter),
+        title=_title(front_matter, reference=index_document.reference),
         content_hash=content_hash,
         indexed_text=_indexed_text(front_matter, body),
         tags_json=json.dumps(
@@ -586,16 +586,7 @@ def _passes_date_range(
 def _indexed_text(front_matter: Mapping[str, object], body: str) -> str:
     memory_type = front_matter.get("memory_type")
     if memory_type == "profile":
-        fields = [
-            "profile_part",
-            "display_name",
-            "summary",
-            "traits",
-            "preferences",
-            "communication_style",
-            "known_constraints",
-            "tags",
-        ]
+        fields = ["tags"]
     elif memory_type == "timeline":
         fields = ["content", "kind", "source", "entity_ids", "tags", "metadata"]
     else:
@@ -729,7 +720,7 @@ def _source_from_document(
     return MemorySource(
         id=front_matter_string(front_matter.get("id")),
         memory_type=memory_type,  # type: ignore[arg-type]
-        title=_title(front_matter),
+        title=_title(front_matter, reference=index_document.reference),
         user_id=_source_user_id(front_matter),
         reference=_relative_reference(index_document.path, root),
     )
@@ -744,14 +735,15 @@ def _source_user_id(front_matter: Mapping[str, object]) -> str | None:
     return None
 
 
-def _title(front_matter: Mapping[str, object]) -> str | None:
+def _title(
+    front_matter: Mapping[str, object],
+    *,
+    reference: str | None,
+) -> str | None:
     memory_type = front_matter.get("memory_type")
     if memory_type == "profile":
-        display_name = front_matter_string_or_none(front_matter.get("display_name"))
-        profile_part = front_matter_string_or_none(front_matter.get("profile_part"))
-        if display_name and profile_part:
-            return f"{display_name} / {profile_part}"
-        return display_name or profile_part
+        if reference:
+            return Path(reference).stem
     if memory_type == "entity":
         return front_matter_string_or_none(front_matter.get("label"))
     if memory_type == "timeline":
@@ -762,7 +754,7 @@ def _title(front_matter: Mapping[str, object]) -> str | None:
 def _excerpt(front_matter: Mapping[str, object], body: str) -> str:
     memory_type = front_matter.get("memory_type")
     if memory_type == "profile":
-        text = front_matter_string(front_matter.get("summary")) or body
+        text = body
     elif memory_type == "timeline":
         text = front_matter_string(front_matter.get("content")) or body
     elif memory_type == "entity":

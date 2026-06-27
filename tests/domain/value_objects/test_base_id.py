@@ -13,6 +13,8 @@ from app.domain.value_objects.base_id import BaseId
 class TestId(BaseId):
     """Test ID for testing BaseId functionality."""
 
+    __test__ = False
+
 
 def test_generate_creates_new_id() -> None:
     """Test that generate creates a new ID with valid ULID."""

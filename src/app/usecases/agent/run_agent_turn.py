@@ -6,54 +6,38 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Protocol, cast, runtime_checkable
 
 from flow_med import Mediator, Request, RequestHandler
 from flow_res import Err, Ok, Result, is_err
 from injector import inject
 
 from app.contracts.messages.agentic import AgentEnvelope
-from app.contracts.messages.chat_events import (
-    build_reply_ready_payload,
-    reply_topic_for,
-)
 from app.contracts.messages.chat_history import ChatHistoryItem
-from app.contracts.messages.conversation_context import (
-    ConversationContext,
-    render_conversation_context,
-)
-from app.contracts.messages.tool_contracts import ToolDefinition
+from app.contracts.messages.conversation_context import ConversationContext
+from app.contracts.messages.llm_request_context import compose_system_instruction
 from app.contracts.ports.agent_profile_service import IAgentProfileService
 from app.contracts.ports.ai_service import IAIService
 from app.contracts.ports.event_bus import IEventBus
-from app.contracts.ports.retrieved_context_store import IRetrievedContextStore
 from app.contracts.ports.tool_catalog import IToolCatalog
-from app.domain.aggregates.chat import Chat, DiscordChat, LineChat
+from app.contracts.ports.tool_result_store import IToolResultStore
+from app.domain.aggregates.chat import Chat
 from app.domain.repositories import IUnitOfWork
 from app.domain.value_objects.chat_id import ChatId
 from app.domain.value_objects.chat_type import ChatType
 from app.domain.value_objects.message_content import (
-    MessageContent,
     render_message_content_text,
 )
-from app.infrastructure.messaging.null_event_bus import NullEventBus
-from app.infrastructure.orm_mapping import ORMMappingRegistry
-from app.infrastructure.orm_models.chat_orm import ChatORM
 from app.usecases.agent.route_tool_calls import RouteToolCallsCommand
+from app.usecases.agent.turn_context import (
+    build_turn_llm_request_context,
+    filter_tool_definitions,
+)
+from app.usecases.agent.turn_reply import persist_reply
 from app.usecases.memory.retrieve_memory_context import RetrieveMemoryContextQuery
 from app.usecases.result import ErrorType, UseCaseError
 
 logger = logging.getLogger(__name__)
-_SESSION_GAP_THRESHOLD = timedelta(hours=12)
-
-
-@runtime_checkable
-class _SessionProtocol(Protocol):
-    """Subset of async session behavior needed by this use case."""
-
-    def add(self, instance: object) -> None: ...
-
-    async def flush(self) -> None: ...
+_SESSION_GAP_THRESHOLD = timedelta(hours=24)
 
 
 @dataclass(frozen=True)
@@ -90,19 +74,19 @@ class RunAgentTurnHandler(
     def __init__(
         self,
         ai_service: IAIService,
-        retrieved_context_store: IRetrievedContextStore,
+        tool_result_store: IToolResultStore,
         tool_catalog: IToolCatalog,
         uow: IUnitOfWork,
-        event_bus: IEventBus | None = None,
+        event_bus: IEventBus,
         *,
         agent_profile_service: IAgentProfileService,
     ) -> None:
         self._ai_service = ai_service
         self._agent_profile_service = agent_profile_service
-        self._retrieved_context_store = retrieved_context_store
+        self._tool_result_store = tool_result_store
         self._tool_catalog = tool_catalog
         self._uow = uow
-        self._event_bus = event_bus or NullEventBus()
+        self._event_bus = event_bus
 
     async def handle(
         self, request: RunAgentTurnQuery
@@ -125,8 +109,6 @@ class RunAgentTurnHandler(
 
             memory_result = await Mediator.send_async(
                 RetrieveMemoryContextQuery(
-                    history=history,
-                    prompt=prompt,
                     user_id=request.user_id,
                 )
             )
@@ -138,52 +120,40 @@ class RunAgentTurnHandler(
                     )
                 )
             profile_bundle = self._agent_profile_service.load_agent_profile_bundle()
-            system_parts = [
-                profile_bundle.persona_context,
-                render_conversation_context(conversation_context),
-                memory_result.value.assembled_context,
-                _output_contract_instruction(),
-            ]
+            llm_context = await build_turn_llm_request_context(
+                tool_result_store=self._tool_result_store,
+                conversation_context=conversation_context,
+                memory_context=memory_result.value,
+                persona_context=profile_bundle.persona_context,
+                prompt=prompt,
+                character_id=character_id,
+                tool_call_id=request.tool_call_id,
+                tool_failure_context=request.tool_failure_context,
+            )
 
-            if request.tool_failure_context is not None:
-                system_parts.append(request.tool_failure_context)
-
-            should_disable_web_search = False
-            if request.tool_call_id is not None:
-                retrieved_context_result = await self._retrieved_context_store.get(
-                    request.tool_call_id,
-                    character_id=character_id,
-                )
-                if is_err(retrieved_context_result):
-                    logger.warning(
-                        "Retrieved context unavailable for tool call %s: %s",
-                        request.tool_call_id,
-                        retrieved_context_result.error,
-                    )
-                else:
-                    system_parts.append(retrieved_context_result.value.rendered_text)
-                    if retrieved_context_result.value.tool_name == "web_search":
-                        should_disable_web_search = True
-                        system_parts.append(
-                            "Web search results are already provided above. "
-                            "Use the supplied context to answer directly and do "
-                            "not call web_search again."
-                        )
-
-            tool_definitions = _filter_tool_definitions(
+            tool_definitions = filter_tool_definitions(
                 self._tool_catalog.list_tools(),
                 chat_type=request.chat_type,
-                disable_web_search=(
-                    request.tool_failure_context is not None
-                    or should_disable_web_search
-                ),
+            )
+            llm_context = llm_context.model_copy(
+                update={
+                    "tool_definitions": tool_definitions,
+                    "recent_history": _trim_duplicate_prompt(
+                        history,
+                        llm_context.current_input.content,
+                    ),
+                }
+            )
+            logger.info(
+                "Structured LLM request context: %s",
+                llm_context.model_dump_json(),
             )
 
             ai_result = await self._ai_service.generate_content(
-                prompt,
-                _trim_duplicate_prompt(history, prompt),
-                system_instruction=_join_context(system_parts),
-                tool_definitions=tool_definitions,
+                llm_context.current_input.content,
+                llm_context.recent_history,
+                system_instruction=compose_system_instruction(llm_context),
+                tool_definitions=llm_context.tool_definitions,
             )
             if is_err(ai_result):
                 logger.warning(
@@ -198,6 +168,23 @@ class RunAgentTurnHandler(
                         ),
                     )
                 )
+
+            persisted_contents: list[str] = []
+            if ai_result.value.contents:
+                reply_result = await persist_reply(
+                    uow=self._uow,
+                    event_bus=self._event_bus,
+                    chat_type=request.chat_type,
+                    guild_id=request.guild_id,
+                    channel_id=request.channel_id,
+                    user_id=request.user_id,
+                    contents=ai_result.value.contents,
+                    agent_context=agent_context,
+                    tool_call_id=request.tool_call_id,
+                )
+                if is_err(reply_result):
+                    return Err(reply_result.error)
+                persisted_contents = reply_result.value.contents
 
             if ai_result.value.tool_calls:
                 route_result = await Mediator.send_async(
@@ -222,77 +209,13 @@ class RunAgentTurnHandler(
                     )
                 return Ok(
                     RunAgentTurnResult(
-                        contents=route_result.value.contents,
+                        contents=persisted_contents,
                         tool_call_id=request.tool_call_id,
                     )
                 )
-
-            contents = ai_result.value.contents
-            match request.chat_type:
-                case ChatType.LINE:
-                    model_chat = LineChat.create_user_chat(
-                        line_user_id=request.user_id,
-                        message_content=MessageContent.texts(contents),
-                    )
-                case ChatType.DISCORD:
-                    model_chat = DiscordChat.create(
-                        guild_id=request.guild_id,
-                        channel_id=request.channel_id,
-                        message_content=MessageContent.texts(contents),
-                    )
-
-            add_result = await _save_generated_chat(
-                self._uow,
-                model_chat,
-                request.user_id,
-            )
-            if is_err(add_result):
-                return Err(
-                    UseCaseError(
-                        type=ErrorType.UNEXPECTED,
-                        message="Failed to save generated content",
-                    )
-                )
-
-            commit_result = await self._uow.commit()
-            if is_err(commit_result):
-                return Err(
-                    UseCaseError(
-                        type=ErrorType.UNEXPECTED,
-                        message="Failed to persist generated content",
-                    )
-                )
-
-            try:
-                await self._event_bus.publish(
-                    reply_topic_for(request.chat_type),
-                    build_reply_ready_payload(
-                        chat_type=request.chat_type,
-                        contents=contents,
-                        guild_id=(
-                            request.guild_id
-                            if request.chat_type is ChatType.DISCORD
-                            else None
-                        ),
-                        channel_id=(
-                            request.channel_id
-                            if request.chat_type is ChatType.DISCORD
-                            else None
-                        ),
-                        user_id=(
-                            request.user_id
-                            if request.chat_type is ChatType.LINE
-                            else None
-                        ),
-                        agent_envelope=agent_context,
-                    ),
-                )
-            except Exception:
-                logger.exception("Failed to publish chat reply event")
-
             return Ok(
                 RunAgentTurnResult(
-                    contents=contents,
+                    contents=persisted_contents,
                     tool_call_id=request.tool_call_id,
                 )
             )
@@ -319,7 +242,8 @@ class RunAgentTurnHandler(
                     message="Failed to retrieve chat history",
                 )
             )
-        history = history_result.value
+        history_window = history_result.value
+        history = history_window.items
         current_time = datetime.now(UTC)
         session_history, conversation_context = _build_conversation_context(
             history,
@@ -328,6 +252,7 @@ class RunAgentTurnHandler(
             guild_id=request.guild_id,
             channel_id=request.channel_id,
             current_time=current_time,
+            memory_boundary_at=history_window.memory_boundary_at,
         )
         return Ok((session_history, conversation_context))
 
@@ -369,25 +294,6 @@ class RunAgentTurnHandler(
         return Ok(prompt)
 
 
-def _join_context(parts: list[str | None]) -> str | None:
-    rendered = [part for part in parts if part]
-    if not rendered:
-        return None
-    return "\n\n".join(rendered)
-
-
-def _output_contract_instruction() -> str:
-    return (
-        "Output contract:\n"
-        "- Return a single JSON object that matches GeneratedContent.\n"
-        "- Put normal assistant text in contents.\n"
-        "- Put tool requests in tool_calls.\n"
-        "- Do not serialize tool calls as a JSON array inside contents.\n"
-        "- If you request a tool, keep contents empty unless you also need "
-        "user-visible text."
-    )
-
-
 def _chat_prompt(chat: Chat) -> str | None:
     text = render_message_content_text(chat.message_content.payload)
     if text is not None:
@@ -418,8 +324,12 @@ def _build_conversation_context(
     guild_id: str,
     channel_id: str,
     current_time: datetime,
+    memory_boundary_at: datetime | None,
 ) -> tuple[list[ChatHistoryItem], ConversationContext]:
-    session_history, boundary = _latest_session_window(history)
+    session_history, boundary = _latest_session_window(
+        history,
+        memory_boundary_at=memory_boundary_at,
+    )
     conversation_context = ConversationContext(
         chat_scope=_chat_scope_label(
             chat_type=chat_type,
@@ -440,12 +350,24 @@ def _build_conversation_context(
 
 def _latest_session_window(
     history: Sequence[ChatHistoryItem],
+    *,
+    memory_boundary_at: datetime | None,
 ) -> tuple[list[ChatHistoryItem], tuple[datetime, datetime, int] | None]:
     if not history:
         return [], None
 
     start_index = 0
     boundary: tuple[datetime, datetime, int] | None = None
+    first_at = history[0].occurred_at
+    if memory_boundary_at is not None and first_at is not None:
+        current_utc = _as_utc(first_at)
+        previous_utc = _as_utc(memory_boundary_at)
+        gap = max(current_utc - previous_utc, timedelta())
+        boundary = (
+            current_utc,
+            previous_utc,
+            int(gap.total_seconds() // 60),
+        )
     for index in range(1, len(history)):
         previous_at = history[index - 1].occurred_at
         current_at = history[index].occurred_at
@@ -454,7 +376,7 @@ def _latest_session_window(
         previous_utc = _as_utc(previous_at)
         current_utc = _as_utc(current_at)
         gap = current_utc - previous_utc
-        if gap > _SESSION_GAP_THRESHOLD or current_utc.date() != previous_utc.date():
+        if gap > _SESSION_GAP_THRESHOLD:
             start_index = index
             boundary = (
                 current_utc,
@@ -498,50 +420,3 @@ def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
-
-
-def _filter_tool_definitions(
-    tool_definitions: list[ToolDefinition],
-    *,
-    chat_type: ChatType,
-    disable_web_search: bool,
-) -> list[ToolDefinition]:
-    """Expose only the tools that make sense for the current chat type."""
-
-    allowed_tool_names = {"memory.search", "memory.write_candidate", "web_search"}
-    match chat_type:
-        case ChatType.LINE:
-            allowed_tool_names.add("line.reply")
-        case ChatType.DISCORD:
-            allowed_tool_names.update({"discord.reply", "discord.post_channel"})
-
-    filtered_tools = [
-        tool for tool in tool_definitions if tool.name in allowed_tool_names
-    ]
-    if disable_web_search:
-        filtered_tools = [tool for tool in filtered_tools if tool.name != "web_search"]
-    return filtered_tools
-
-
-async def _save_generated_chat(
-    uow: IUnitOfWork,
-    chat: DiscordChat | LineChat,
-    user_id: str,
-) -> Result[DiscordChat | LineChat, UseCaseError]:
-    """Persist a generated assistant chat as raw SQL."""
-
-    session = getattr(uow, "_session", None)
-    if not isinstance(session, _SessionProtocol):
-        return Err(
-            UseCaseError(
-                type=ErrorType.UNEXPECTED,
-                message="Unit of work session is not available",
-            )
-        )
-
-    chat_orm = cast(ChatORM, ORMMappingRegistry.to_orm(chat))
-    chat_orm.user_id = user_id
-    chat_orm.role = "assistant"
-    session.add(chat_orm)
-    await session.flush()
-    return Ok(cast(DiscordChat | LineChat, ORMMappingRegistry.from_orm(chat_orm)))

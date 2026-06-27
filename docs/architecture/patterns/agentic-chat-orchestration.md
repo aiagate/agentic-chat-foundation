@@ -9,7 +9,7 @@ agentic なワークフローへ流す現在の実装をまとめる。
 
 - tool call DTO、agent event payload、event topic は `src/app/contracts/messages`
 - `IAIService`、`IEventBus`、`IToolCatalog`、`IToolExecutor`、`IToolCallStore`、
-  `IRetrievedContextStore` は `src/app/contracts/ports`
+  `IToolResultStore` は `src/app/contracts/ports`
 - agent loop の進行、tool request の検証、再推論は `src/app/usecases`
 - LINE / Discord の送信処理は `src/app/presentation`
 - tool の実行本体、memory 取得、外部 API 呼び出しは `src/app/infrastructure`
@@ -19,30 +19,30 @@ agentic なワークフローへ流す現在の実装をまとめる。
 
 ## 現行の tool set
 
-`src/app/infrastructure/services/tool_catalog.py` が公開する tool は次の 6 つである。
+`src/app/infrastructure/services/tool_catalog.py` が公開する tool は次の 5 つである。
 
 - `web_search`
-- `memory.search`
+- `memory.read`
 - `memory.write_candidate`
-- `line.reply`
-- `discord.reply`
-- `discord.post_channel`
+- `line.send`
+- `discord.send`
 
-`web_search` と `memory.search` は read tool、`memory.write_candidate` は write tool、
-`line.reply` / `discord.reply` / `discord.post_channel` は send_message tool である。
+`web_search` と `memory.read` は read tool、`memory.write_candidate` は write tool、
+`line.send` / `discord.send` は send_message tool である。
 
 ## 現行の flow
 
 ```text
 Saved chat
   └─ presentation/chat handler
-      └─ Mediator.send_async(RunAgentTurnQuery)
+      └─ chat.agent_turn.requested
+          └─ Mediator.send_async(RunAgentTurnQuery)
           └─ usecases/agent/run_agent_turn.py
               ├─ history と memory context を組み立てる
               ├─ agent profile を読み込む
               ├─ IAIService.generate_content(...)
-              ├─ tool_calls があれば RouteToolCallsCommand を送る
-              └─ reply_ready を publish する
+              ├─ contents があれば reply_ready を publish する
+              └─ tool_calls をすべて RouteToolCallsCommand へ送る
 
 tool request
   └─ usecases/agent/route_tool_calls.py
@@ -58,26 +58,26 @@ tool execution
       └─ chat.tool.completed を publish する
           └─ usecases/agent/handle_tool_execution.py
               ├─ IToolCallStore から ToolCall を読む
-              ├─ IToolExecutor.execute(...)
+              ├─ send_message tool はassistant正本を保存してreply_readyを発行する
+              ├─ その他は IToolExecutor.execute(...) を呼ぶ
               └─ generic result を返す
 
-retrieved context replay
-  └─ `web_search` と `memory.search` の結果は `tool_call_id` で短期 store に保存する
-      └─ `chat.tool.completed` を受けた worker が RunAgentTurnQuery に再入する
+tool result replay
+  └─ 非 send tool の結果は `tool_call_id` で短期 store に保存する
+      └─ `chat.tool.completed` から `chat.agent_turn.requested` を発行する
 ```
 
-`RouteToolCallsHandler` は、現行実装では 1 turn あたり 1 件の retrieved-context tool だけを
-通す。`RunAgentTurnHandler` は `tool_call_id` があると retrieved context を再投入し、
-`web_search` が既に返っている場合は同じ検索を再実行しない。
+`RouteToolCallsHandler` は 1 turn の tool call をすべて独立してルーティングする。
+各非 send tool の完了は個別に次の agent turn を要求し、結果の集約は行わない。
 
 ## 現行の責務
 
-- `RunAgentTurnHandler` は履歴、memory context、agent profile を組み立てて推論する。
+- `RunAgentTurnHandler` は履歴、memory manifest、agent profile を組み立てて推論する。
 - `RouteToolCallsHandler` は tool call を検証し、短期保存して event に変換する。
-- `HandleToolExecutionHandler` は tool call を読み出して executor へ渡す。
-- `GenericToolExecutor` は tool 名ごとに `web_search`、`memory.search`、
-  `memory.write_candidate`、返信系 tool を振り分ける。
-- `IRetrievedContextStore` は再推論に必要な短期 context を保持する。
+- `HandleToolExecutionHandler` は tool call を読み出し、send_message toolの保存・送信をオーケストレーションする。
+- `GenericToolExecutor` は tool 名ごとに `web_search`、`memory.read`、
+  `memory.write_candidate` を振り分ける。
+- `IToolResultStore` は再推論に必要な全 tool result を保持する。
 
 ## 共有型
 
@@ -87,7 +87,7 @@ retrieved context replay
 - `ToolDefinition`
 - `ToolCall`
 - `ToolExecutionResult`
-- `RetrievedContext`
+- `ToolResultContext`
 - `GeneratedContent`
 - `ConversationContext`
 - `MemoryContextPack`
@@ -101,4 +101,4 @@ retrieved context replay
 - `src/app/usecases/agent/handle_tool_execution.py`
 - `src/app/infrastructure/services/tool_executor.py`
 - `src/app/infrastructure/stores/tool_call_store.py`
-- `src/app/infrastructure/stores/retrieved_context_store.py`
+- `src/app/infrastructure/stores/tool_result_store.py`

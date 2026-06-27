@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -182,9 +183,9 @@ async def test_gemini_service_normalizes_legacy_tool_call_arrays(
             [
                 {
                     "id": "call_1",
-                    "name": "line.reply",
+                    "name": "line.send",
                     "arguments": {
-                        "content": "こんにちは。"
+                        "contents": ["こんにちは。"]
                     },
                 }
             ]
@@ -213,8 +214,7 @@ async def test_gemini_service_normalizes_legacy_tool_call_arrays(
     assert result.value.contents == []
     assert len(result.value.tool_calls) == 1
     assert result.value.tool_calls[0].tool_call_id == "call_1"
-    assert result.value.tool_calls[0].tool_name == "line.reply"
-    assert result.value.tool_calls[0].user_message == "こんにちは。"
+    assert result.value.tool_calls[0].tool_name == "line.send"
 
 
 @pytest.mark.anyio
@@ -233,9 +233,9 @@ async def test_gemini_service_normalizes_single_item_wrappers_with_tool_calls(
                     "tool_calls": [
                         {
                             "id": "call_1",
-                            "name": "memory.search",
+                            "name": "memory.read",
                             "arguments": {
-                                "query": "memory lookup",
+                                "memory_id": "entity:memory-lookup",
                             },
                         }
                     ],
@@ -266,14 +266,14 @@ async def test_gemini_service_normalizes_single_item_wrappers_with_tool_calls(
     assert result.value.contents == []
     assert len(result.value.tool_calls) == 1
     assert result.value.tool_calls[0].tool_call_id == "call_1"
-    assert result.value.tool_calls[0].tool_name == "memory.search"
+    assert result.value.tool_calls[0].tool_name == "memory.read"
 
 
 @pytest.mark.anyio
-async def test_gemini_service_uses_gemini_3_1_pro_preview_by_default(
+async def test_gemini_service_uses_gemini_3_5_flash_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that the default Gemini model and thinking level match Gemini 3.1."""
+    """Test that the default Gemini model and thinking level match Gemini 3.5."""
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
@@ -302,8 +302,9 @@ async def test_gemini_service_uses_gemini_3_1_pro_preview_by_default(
     )
 
     assert not is_err(result)
-    assert recorded["kwargs"]["model"] == "gemini-3.1-pro-preview"
-    config = recorded["kwargs"]["config"]
+    kwargs = cast(dict[str, object], recorded["kwargs"])
+    assert kwargs["model"] == "gemini-3.5-flash"
+    config = cast(Any, kwargs["config"])
     assert config.thinking_config.thinking_level.value.lower() == "low"
 
 
@@ -353,8 +354,8 @@ async def test_gemini_service_logs_full_request_context(
             system_instruction="base system instruction",
             tool_definitions=[
                 ToolDefinition(
-                    name="memory.search",
-                    description="Search memory.",
+                    name="memory.read",
+                    description="Read memory.",
                     arguments_schema={"type": "object"},
                     result_schema={"type": "object"},
                     capability_scope=["memory"],
@@ -370,7 +371,7 @@ async def test_gemini_service_logs_full_request_context(
     assert any("hello world from gemini" in record.message for record in caplog.records)
     assert any("system context" in record.message for record in caplog.records)
     assert any("base system instruction" in record.message for record in caplog.records)
-    assert any('"name": "memory.search"' in record.message for record in caplog.records)
+    assert any('"name": "memory.read"' in record.message for record in caplog.records)
     assert any("Gemini response accepted:" in record.message for record in caplog.records)
 
 
@@ -455,8 +456,8 @@ async def test_gpt_service_logs_full_request_context(
             system_instruction="base system instruction",
             tool_definitions=[
                 ToolDefinition(
-                    name="memory.search",
-                    description="Search memory.",
+                    name="memory.read",
+                    description="Read memory.",
                     arguments_schema={"type": "object"},
                     result_schema={"type": "object"},
                     capability_scope=["memory"],
@@ -472,4 +473,4 @@ async def test_gpt_service_logs_full_request_context(
     assert any("hello world from openai" in record.message for record in caplog.records)
     assert any("system context" in record.message for record in caplog.records)
     assert any("base system instruction" in record.message for record in caplog.records)
-    assert any('"name": "memory.search"' in record.message for record in caplog.records)
+    assert any('"name": "memory.read"' in record.message for record in caplog.records)

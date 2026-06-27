@@ -14,7 +14,7 @@ agentic chat application foundation です。
 
 - Discord DM と LINE webhook の入力を受ける chatbot
 - LLM が tool call を提案し、アプリケーション側で検証して実行する agentic workflow
-- Web search や memory search の結果を短期 context として再推論へ戻す応答生成
+- Web search や memory.read の結果を短期 context として再推論へ戻す応答生成
 - SQL raw chat log と Markdown long-term memory を分離した memory system
 - Discord / LINE / API / Worker を別プロセスとして運用できる構成
 
@@ -58,7 +58,7 @@ tool call を検証して `chat.tool.requested` を発行します。
 Worker は `HandleToolExecutionHandler` を通じて `GenericToolExecutor` を呼び、
 実行結果を `chat.tool.completed` として戻します。
 
-`web_search` と `memory.search` の結果は `tool_call_id` をキーに短期 store へ保存され、
+`web_search` と `memory.read` の結果は `tool_call_id` をキーに短期 store へ保存され、
 次の `RunAgentTurnQuery` で再推論へ投入されます。
 
 ## Memory
@@ -68,7 +68,11 @@ Memory は raw chat log と long-term memory を分けて扱います。
 - SQL database: raw chat log の source of truth
 - Markdown memory: Profile、Timeline summary、Entity などの抽象 memory
 - SQLite metadata / index: 再構築可能な search projection
-- Redis short-term store: tool call と retrieved context の一時状態
+- Redis short-term store: tool call と tool result の一時状態
+
+現行の read path は skills-like な manifest 方式です。Agent turn では compact な
+`memory_id + 1行概要` を system context に注入し、詳細が必要になったときだけ
+`memory.read(memory_id)` で本文を取り出します。
 
 現行実装では、`memory.write_candidate` が raw Timeline Markdown を書く経路も残っています。
 これは移行中の動作であり、raw chat の正本は SQL です。

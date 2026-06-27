@@ -38,6 +38,7 @@ from app.infrastructure.memory.markdown import (
     MemoryMarkdownError,
     front_matter_string,
     front_matter_string_list,
+    front_matter_string_or_none,
 )
 
 
@@ -114,30 +115,12 @@ async def _consolidate_chat_logs_into_sections(
     agent_profile_service: IAgentProfileService,
 ) -> tuple[list[SectionConsolidationResult], bool]:
     profile_bundle = agent_profile_service.load_agent_profile_bundle()
-    request = MemorySemanticExtractionRequest(
+    request = _build_extraction_request(
+        store,
+        raw_logs,
         user_id=user_id,
-        day=day.isoformat(),
-        raw_logs=[
-            MemorySleepChatLog(
-                id=raw_log.id,
-                user_id=raw_log.user_id,
-                role=raw_log.role,
-                chat_type=raw_log.chat_type,
-                content=_raw_chat_log_text(raw_log),
-                occurred_at=_raw_chat_log_observed_at(raw_log) or reference_time,
-            )
-            for raw_log in raw_logs
-            if raw_log.created_at is not None
-            and _as_utc(raw_log.created_at).date() == day
-        ],
-        existing_profile_summary=None,
-        existing_entity_labels=_existing_entity_labels(store, user_id=user_id),
-        existing_timeline_summaries=_recent_timeline_summaries(
-            store,
-            user_id=user_id,
-            before_day=day,
-            limit_days=3,
-        ),
+        day=day,
+        reference_time=reference_time,
     )
     extraction_result = await semantic_extraction_service.extract_memory_updates(
         request
@@ -157,35 +140,76 @@ async def _consolidate_chat_logs_into_sections(
 
     results: list[SectionConsolidationResult] = []
     wrote_entity_patches = False
+    raw_log_ids = _unique_strings(raw_log.id for raw_log in request.raw_logs)
     for entity_patch in result.entity_patches:
         _write_entity_patch(
             store,
             entity_patch=entity_patch,
-            source_chat_ids=_unique_strings(
-                [raw_log.id for raw_log in request.raw_logs]
-            ),
+            source_chat_ids=raw_log_ids,
             reference_time=reference_time,
             profile_bundle=profile_bundle,
         )
         wrote_entity_patches = True
 
+    if not section_patches:
+        return results, wrote_entity_patches
+
+    existing_timeline_paths = set(store.iter_timeline_paths(user_id))
+    observed_at = _latest_raw_chat_log_observed_at(raw_logs)
+    updated_at = reference_time.isoformat()
     for section_patch in section_patches:
         section_result = _write_section_timeline(
             store,
             section_patch=section_patch,
             raw_logs=request.raw_logs,
             reference_time=reference_time,
+            existing_timeline_paths=existing_timeline_paths,
         )
         _update_entity_references(
             store,
             user_id=user_id,
             entity_ids=section_result.entity_ids,
             timeline_id=section_patch.id,
-            observed_at=_latest_raw_chat_log_observed_at(raw_logs),
-            updated_at=reference_time.isoformat(),
+            observed_at=observed_at,
+            updated_at=updated_at,
         )
         results.append(section_result)
     return results, wrote_entity_patches
+
+
+def _build_extraction_request(
+    store: IMemoryStore,
+    raw_logs: list[RawChatLog],
+    *,
+    user_id: str,
+    day: date,
+    reference_time: datetime,
+) -> MemorySemanticExtractionRequest:
+    filtered_raw_logs = [
+        MemorySleepChatLog(
+            id=raw_log.id,
+            user_id=raw_log.user_id,
+            role=raw_log.role,
+            chat_type=raw_log.chat_type,
+            content=_raw_chat_log_text(raw_log),
+            occurred_at=_raw_chat_log_observed_at(raw_log) or reference_time,
+        )
+        for raw_log in raw_logs
+        if raw_log.created_at is not None and _as_utc(raw_log.created_at).date() == day
+    ]
+    return MemorySemanticExtractionRequest(
+        user_id=user_id,
+        day=day.isoformat(),
+        raw_logs=filtered_raw_logs,
+        existing_profile_summary=None,
+        existing_entity_labels=_existing_entity_labels(store, user_id=user_id),
+        existing_timeline_summaries=_recent_timeline_summaries(
+            store,
+            user_id=user_id,
+            before_day=day,
+            limit_days=3,
+        ),
+    )
 
 
 def _write_entity_patch(
@@ -362,34 +386,62 @@ def _write_section_timeline(
     section_patch: MemoryTimelineSectionPatch,
     raw_logs: list[MemorySleepChatLog],
     reference_time: datetime,
+    existing_timeline_paths: set[Path] | None = None,
 ) -> SectionConsolidationResult:
     day = datetime.fromisoformat(section_patch.day).date()
+    summary_of = _unique_strings(raw_log.id for raw_log in raw_logs)
     section_path = store.section_timeline_path(
         user_id=section_patch.user_id,
         day=day,
         section_slug=section_patch.section_slug,
     )
-    existing_section = _read_existing_section(
+    existing_section_match = _find_existing_section_by_source_ids(
         store,
-        section_path,
         user_id=section_patch.user_id,
+        day=day,
+        source_chat_ids=summary_of,
+        candidate_paths=existing_timeline_paths,
     )
-    summary_of = _unique_strings(raw_log.id for raw_log in raw_logs)
+    if existing_section_match is None:
+        existing_section = _read_existing_section(
+            store,
+            section_path,
+            user_id=section_patch.user_id,
+        )
+        resolved_section_id = section_patch.id
+        resolved_section_slug = section_patch.section_slug
+        resolved_title = section_patch.title
+    else:
+        section_path, existing_section = existing_section_match
+        existing_front_matter = existing_section.front_matter
+        resolved_section_id = front_matter_string(
+            existing_front_matter.get("id"),
+            default=section_patch.id,
+        )
+        resolved_section_slug = front_matter_string(
+            existing_front_matter.get("section_slug"),
+            default=section_patch.section_slug,
+        )
+        resolved_title = front_matter_string(
+            existing_front_matter.get("section_title"),
+            default=section_patch.title,
+        )
     body = _build_semantic_section_body(
         day=day,
-        title=section_patch.title,
+        title=resolved_title,
         summary=section_patch.summary,
     )
     entity_ids = _unique_strings(section_patch.entity_ids)
     front_matter = _section_front_matter(
         existing_section,
         user_id=section_patch.user_id,
-        section_id=section_patch.id,
+        section_id=resolved_section_id,
         day=day,
-        section_slug=section_patch.section_slug,
-        title=section_patch.title,
+        section_slug=resolved_section_slug,
+        title=resolved_title,
         summary_of=summary_of,
         entity_ids=entity_ids,
+        summary=section_patch.summary,
         content=body,
         now=reference_time,
     )
@@ -513,6 +565,14 @@ def _build_semantic_section_body(
     return "\n".join(lines)
 
 
+def _section_manifest_summary(summary: MemorySectionSummary) -> str:
+    parts = [
+        summary.topic.strip(),
+        summary.outcome.strip(),
+    ]
+    return " | ".join(part for part in parts if part)
+
+
 def _recent_timeline_summaries(
     store: IMemoryStore,
     *,
@@ -590,6 +650,45 @@ def _read_existing_section(
     )
 
 
+def _find_existing_section_by_source_ids(
+    store: IMemoryStore,
+    *,
+    user_id: str,
+    day: date,
+    source_chat_ids: list[str],
+    candidate_paths: set[Path] | None = None,
+) -> tuple[Path, MemoryMarkdownDocument] | None:
+    if not source_chat_ids:
+        return None
+    expected_source_ids = set(source_chat_ids)
+    paths = sorted(candidate_paths) if candidate_paths is not None else store.iter_timeline_paths(user_id)
+    for path in paths:
+        try:
+            document = store.read_document(
+                path,
+                expected_memory_type="timeline",
+                expected_user_id=user_id,
+            )
+        except MemoryMarkdownError:
+            continue
+        front_matter = document.front_matter
+        if front_matter.get("timeline_type") != "section_summary":
+            continue
+        if _front_matter_day(front_matter.get("occurred_at")) != day:
+            continue
+        existing_source_ids = set(_section_source_chat_ids(front_matter))
+        if existing_source_ids == expected_source_ids:
+            return path, document
+    return None
+
+
+def _section_source_chat_ids(front_matter: Mapping[str, object]) -> list[str]:
+    source_chat_ids = front_matter_string_list(front_matter.get("source_chat_ids"))
+    if source_chat_ids:
+        return source_chat_ids
+    return front_matter_string_list(front_matter.get("summary_of"))
+
+
 def _section_front_matter(
     existing_section: MemoryMarkdownDocument | None,
     *,
@@ -600,6 +699,7 @@ def _section_front_matter(
     title: str,
     summary_of: list[str],
     entity_ids: list[str],
+    summary: MemorySectionSummary,
     content: str,
     now: datetime,
 ) -> dict[str, object]:
@@ -610,14 +710,21 @@ def _section_front_matter(
         existing_front_matter.get("created_at"),
         default=now.isoformat(),
     )
+    memory_id = f"timeline:{section_id}"
+    manifest_summary = front_matter_string_or_none(
+        existing_front_matter.get("manifest_summary")
+    ) or _section_manifest_summary(summary)
     return {
         "schema_version": 1,
         "memory_type": "timeline",
         "id": section_id,
+        "memory_id": memory_id,
         "user_id": user_id,
         "timeline_type": "section_summary",
         "kind": "summary",
         "content": content,
+        "manifest_title": title,
+        "manifest_summary": manifest_summary,
         "occurred_at": datetime.combine(day, time.min, tzinfo=UTC).isoformat(),
         "source": "consolidation",
         "entity_ids": entity_ids,

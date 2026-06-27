@@ -7,15 +7,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from flow_med import Request, RequestHandler
-from flow_res import Err, Ok, Result
+from flow_res import Err, Ok, Result, is_err
 from injector import inject
 
 from app.contracts.ports.memory_consolidation import IMemoryConsolidationService
 from app.contracts.ports.memory_store import IMemoryStore
+from app.domain.queries.memory_sleep_query import IMemorySleepQuery
 from app.domain.repositories import IUnitOfWork
-from app.infrastructure.queries.memory_sleep_query_service import (
-    MemorySleepQueryService,
-)
 from app.usecases.result import ErrorType, UseCaseError
 
 logger = logging.getLogger(__name__)
@@ -49,7 +47,7 @@ class RunMemorySleepHandler(
         memory_store: IMemoryStore,
         uow: IUnitOfWork,
         memory_consolidation_service: IMemoryConsolidationService,
-        memory_sleep_query_service: MemorySleepQueryService,
+        memory_sleep_query_service: IMemorySleepQuery,
     ) -> None:
         self._memory_store = memory_store
         self._uow = uow
@@ -84,8 +82,8 @@ class RunMemorySleepHandler(
                 )
                 consolidated_count = 0
                 for target in targets:
-                    consolidated_count += (
-                        await self._memory_consolidation_service.consolidate_chat_logs(
+                    consolidated_count += await (
+                        self._memory_consolidation_service.consolidate_chat_logs(
                             self._memory_store,
                             user_id=target.user_id,
                             day=target.day,
@@ -93,6 +91,18 @@ class RunMemorySleepHandler(
                             reference_time=reference_time,
                         )
                     )
+                    source_repository = (
+                        self._uow.GetMemoryConsolidatedChatSourceRepository()
+                    )
+                    mark_result = await source_repository.mark_consolidated(
+                        [raw_log.id for raw_log in target.raw_logs],
+                        consolidated_at=reference_time,
+                    )
+                    if is_err(mark_result):
+                        raise RuntimeError(mark_result.error.message)
+                    commit_result = await self._uow.commit()
+                    if is_err(commit_result):
+                        raise RuntimeError(commit_result.error.message)
                 logger.info(
                     "Memory sleep run completed: consolidated_count=%s",
                     consolidated_count,

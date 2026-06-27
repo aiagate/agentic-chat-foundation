@@ -47,7 +47,7 @@
 検索は長期記憶 retrieval とは別の経路で扱う。
 
 - 長期記憶 retrieval は `IMemoryService` の責務。
-- 外部検索結果の受け渡しは `tool_call_id` をキーにした短期 retrieved context state の責務。
+- 外部検索結果の受け渡しは `tool_call_id` をキーにした短期 tool result state の責務。
 - 検索結果は raw のまま Markdown に昇格させない。
 - 長期記憶に入れるのは、検索結果から抽出・要約された durable fact のみである。
 

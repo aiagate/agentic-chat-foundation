@@ -2,25 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 
 from flow_res import Result, is_err
 
+from app.domain.queries.memory_sleep_query import (
+    IMemorySleepQuery,
+    MemorySleepTarget,
+)
 from app.domain.queries.raw_chat_log_query import IRawChatLogQuery, RawChatLog
 from app.domain.value_objects.chat_type import ChatType
 
 
-@dataclass(frozen=True, slots=True)
-class MemorySleepTarget:
-    """One user/day raw chat log batch selected for memory sleep."""
-
-    user_id: str
-    day: date
-    raw_logs: list[RawChatLog]
-
-
-class MemorySleepQueryService:
+class MemorySleepQueryService(IMemorySleepQuery):
     """Resolve pending memory sleep targets from raw chat logs."""
 
     async def list_pending_targets(

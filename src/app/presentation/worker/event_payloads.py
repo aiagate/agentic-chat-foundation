@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from typing import Literal
 
 from pydantic import BaseModel, ValidationError
 
 from app.contracts.messages.agentic import AgentEnvelope
-from app.domain.value_objects.chat_type import ChatType
+from app.contracts.messages.chat_type import ChatType
 
 logger = logging.getLogger(__name__)
 
@@ -87,11 +88,24 @@ class ChatToolCompletedPayload(AgentEnvelope):
     user_id: str | None
     status: str
     tool_name: str
+    continuation: Literal["reenter", "terminal"]
     result: dict[str, object] | None = None
     error: str | None = None
     error_code: str | None = None
     guild_id: str | None = None
     channel_id: str | None = None
+
+
+class AgentTurnRequestedPayload(AgentEnvelope):
+    """Validated payload for `chat.agent_turn.requested`."""
+
+    chat_id: str
+    user_id: str
+    chat_type: ChatType
+    guild_id: str
+    channel_id: str
+    source_request_id: str | None = None
+    tool_failure_context: str | None = None
 
 
 class AppErrorDetectedPayload(AgentEnvelope):

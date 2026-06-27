@@ -1,5 +1,6 @@
 """Worker event handler registrations."""
 
+from app.presentation.worker.handlers.agent_turn_handlers import on_agent_turn_requested
 from app.presentation.worker.handlers.app_error_handlers import on_app_error_detected
 from app.presentation.worker.handlers.chat_reply_handlers import (
     on_discord_chat_saved,
@@ -16,6 +17,7 @@ from app.presentation.worker.handlers.user_handlers import on_user_created
 
 __all__ = [
     "on_app_error_detected",
+    "on_agent_turn_requested",
     "on_chat_tool_completed",
     "on_chat_tool_requested",
     "on_discord_chat_saved",

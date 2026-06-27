@@ -128,3 +128,32 @@ async def test_raw_chat_log_query_lists_distinct_user_ids(
         user_ids = result.value
 
         assert user_ids == ["u1", "u2"]
+
+
+@pytest.mark.anyio
+async def test_raw_chat_log_query_excludes_consolidated_sources(
+    uow: IUnitOfWork,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Memory sleep must not select chat rows already processed."""
+
+    await _seed_raw_chat_logs(session_factory)
+    async with uow:
+        mark_result = await (
+            uow.GetMemoryConsolidatedChatSourceRepository().mark_consolidated(
+                ["01J0RAWCHAT000000000000001"],
+                consolidated_at=datetime(2026, 5, 21, 3, 0, tzinfo=UTC),
+            )
+        )
+        assert is_ok(mark_result)
+        await uow.commit()
+
+    async with uow:
+        result = await uow.GetRawChatLogQuery().get_memory_sleep_source_items(
+            "u1",
+            ChatType.DISCORD,
+            limit=10,
+        )
+
+    assert is_ok(result)
+    assert [item.id for item in result.value] == ["01J0RAWCHAT000000000000002"]

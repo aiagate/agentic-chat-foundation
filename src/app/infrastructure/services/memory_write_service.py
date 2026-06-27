@@ -103,14 +103,19 @@ class FilesystemMemoryWriteService(IMemoryWriteService):
                 occurred_at=entry_at,
                 role=role,
             )
+            raw_id = path.stem
+            memory_id = f"timeline:{raw_id}"
             front_matter: dict[str, object] = {
                 "schema_version": 1,
                 "memory_type": "timeline",
-                "id": path.stem,
+                "id": raw_id,
+                "memory_id": memory_id,
                 "user_id": user_id,
                 "timeline_type": "raw",
                 "kind": role,
                 "content": content,
+                "manifest_title": _timeline_manifest_title(content=content, role=role),
+                "manifest_summary": _timeline_manifest_summary(content),
                 "occurred_at": entry_at.isoformat(),
                 "source": "chat",
                 "entity_ids": [],
@@ -201,3 +206,25 @@ def _timeline_body(role: str, content: str, metadata: dict[str, str]) -> str:
         lines.append("## Metadata")
         lines.extend(f"- {key}: {value}" for key, value in metadata.items())
     return "\n".join(lines)
+
+
+def _timeline_manifest_title(*, content: str, role: str) -> str:
+    excerpt = _one_line_excerpt(content, limit=48)
+    if excerpt:
+        return excerpt
+    return role
+
+
+def _timeline_manifest_summary(content: str) -> str:
+    return _one_line_excerpt(content)
+
+
+def _one_line_excerpt(value: str, *, limit: int = 96) -> str:
+    compact = " ".join(
+        line.strip("#*- ").strip()
+        for line in value.splitlines()
+        if line.strip()
+    ).strip()
+    if len(compact) <= limit:
+        return compact
+    return f"{compact[: limit - 3].rstrip()}..."

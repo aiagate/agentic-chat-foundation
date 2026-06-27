@@ -5,11 +5,12 @@ from app.contracts.messages import (
     CHAT_TOOL_REQUESTED_TOPIC,
     AgentEnvelope,
     GeneratedContent,
-    RetrievedContext,
     SearchToolArguments,
     ToolCall,
+    ToolResultContext,
     build_chat_tool_completed_payload,
     build_chat_tool_requested_payload,
+    normalize_reply_contents,
 )
 
 
@@ -25,13 +26,27 @@ def test_search_tool_arguments_shape() -> None:
     assert arguments.source_request_id == "req-1"
 
 
-def test_retrieved_context_uses_tool_call_id() -> None:
-    context = RetrievedContext(
+def test_reply_contents_preserve_message_units_and_line_breaks() -> None:
+    arguments = {
+        "contents": [
+            "first message",
+            "second message\nwith a paragraph line break",
+        ]
+    }
+
+    assert normalize_reply_contents(arguments) == arguments["contents"]
+
+
+def test_reply_contents_require_the_plural_argument() -> None:
+    assert normalize_reply_contents({"content": "legacy message"}) is None
+
+
+def test_tool_result_context_uses_tool_call_id() -> None:
+    context = ToolResultContext(
         tool_call_id="tool-1",
         character_id="reina",
-        query="ollama web search",
         tool_name="web_search",
-        items=[],
+        status="ok",
         rendered_text="## Retrieved Context\n- example",
     )
 
@@ -55,13 +70,11 @@ def test_generated_content_uses_tool_calls_as_the_only_tool_request_shape() -> N
                     "max_results": 3,
                     "source_request_id": "req-2",
                 },
-                user_message="ちょっと検索してみます",
             ),
             ToolCall(
                 character_id="reina",
-                tool_name="memory.search",
-                arguments={"query": "memory lookup"},
-                user_message="memory lookup",
+                tool_name="memory.read",
+                arguments={"memory_id": "entity:memory-lookup"},
             ),
         ],
     )
@@ -69,16 +82,16 @@ def test_generated_content_uses_tool_calls_as_the_only_tool_request_shape() -> N
     assert len(content.tool_calls) == 2
     assert content.tool_calls[0].tool_call_id == "tool-2"
     assert content.tool_calls[0].tool_name == "web_search"
-    assert content.tool_calls[1].tool_name == "memory.search"
+    assert content.tool_calls[1].tool_name == "memory.read"
 
 
 def test_generated_content_normalizes_legacy_tool_call_arrays() -> None:
     payload = [
         {
             "id": "call_1",
-            "name": "line.reply",
+            "name": "line.send",
             "arguments": {
-                "content": "こんにちは。",
+                "contents": ["こんにちは。"],
             },
         }
     ]
@@ -88,9 +101,8 @@ def test_generated_content_normalizes_legacy_tool_call_arrays() -> None:
     assert content.contents == []
     assert len(content.tool_calls) == 1
     assert content.tool_calls[0].tool_call_id == "call_1"
-    assert content.tool_calls[0].tool_name == "line.reply"
-    assert content.tool_calls[0].arguments == {"content": "こんにちは。"}
-    assert content.tool_calls[0].user_message == "こんにちは。"
+    assert content.tool_calls[0].tool_name == "line.send"
+    assert content.tool_calls[0].arguments == {"contents": ["こんにちは。"]}
 
 
 def test_generated_content_normalizes_single_item_wrapper_with_tool_calls() -> None:
@@ -100,9 +112,9 @@ def test_generated_content_normalizes_single_item_wrapper_with_tool_calls() -> N
             "tool_calls": [
                 {
                     "id": "call_1",
-                    "name": "memory.search",
+                    "name": "memory.read",
                     "arguments": {
-                        "query": "memory lookup",
+                        "memory_id": "entity:memory-lookup",
                     },
                 }
             ],
@@ -114,8 +126,7 @@ def test_generated_content_normalizes_single_item_wrapper_with_tool_calls() -> N
     assert content.contents == []
     assert len(content.tool_calls) == 1
     assert content.tool_calls[0].tool_call_id == "call_1"
-    assert content.tool_calls[0].tool_name == "memory.search"
-    assert content.tool_calls[0].user_message == "memory lookup"
+    assert content.tool_calls[0].tool_name == "memory.read"
 
 
 def test_generated_content_normalizes_scalar_contents_into_a_list() -> None:
@@ -160,6 +171,7 @@ def test_generic_tool_payload_builders_merge_agent_metadata() -> None:
         user_id="user-1",
         status="ok",
         tool_name="web_search",
+        continuation="reenter",
         result={"tool_call_id": "tool-3", "retrieved_context": True},
         guild_id="DM",
         channel_id="123",
@@ -170,7 +182,6 @@ def test_generic_tool_payload_builders_merge_agent_metadata() -> None:
     assert requested_payload.get("character_id") == "reina"
     assert requested_payload.get("tool_call_id") == "tool-3"
     assert "arguments" not in requested_payload
-    assert "user_message" not in requested_payload
     assert completed_payload["status"] == "ok"
     result = completed_payload.get("result")
     assert result is not None

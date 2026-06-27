@@ -4,16 +4,19 @@ import logging
 from typing import Any, Literal, cast
 
 from flow_res import Err, Ok, Result
-from sqlalchemy import desc, select
+from sqlalchemy import desc, exists, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.contracts.messages.chat_history import ChatHistoryItem
+from app.contracts.messages.chat_history import ChatHistoryItem, ChatHistoryWindow
 from app.domain.queries.chat_history_query import IChatHistoryQuery
 from app.domain.repositories.interfaces import RepositoryError, RepositoryErrorType
 from app.domain.value_objects.chat_type import ChatType
 from app.domain.value_objects.message_content import render_message_content_text
 from app.infrastructure.orm_models.chat_orm import ChatORM
+from app.infrastructure.orm_models.memory_consolidated_chat_source_orm import (
+    MemoryConsolidatedChatSourceORM,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +34,7 @@ class SQLAlchemyChatHistoryQuery(IChatHistoryQuery):
         guild_id: str | None = None,
         channel_id: str | None = None,
         limit: int = 20,
-    ) -> Result[list[ChatHistoryItem], RepositoryError]:
+    ) -> Result[ChatHistoryWindow, RepositoryError]:
         """Get recent chat history for the given platform."""
         try:
             table = cast(Any, ChatORM).__table__
@@ -49,7 +52,12 @@ class SQLAlchemyChatHistoryQuery(IChatHistoryQuery):
 
             statement = (
                 select(ChatORM)
-                .where(*conditions)
+                .where(
+                    *conditions,
+                    ~exists().where(
+                        MemoryConsolidatedChatSourceORM.chat_id == table.c.id
+                    ),
+                )
                 .order_by(desc(table.c.created_at), desc(table.c.id))
                 .limit(limit)
             )
@@ -59,7 +67,19 @@ class SQLAlchemyChatHistoryQuery(IChatHistoryQuery):
             history_items = [
                 _to_history_item(item) for item in orm_items if item.id is not None
             ]
-            return Ok(history_items)
+            boundary_statement = select(func.max(table.c.created_at)).where(
+                *conditions,
+                exists().where(
+                    MemoryConsolidatedChatSourceORM.chat_id == table.c.id
+                ),
+            )
+            boundary_result = await self._session.execute(boundary_statement)
+            return Ok(
+                ChatHistoryWindow(
+                    items=history_items,
+                    memory_boundary_at=boundary_result.scalar_one_or_none(),
+                )
+            )
         except SQLAlchemyError as e:
             logger.exception("Database error occurred in chat history lookup")
             return Err(

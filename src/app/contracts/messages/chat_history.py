@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.value_objects.chat_type import ChatType
+from app.contracts.messages.chat_type import ChatType
 
 
 class ChatHistoryItem(BaseModel):
@@ -29,3 +29,12 @@ class ChatHistoryItem(BaseModel):
         default=None,
         description="Observed timestamp.",
     )
+
+
+class ChatHistoryWindow(BaseModel):
+    """Recent unconsolidated chat history and its memory boundary."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[ChatHistoryItem] = Field(default_factory=list)
+    memory_boundary_at: datetime | None = None

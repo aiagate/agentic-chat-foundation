@@ -38,14 +38,9 @@ def _bundle() -> AgentProfileBundle:
     return AgentProfileBundle(
         profile=MemoryProfile(
             user_id="ai",
-            display_name="Jon Due",
-            summary="A calm host persona.",
-            traits=["calm", "rational"],
-            preferences=["quiet places"],
         ),
         character=CharacterDefinition(
             character_id="jondue",
-            display_name="Jon Due",
             relationship_entity_id="relationship:jondue",
             relationship_entity_label="Relationship with Jon Due",
         ),
@@ -56,16 +51,9 @@ def _bundle() -> AgentProfileBundle:
                 "- test persona",
             ]
         ),
-        communication_style=("Speak naturally in English",),
-        known_constraints=("Do not mention being an AI",),
-        atmosphere=("A quiet evening with city lights in the distance.",),
-        behavior=("Anticipate the other person's intent first.",),
         relationship_entity_id="relationship:jondue",
         relationship_entity_label="Relationship with Jon Due",
         relationship_entity_type="relationship",
         relationship_tag="agent-growth",
         relationship_defaults=RelationshipDefaults(),
-        relationship=("Minimal self-disclosure",),
-        fallback=("Choose something seasonal and quiet",),
-        memory_reading_rules=("Bundle is read from memory files.",),
     )

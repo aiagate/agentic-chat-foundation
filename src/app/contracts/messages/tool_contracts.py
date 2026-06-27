@@ -11,7 +11,7 @@ from app.contracts.messages.agentic import AgentEnvelope
 
 ToolSideEffect = Literal["none", "read", "write", "send_message"]
 ToolExecutionStatus = Literal["ok", "error"]
-ToolName = Literal["web_search", "memory.search"]
+ToolContinuation = Literal["reenter", "terminal"]
 ToolArguments = dict[str, Any]
 
 
@@ -74,10 +74,6 @@ class ToolCall(AgentEnvelope):
         default_factory=dict,
         description="Tool arguments encoded as JSON-compatible data.",
     )
-    user_message: str = Field(
-        default="",
-        description="Message to surface while the tool runs.",
-    )
 
 
 class ToolExecutionResult(AgentEnvelope):
@@ -123,3 +119,17 @@ def render_tool_definitions(tool_definitions: list[ToolDefinition]) -> str:
             json.dumps(payload, ensure_ascii=False, indent=2),
         ]
     )
+
+
+def normalize_reply_contents(arguments: ToolArguments) -> list[str] | None:
+    """Normalize a send-message tool payload into non-empty reply texts."""
+
+    contents = arguments.get("contents")
+    if isinstance(contents, list):
+        normalized = [
+            item.strip()
+            for item in contents
+            if isinstance(item, str) and item.strip()
+        ]
+        return normalized or None
+    return None

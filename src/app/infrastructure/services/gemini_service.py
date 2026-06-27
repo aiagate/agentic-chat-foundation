@@ -52,7 +52,7 @@ class GeminiService(IAIService):
 
     def __init__(self) -> None:
         api_key = os.getenv("GEMINI_API_KEY")
-        self._model = os.getenv("GEMINI_MODEL", "gemini-3.1-pro-preview")
+        self._model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
         self._client = genai.Client(api_key=api_key) if api_key else None
 
     async def generate_content(
@@ -197,7 +197,7 @@ def _serialize_gemini_contents(
                     {
                         "text": part.text,
                     }
-                    for part in message.parts
+                    for part in message.parts or []
                 ],
             }
         )

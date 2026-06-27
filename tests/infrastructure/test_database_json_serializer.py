@@ -1,5 +1,6 @@
 """Tests for database JSON serialization configuration."""
 
+import asyncio
 from typing import Any, cast
 
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -21,6 +22,7 @@ def test_init_db_disables_ascii_escaping_for_json() -> None:
     old_engine = database._engine
     old_session_factory = database._session_factory
     init_db("sqlite+aiosqlite:///:memory:")
+    new_engine = database._engine
 
     try:
         assert database._engine is not None
@@ -30,6 +32,8 @@ def test_init_db_disables_ascii_escaping_for_json() -> None:
     finally:
         database._engine = old_engine
         database._session_factory = old_session_factory
+        if new_engine is not None:
+            asyncio.run(new_engine.dispose())
 
 
 def test_sqlite_json_serializer_can_be_overridden() -> None:
@@ -40,6 +44,9 @@ def test_sqlite_json_serializer_can_be_overridden() -> None:
         json_serializer=_custom_serializer,
     )
 
-    dialect = cast(Any, engine.sync_engine.dialect)
-    assert dialect._json_serializer is not None
-    assert dialect._json_serializer({"text": "こんにちは"}) == "{}"
+    try:
+        dialect = cast(Any, engine.sync_engine.dialect)
+        assert dialect._json_serializer is not None
+        assert dialect._json_serializer({"text": "こんにちは"}) == "{}"
+    finally:
+        asyncio.run(engine.dispose())

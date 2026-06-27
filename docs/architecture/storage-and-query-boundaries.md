@@ -95,7 +95,7 @@
 - `MemoryIndexRepository` は `src/app/infrastructure/repositories/memory_index_repository.py` に置き、スキーマ詳細を知らない永続化境界にする。
 - `FilesystemMemoryIndex` は `src/app/infrastructure/queries/memory_index_query_service.py` に置き、検索と再構成のための読み取り・選定に集中する。
 - `MemorySleepQueryService` は `src/app/infrastructure/queries/memory_sleep_query_service.py` に置き、sleep 対象の選定に限定する。
-- `InMemoryRetrievedContextStore` と `InMemoryToolCallStore` は短期保存に限定する。
+- `InMemoryToolResultStore` と `InMemoryToolCallStore` は短期保存に限定する。
 - `FilesystemMemoryStore` は `src/app/infrastructure/memory/store.py` に置き、Markdown memory の低レベル I/O に限定する。
 
 ## レビュー基準

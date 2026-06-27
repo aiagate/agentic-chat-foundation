@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from flow_res import Err, Ok, Result
@@ -19,6 +20,9 @@ from app.infrastructure.queries.memory_index_query_service import (
     _stored_documents_for_scope,
     embed_memory_index_records,
     record_from_memory_index_document,
+)
+from app.infrastructure.repositories.memory_index_backup_repository import (
+    MemoryIndexBackupRepository,
 )
 from app.infrastructure.repositories.memory_index_repository import (
     MemoryIndexRepository,
@@ -77,12 +81,13 @@ class MemoryIndexMaintenanceService(IMemoryIndexMaintenance):
     async def _rebuild_scope_async(
         self, *, user_id: str | None
     ) -> Result[int, MemoryIndexError]:
-        records = await self._build_records_for_scope(user_id=user_id)
         session_factory = self._session_factory
         if session_factory is None:
             return Err(
                 MemoryIndexError("memory index session factory is not configured")
             )
+        await self._backup_scope_snapshot(user_id=user_id)
+        records = await self._build_records_for_scope(user_id=user_id)
         async with session_factory() as session:
             repository = MemoryIndexRepository(session)
             await repository.delete_scope(user_id)
@@ -93,18 +98,36 @@ class MemoryIndexMaintenanceService(IMemoryIndexMaintenance):
     async def _repair_scope_async(
         self, *, user_id: str | None
     ) -> Result[int, MemoryIndexError]:
-        records = await self._build_records_for_scope(user_id=user_id)
         session_factory = self._session_factory
         if session_factory is None:
             return Err(
                 MemoryIndexError("memory index session factory is not configured")
             )
+        await self._backup_scope_snapshot(user_id=user_id)
+        records = await self._build_records_for_scope(user_id=user_id)
         async with session_factory() as session:
             repository = MemoryIndexRepository(session)
             await repository.delete_scope(user_id)
             changed = await repository.upsert_records(records)
             await session.commit()
         return Ok(changed)
+
+    async def _backup_scope_snapshot(self, *, user_id: str | None) -> int:
+        session_factory = self._session_factory
+        if session_factory is None:
+            return 0
+        async with session_factory() as session:
+            repository = MemoryIndexRepository(session)
+            backup_repository = MemoryIndexBackupRepository(session)
+            records = await repository.list_records(user_id)
+            backed_up_at = datetime.now(UTC).isoformat()
+            changed = await backup_repository.replace_scope_snapshot(
+                records,
+                scope_user_id=user_id,
+                backed_up_at=backed_up_at,
+            )
+            await session.commit()
+            return changed
 
     async def _build_records_for_scope(
         self,

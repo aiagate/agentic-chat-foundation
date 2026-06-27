@@ -17,12 +17,14 @@ from app.contracts.messages.character_definition import (
     RelationshipDefaults,
 )
 from app.contracts.messages.chat_events import (
+    CHAT_AGENT_TURN_REQUESTED_TOPIC,
     CHAT_TOOL_COMPLETED_TOPIC,
     CHAT_TOOL_REQUESTED_TOPIC,
     DISCORD_CHAT_REPLY_READY_TOPIC,
     DISCORD_CHAT_SAVED_TOPIC,
     LINE_CHAT_REPLY_READY_TOPIC,
     LINE_CHAT_SAVED_TOPIC,
+    build_agent_turn_requested_payload,
     build_chat_tool_completed_payload,
     build_chat_tool_requested_payload,
     build_discord_chat_saved_payload,
@@ -30,16 +32,24 @@ from app.contracts.messages.chat_events import (
     build_reply_ready_payload,
     reply_topic_for,
 )
-from app.contracts.messages.chat_history import ChatHistoryItem
+from app.contracts.messages.chat_history import ChatHistoryItem, ChatHistoryWindow
+from app.contracts.messages.chat_type import ChatType
 from app.contracts.messages.conversation_context import (
     ConversationContext,
     render_conversation_context,
 )
 from app.contracts.messages.generated_content import GeneratedContent
+from app.contracts.messages.llm_request_context import (
+    LLMCurrentInput,
+    LLMRequestContext,
+    compose_system_instruction,
+)
 from app.contracts.messages.memory_context import (
     MemoryContextPack,
     MemoryEntity,
+    MemoryManifestItem,
     MemoryProfile,
+    MemoryReadResult,
     MemoryTimelineEntry,
 )
 from app.contracts.messages.memory_index import (
@@ -67,37 +77,41 @@ from app.contracts.messages.relationship_growth import (
     relationship_growth_stage_lines,
     resolve_relationship_stage,
 )
-from app.contracts.messages.retrieved_context import (
-    RetrievedContext,
-    RetrievedContextItem,
-)
 from app.contracts.messages.tool_contracts import (
     SearchToolArguments,
     ToolArguments,
     ToolCall,
+    ToolContinuation,
     ToolDefinition,
     ToolExecutionResult,
     ToolExecutionStatus,
-    ToolName,
     ToolSideEffect,
+    normalize_reply_contents,
 )
+from app.contracts.messages.tool_result_context import ToolResultContext
+from app.contracts.messages.web_search_result import WebSearchResultItem
 
 __all__ = [
     "AgentEnvelope",
     "AgentProfileBundle",
     "ConversationContext",
     "CharacterDefinition",
+    "ChatType",
     "RelationshipDefaults",
     "render_agent_persona_context",
     "render_conversation_context",
     "APP_ERROR_DETECTED_TOPIC",
     "AppErrorDetectedPayload",
     "ChatHistoryItem",
+    "ChatHistoryWindow",
     "CHAT_TOOL_COMPLETED_TOPIC",
+    "CHAT_AGENT_TURN_REQUESTED_TOPIC",
     "CHAT_TOOL_REQUESTED_TOPIC",
     "DISCORD_CHAT_REPLY_READY_TOPIC",
     "DISCORD_CHAT_SAVED_TOPIC",
     "GeneratedContent",
+    "LLMCurrentInput",
+    "LLMRequestContext",
     "LINE_CHAT_REPLY_READY_TOPIC",
     "LINE_CHAT_SAVED_TOPIC",
     "MemoryContextPack",
@@ -106,10 +120,12 @@ __all__ = [
     "MemorySearchFilters",
     "MemorySearchResult",
     "MemoryEntity",
+    "MemoryManifestItem",
     "MemoryEntityPatch",
     "MemoryEvidence",
     "MemoryProfile",
     "MemoryProfilePatch",
+    "MemoryReadResult",
     "MemoryTimelineEntry",
     "MemorySemanticExtractionRequest",
     "MemorySemanticExtractionResult",
@@ -120,24 +136,27 @@ __all__ = [
     "RELATIONSHIP_ENTITY_TYPE",
     "RELATIONSHIP_STAGES",
     "RelationshipStage",
-    "RetrievedContext",
-    "RetrievedContextItem",
     "ToolArguments",
     "ToolCall",
+    "ToolContinuation",
     "ToolDefinition",
     "ToolExecutionResult",
     "ToolExecutionStatus",
     "SearchToolArguments",
     "ToolSideEffect",
-    "ToolName",
+    "ToolResultContext",
+    "WebSearchResultItem",
     "build_app_error_detected_payload",
+    "build_agent_turn_requested_payload",
     "build_chat_tool_completed_payload",
     "build_chat_tool_requested_payload",
     "build_discord_chat_saved_payload",
     "build_line_chat_saved_payload",
     "build_reply_ready_payload",
     "clamp_relationship_score_increase",
+    "compose_system_instruction",
     "relationship_growth_stage_lines",
     "reply_topic_for",
+    "normalize_reply_contents",
     "resolve_relationship_stage",
 ]

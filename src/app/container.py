@@ -7,16 +7,10 @@ import injector
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.bootstrap.character_selection import resolve_active_character_id
-from app.contracts.messages.memory_index import (
-    MemoryIndexDocument,
-    MemorySearchFilters,
-    MemorySearchResult,
-)
 from app.contracts.ports.agent_profile_service import IAgentProfileService
 from app.contracts.ports.ai_service import IAIService
 from app.contracts.ports.event_bus import IEventBus
 from app.contracts.ports.memory_consolidation import IMemoryConsolidationService
-from app.contracts.ports.memory_index import IMemoryIndex
 from app.contracts.ports.memory_index_maintenance import IMemoryIndexMaintenance
 from app.contracts.ports.memory_semantic_extraction import (
     IMemorySemanticExtractionService,
@@ -24,17 +18,16 @@ from app.contracts.ports.memory_semantic_extraction import (
 from app.contracts.ports.memory_service import IMemoryService
 from app.contracts.ports.memory_store import IMemoryStore
 from app.contracts.ports.memory_write_service import IMemoryWriteService
-from app.contracts.ports.retrieved_context_store import IRetrievedContextStore
 from app.contracts.ports.tool_call_store import IToolCallStore
 from app.contracts.ports.tool_catalog import IToolCatalog
 from app.contracts.ports.tool_execution_lock import IToolExecutionLock
 from app.contracts.ports.tool_executor import IToolExecutor
+from app.contracts.ports.tool_result_store import IToolResultStore
 from app.contracts.ports.web_search_service import IWebSearchService
+from app.domain.queries.memory_sleep_query import IMemorySleepQuery
 from app.domain.repositories import IUnitOfWork
-from app.infrastructure.memory.embedding import GeminiEmbeddingService
 from app.infrastructure.memory.store import (
     FilesystemMemoryStore,
-    StoredMemoryDocument,
 )
 from app.infrastructure.messaging.in_memory_event_bus import InMemoryEventBus
 from app.infrastructure.messaging.postgres_event_bus import PostgresEventBus
@@ -45,7 +38,6 @@ from app.infrastructure.queries.memory_sleep_query_service import (
 )
 from app.infrastructure.services import (
     FilesystemAgentProfileService,
-    FilesystemMemoryIndex,
     FilesystemMemoryService,
     FilesystemMemoryWriteService,
     GeminiService,
@@ -58,10 +50,6 @@ from app.infrastructure.services import (
     OllamaWebSearchService,
     StaticToolCatalog,
 )
-from app.infrastructure.stores.retrieved_context_store import (
-    InMemoryRetrievedContextStore,
-    RedisRetrievedContextStore,
-)
 from app.infrastructure.stores.tool_call_store import (
     InMemoryToolCallStore,
     RedisToolCallStore,
@@ -69,6 +57,10 @@ from app.infrastructure.stores.tool_call_store import (
 from app.infrastructure.stores.tool_execution_lock import (
     InMemoryToolExecutionLock,
     RedisToolExecutionLock,
+)
+from app.infrastructure.stores.tool_result_store import (
+    InMemoryToolResultStore,
+    RedisToolResultStore,
 )
 from app.infrastructure.unit_of_work import SQLAlchemyUnitOfWork
 
@@ -142,11 +134,11 @@ class SearchModule(injector.Module):
 
     @injector.provider
     @injector.singleton
-    def provide_retrieved_context_store(self) -> IRetrievedContextStore:
-        """Provide the short-lived in-memory retrieved context store."""
+    def provide_tool_result_store(self) -> IToolResultStore:
+        """Provide the short-lived tool result store."""
         if os.getenv("REDIS_URL"):
-            return RedisRetrievedContextStore()
-        return InMemoryRetrievedContextStore()
+            return RedisToolResultStore()
+        return InMemoryToolResultStore()
 
     @injector.provider
     @injector.singleton
@@ -206,19 +198,6 @@ class MemoryModule(injector.Module):
 
     @injector.provider
     @injector.singleton
-    def provide_memory_index(
-        self,
-    ) -> IMemoryIndex[
-        StoredMemoryDocument,
-        MemoryIndexDocument,
-        MemorySearchResult,
-        MemorySearchFilters,
-    ]:
-        """Provide the persistent filesystem-backed memory index."""
-        return FilesystemMemoryIndex(embedding_service=GeminiEmbeddingService())
-
-    @injector.provider
-    @injector.singleton
     def provide_memory_index_maintenance(
         self,
         session_factory: async_sessionmaker[AsyncSession],
@@ -227,7 +206,6 @@ class MemoryModule(injector.Module):
         """Provide the memory index maintenance service."""
         return MemoryIndexMaintenanceService(
             session_factory=session_factory,
-            embedding_service=GeminiEmbeddingService(),
             character_id=character_id,
         )
 
@@ -271,7 +249,6 @@ class MemoryModule(injector.Module):
         filesystem_store = cast(FilesystemMemoryStore, memory_store)
         return FilesystemMemoryService(
             store=filesystem_store,
-            embedding_service=GeminiEmbeddingService(),
             agent_profile_service=agent_profile_service,
             character_id=character_id,
         )
@@ -296,22 +273,20 @@ class MemoryModule(injector.Module):
     @injector.singleton
     def provide_tool_executor(
         self,
-        event_bus: IEventBus,
-        retrieved_context_store: IRetrievedContextStore,
+        tool_result_store: IToolResultStore,
         memory_service: IMemoryService,
         memory_write_service: IMemoryWriteService,
     ) -> IToolExecutor:
         """Provide the generic tool executor adapter."""
         return GenericToolExecutor(
-            event_bus=event_bus,
-            retrieved_context_store=retrieved_context_store,
+            tool_result_store=tool_result_store,
             memory_service=memory_service,
             memory_write_service=memory_write_service,
         )
 
     @injector.provider
     @injector.singleton
-    def provide_memory_sleep_query_service(self) -> MemorySleepQueryService:
+    def provide_memory_sleep_query_service(self) -> IMemorySleepQuery:
         """Provide the query service for pending memory sleep targets."""
         return MemorySleepQueryService()
 

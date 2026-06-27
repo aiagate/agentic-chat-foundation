@@ -11,7 +11,7 @@ from app.presentation.worker.handlers.tool_handlers import (
     on_chat_tool_requested,
 )
 from app.usecases.agent.handle_tool_execution import HandleToolExecutionCommand
-from app.usecases.agent.run_agent_turn import RunAgentTurnQuery
+from app.usecases.agent.request_agent_turn import RequestAgentTurnCommand
 
 
 @pytest.mark.anyio
@@ -37,15 +37,16 @@ async def test_chat_tool_requested_dispatches_execution(
     send_async.assert_awaited_once()
     request = send_async.await_args.args[0]
     assert isinstance(request, HandleToolExecutionCommand)
-    assert request.tool_call_id == "tool-1"
+    assert request.agent_context is not None
+    assert request.agent_context.tool_call_id == "tool-1"
     assert request.tool_name == "web_search"
 
 
 @pytest.mark.anyio
-async def test_chat_tool_requested_dispatches_memory_search_execution(
+async def test_chat_tool_requested_dispatches_memory_read_execution(
     mocker: Any,
 ) -> None:
-    """Test that generic memory search tool requests dispatch execution."""
+    """Test that generic memory read tool requests dispatch execution."""
 
     send_async = cast(Any, AsyncMock(return_value=None))
     mocker.patch.object(Mediator, "send_async", send_async)
@@ -57,7 +58,7 @@ async def test_chat_tool_requested_dispatches_memory_search_execution(
             "chat_type": "DISCORD",
             "character_id": "shirasagi-reina",
             "tool_call_id": "tool-2",
-            "tool_name": "memory.search",
+            "tool_name": "memory.read",
         }
     )
 
@@ -65,7 +66,7 @@ async def test_chat_tool_requested_dispatches_memory_search_execution(
     request = send_async.await_args.args[0]
     assert isinstance(request, HandleToolExecutionCommand)
     assert request.tool_call_id == "tool-2"
-    assert request.tool_name == "memory.search"
+    assert request.tool_name == "memory.read"
 
 
 @pytest.mark.anyio
@@ -85,6 +86,7 @@ async def test_chat_tool_completed_dispatches_agent_runtime(
             "character_id": "shirasagi-reina",
             "status": "ok",
             "tool_name": "web_search",
+            "continuation": "reenter",
             "tool_call_id": "tool-1",
             "result": {
                 "tool_call_id": "tool-1",
@@ -96,8 +98,9 @@ async def test_chat_tool_completed_dispatches_agent_runtime(
 
     send_async.assert_awaited_once()
     request = send_async.await_args.args[0]
-    assert isinstance(request, RunAgentTurnQuery)
-    assert request.tool_call_id == "tool-1"
+    assert isinstance(request, RequestAgentTurnCommand)
+    assert request.agent_context is not None
+    assert request.agent_context.tool_call_id == "tool-1"
 
 
 @pytest.mark.anyio
@@ -116,7 +119,8 @@ async def test_chat_tool_completed_non_search_tool_does_not_reenter(
             "chat_type": "DISCORD",
             "character_id": "shirasagi-reina",
             "status": "ok",
-            "tool_name": "discord.reply",
+            "tool_name": "discord.send",
+            "continuation": "terminal",
             "result": {
                 "content_count": 1,
             },

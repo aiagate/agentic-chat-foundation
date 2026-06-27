@@ -4,13 +4,15 @@
 フローを示す。
 
 - LINE FastAPI process は webhook を受け取り、LINE 返信イベントも購読する。
-- Worker process は保存済み LINE メッセージイベントを購読し、`RunAgentTurnQuery` を起動する。
-- 生成処理は `RetrieveMemoryContextQuery` 経由で記憶コンテキストを取得する。
+- Worker process は保存済み LINE メッセージイベントを共通の `chat.agent_turn.requested` に変換する。
+- 生成処理は `RetrieveMemoryContextQuery` 経由で compact な memory manifest を取得し、
+  `system prompt` / `tool definitions` / `memory` / `recent history` / `current input`
+  に分けて LLM request context を組み立てる。
 - 検索が必要な場合も `chat.tool.requested` / `chat.tool.completed` を介する。
 - `chat.tool.requested` は `tool_call_id` と `tool_name` を持ち、実際の `ToolCall` は
   `IToolCallStore` 経由で Worker 側が取り出す。
-- retrieved context は `tool_call_id` をキーに短期 store へ保存し、再推論時に追加する。
-- retrieved context を返す tool call は 1 turn につき 1 件までに抑える。
+- tool result は `tool_call_id` をキーに短期 store へ保存し、再推論時に追加する。
+- 1 turn の tool call はすべて独立してルーティングする。
 - reply-ready payload は `contents` を一次情報とする。送信側は `contents` を正として扱い、
   `content` のフォールバックには依存しない。
 
@@ -44,18 +46,30 @@ sequenceDiagram
     API-->>LINE: OK
 
     Bus->>Worker: on_line_chat_saved(payload)
+    Worker->>Bus: publish chat.agent_turn.requested
+    Bus->>Worker: on_agent_turn_requested(payload)
     Worker->>Mediator: RunAgentTurnQuery(chat_type=LINE)
     Mediator->>Agent: handle(query)
     Agent->>RetrieveMemory: RetrieveMemoryContextQuery
-    RetrieveMemory->>Memory: retrieve(query, user_id)
+    RetrieveMemory->>Memory: build_context(user_id)
     Memory-->>RetrieveMemory: MemoryContextPack
-    Agent->>AI: generate_content(prompt, history, memory, tool_definitions)
+    Agent->>AI: generate_content(current_input, recent_history, system_prompt + memory, tool_definitions)
 
-    alt tool call なし
-        AI-->>Agent: GeneratedContent(contents)
+    alt contents あり
+        AI-->>Agent: GeneratedContent(contents, optional tool_calls)
         Agent->>DB: save assistant message + commit
         Agent->>Bus: publish chat.line.reply_ready(contents)
-    else web_search tool call あり
+    end
+    alt line.send tool call あり
+        AI-->>Agent: GeneratedContent(tool_calls)
+        Agent->>RouteTool: RouteToolCallsCommand
+        RouteTool->>Bus: publish chat.tool.requested
+        Bus->>Worker: on_chat_tool_requested(payload)
+        Worker->>Mediator: HandleToolExecutionCommand
+        Mediator->>DB: save assistant message + commit
+        Mediator->>Bus: publish chat.line.reply_ready(contents)
+        Mediator->>Bus: publish chat.tool.completed(status)
+    else non-send tool call あり
         AI-->>Agent: GeneratedContent(tool_calls)
         Agent->>RouteTool: RouteToolCallsCommand
         RouteTool->>Bus: publish chat.tool.requested
@@ -63,13 +77,16 @@ sequenceDiagram
         Worker->>Mediator: HandleToolExecutionCommand
         Mediator->>ToolExec: handle(command)
         ToolExec->>WebSearch: RunWebSearchCommand(tool_call_id)
-        WebSearch->>WebSearch: execute search + save RetrievedContext
+        WebSearch->>WebSearch: execute search
+        ToolExec->>ToolExec: save ToolResultContext
         ToolExec->>Bus: publish chat.tool.completed(tool_call_id, status)
         Bus->>Worker: on_chat_tool_completed(payload)
+        Worker->>Bus: publish chat.agent_turn.requested(tool_call_id)
+        Bus->>Worker: on_agent_turn_requested(payload)
         Worker->>Mediator: RunAgentTurnQuery(tool_call_id)
         Mediator->>Agent: handle(query)
-        Agent->>Agent: load retrieved context by tool_call_id
-        Agent->>AI: generate_content(prompt, history, memory + retrieved context)
+        Agent->>Agent: load tool result by tool_call_id
+        Agent->>AI: generate_content(tool_result, recent_history, system_prompt + memory, tool_definitions)
         AI-->>Agent: GeneratedContent(contents)
         Agent->>DB: save assistant message + commit
         Agent->>Bus: publish chat.line.reply_ready(contents)

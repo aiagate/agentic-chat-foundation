@@ -5,6 +5,11 @@ from __future__ import annotations
 from app.contracts.messages.tool_contracts import ToolDefinition
 from app.contracts.ports.tool_catalog import IToolCatalog
 
+_MESSAGE_CONTENTS_DESCRIPTION = (
+    "Response texts divided into natural conversational message units. "
+    "Each item is delivered as one separate message to the tool destination."
+)
+
 
 class StaticToolCatalog(IToolCatalog):
     """Stable tool definitions surfaced to the agent runtime."""
@@ -39,15 +44,15 @@ class StaticToolCatalog(IToolCatalog):
                 timeout_seconds=30,
                 max_calls_per_run=3,
             ),
-            "memory.search": ToolDefinition(
-                name="memory.search",
-                description="Search the user's long-term memory context.",
+            "memory.read": ToolDefinition(
+                name="memory.read",
+                description="Read one long-term memory item by memory_id.",
                 arguments_schema={
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string"},
+                        "memory_id": {"type": "string"},
                     },
-                    "required": ["query"],
+                    "required": ["memory_id"],
                     "additionalProperties": False,
                 },
                 result_schema={
@@ -94,22 +99,19 @@ class StaticToolCatalog(IToolCatalog):
                 timeout_seconds=20,
                 max_calls_per_run=2,
             ),
-            "line.reply": ToolDefinition(
-                name="line.reply",
-                description="Send a reply to the current LINE conversation.",
+            "line.send": ToolDefinition(
+                name="line.send",
+                description="Send messages to the current LINE conversation.",
                 arguments_schema={
                     "type": "object",
                     "properties": {
-                        "content": {"type": "string"},
                         "contents": {
                             "type": "array",
+                            "description": _MESSAGE_CONTENTS_DESCRIPTION,
                             "items": {"type": "string"},
                         },
                     },
-                    "anyOf": [
-                        {"required": ["content"]},
-                        {"required": ["contents"]},
-                    ],
+                    "required": ["contents"],
                     "additionalProperties": False,
                 },
                 result_schema={
@@ -125,22 +127,19 @@ class StaticToolCatalog(IToolCatalog):
                 timeout_seconds=15,
                 max_calls_per_run=1,
             ),
-            "discord.reply": ToolDefinition(
-                name="discord.reply",
-                description="Send a reply to the current Discord channel.",
+            "discord.send": ToolDefinition(
+                name="discord.send",
+                description="Send messages to the current Discord channel.",
                 arguments_schema={
                     "type": "object",
                     "properties": {
-                        "content": {"type": "string"},
                         "contents": {
                             "type": "array",
+                            "description": _MESSAGE_CONTENTS_DESCRIPTION,
                             "items": {"type": "string"},
                         },
                     },
-                    "anyOf": [
-                        {"required": ["content"]},
-                        {"required": ["contents"]},
-                    ],
+                    "required": ["contents"],
                     "additionalProperties": False,
                 },
                 result_schema={
@@ -152,40 +151,6 @@ class StaticToolCatalog(IToolCatalog):
                     "additionalProperties": True,
                 },
                 capability_scope=["message:send:discord"],
-                side_effect="send_message",
-                timeout_seconds=15,
-                max_calls_per_run=1,
-            ),
-            "discord.post_channel": ToolDefinition(
-                name="discord.post_channel",
-                description="Post a message to a specified Discord channel.",
-                arguments_schema={
-                    "type": "object",
-                    "properties": {
-                        "target_channel_id": {"type": "string"},
-                        "content": {"type": "string"},
-                        "contents": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
-                    },
-                    "required": ["target_channel_id"],
-                    "anyOf": [
-                        {"required": ["content"]},
-                        {"required": ["contents"]},
-                    ],
-                    "additionalProperties": False,
-                },
-                result_schema={
-                    "type": "object",
-                    "properties": {
-                        "channel_id": {"type": "string"},
-                        "content_count": {"type": "integer"},
-                    },
-                    "required": ["channel_id", "content_count"],
-                    "additionalProperties": True,
-                },
-                capability_scope=["message:post:discord"],
                 side_effect="send_message",
                 timeout_seconds=15,
                 max_calls_per_run=1,

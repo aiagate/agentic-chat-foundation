@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum, auto
 from typing import Any, overload
 
 from flow_res import Result
 
+from app.domain.aggregates.chat import Chat
 from app.domain.queries.chat_history_query import IChatHistoryQuery
 from app.domain.queries.raw_chat_log_query import IRawChatLogQuery
 
@@ -66,6 +68,36 @@ class IRepositoryWithId[T, K](IRepository[T], ABC):
     @abstractmethod
     async def get_by_id(self, id: K) -> Result[T, RepositoryError]:
         """ID でエンティティを取得する。"""
+        pass
+
+
+class IChatRecordRepository(ABC):
+    """チャット正本の書き込み契約。"""
+
+    @abstractmethod
+    async def add(
+        self,
+        chat: Chat,
+        *,
+        user_id: str,
+        role: str,
+    ) -> Result[Chat, RepositoryError]:
+        """チャットレコードを追加する。"""
+        pass
+
+
+class IMemoryConsolidatedChatSourceRepository(ABC):
+    """memory生成へ取り込まれたchat行のprojection書き込み契約。"""
+
+    @abstractmethod
+    async def mark_consolidated(
+        self,
+        chat_ids: list[str],
+        *,
+        consolidated_at: datetime,
+    ) -> Result[int, RepositoryError]:
+        """指定chat IDをmemory処理済みとして記録する。"""
+
         pass
 
 
@@ -132,6 +164,19 @@ class IUnitOfWork(ABC):
     @abstractmethod
     def GetRawChatLogQuery(self) -> IRawChatLogQuery:
         """生ログクエリを取得する。"""
+        pass
+
+    @abstractmethod
+    def GetChatRecordRepository(self) -> IChatRecordRepository:
+        """チャット正本の書き込みリポジトリを取得する。"""
+        pass
+
+    @abstractmethod
+    def GetMemoryConsolidatedChatSourceRepository(
+        self,
+    ) -> IMemoryConsolidatedChatSourceRepository:
+        """memory処理済みchat projectionのrepositoryを取得する。"""
+
         pass
 
     @abstractmethod

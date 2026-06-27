@@ -52,7 +52,7 @@
 - `FilesystemAgentProfileService` は、プロファイル束の読み込みサービスなので `Service` として妥当である。
 - `MemoryConsolidationService` は、抽出結果の反映というオーケストレーションを持つため `Service` として妥当である。
 - `GenericToolExecutor` は、tool ごとの実行先をまとめるアダプタなので `Service` として妥当である。
-- `InMemoryRetrievedContextStore` は `Service` ではなく `Store` とする。
+- `InMemoryToolResultStore` は `Service` ではなく `Store` とする。
 - `MemorySleepQueryService` は `Service` ではなく `Query` 側に置く。
 - `memory/store.py` や `markdown.py` のような低レベル I/O と変換関数は `Service` にしない。
 

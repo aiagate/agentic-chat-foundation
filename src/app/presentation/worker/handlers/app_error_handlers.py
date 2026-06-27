@@ -14,11 +14,13 @@ from app.presentation.worker.event_payloads import (
     parse_worker_event_payload,
 )
 from app.presentation.worker.registry import event_handler
-from app.usecases.agent.run_agent_turn import RunAgentTurnQuery
+from app.usecases.agent.request_agent_turn import RequestAgentTurnCommand
 
 logger = logging.getLogger(__name__)
 
 _INFERENCE_OPERATIONS = {
+    "HandleToolExecutionCommand",
+    "RequestAgentTurnCommand",
     "RetrieveMemoryContextQuery",
     "RunAgentTurnQuery",
 }
@@ -62,7 +64,7 @@ async def on_app_error_detected(payload: Mapping[str, object]) -> None:
         chat_type.to_primitive(),
     )
     await Mediator.send_async(
-        RunAgentTurnQuery(
+        RequestAgentTurnCommand(
             chat_id=chat_id,
             source_request_id=event.source_request_id or chat_id,
             guild_id=guild_id,
@@ -83,6 +85,5 @@ def _tool_failure_context(payload: AppErrorDetectedPayload) -> str:
     return (
         "Application error context: "
         f"{operation} failed with {error_code}: {message}. "
-        "Explain the failure briefly to the user and do not retry the failed "
-        "operation unless the user explicitly asks."
+        "Explain the available next step briefly."
     )

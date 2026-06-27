@@ -1,16 +1,16 @@
 """Worker handlers for saved chat events."""
 
 import logging
+import os
 from collections.abc import Mapping
 
 from flow_med import Mediator
 
-from app.bootstrap.character_selection import resolve_active_character_id
 from app.contracts.messages.chat_events import (
     DISCORD_CHAT_SAVED_TOPIC,
     LINE_CHAT_SAVED_TOPIC,
 )
-from app.domain.value_objects.chat_type import ChatType
+from app.contracts.messages.chat_type import ChatType
 from app.presentation.worker.event_payloads import (
     DiscordChatSavedPayload,
     LineChatSavedPayload,
@@ -18,9 +18,12 @@ from app.presentation.worker.event_payloads import (
     parse_worker_event_payload,
 )
 from app.presentation.worker.registry import event_handler
-from app.usecases.agent.run_agent_turn import RunAgentTurnQuery
+from app.usecases.agent.request_agent_turn import RequestAgentTurnCommand
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_CHARACTER_ID = "shirasagi-reina"
+_ACTIVE_CHARACTER_ID_ENV_VAR = "ACTIVE_CHARACTER_ID"
 
 
 def _resolve_character_id(
@@ -28,13 +31,19 @@ def _resolve_character_id(
 ) -> str:
     if character_id is not None:
         return character_id
-    resolved_character_id = resolve_active_character_id()
+    resolved_character_id = _resolve_active_character_id()
     logger.warning(
         "Chat saved payload missing character_id; using active character %s: %s",
         resolved_character_id,
         payload,
     )
     return resolved_character_id
+
+
+def _resolve_active_character_id() -> str:
+    raw_value = os.getenv(_ACTIVE_CHARACTER_ID_ENV_VAR) or _DEFAULT_CHARACTER_ID
+    normalized = raw_value.strip().lower()
+    return normalized or _DEFAULT_CHARACTER_ID
 
 
 @event_handler(DISCORD_CHAT_SAVED_TOPIC)
@@ -51,7 +60,7 @@ async def on_discord_chat_saved(payload: Mapping[str, object]) -> None:
     character_id = _resolve_character_id(event.character_id, payload)
 
     await Mediator.send_async(
-        RunAgentTurnQuery(
+        RequestAgentTurnCommand(
             chat_id=event.chat_id,
             guild_id=event.guild_id,
             channel_id=event.channel_id,
@@ -77,7 +86,7 @@ async def on_line_chat_saved(payload: Mapping[str, object]) -> None:
     character_id = _resolve_character_id(event.character_id, payload)
 
     await Mediator.send_async(
-        RunAgentTurnQuery(
+        RequestAgentTurnCommand(
             chat_id=event.chat_id,
             guild_id="LINE",
             channel_id=event.chat_id,

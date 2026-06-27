@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 class RouteToolCallsResult:
     """Result metadata for routed tool calls."""
 
-    contents: list[str]
+    tool_call_ids: list[str]
 
 
 @dataclass
@@ -79,8 +79,7 @@ class RouteToolCallsHandler(
                 )
             )
 
-        contents: list[str] = []
-        retrieval_tool_routed = False
+        tool_call_ids: list[str] = []
         for raw_tool_call in request.tool_calls:
             tool_call = _with_tool_call_metadata(
                 raw_tool_call,
@@ -93,15 +92,6 @@ class RouteToolCallsHandler(
             if validation_error is not None:
                 return Err(validation_error)
 
-            if _requires_retrieved_context(tool_call.tool_name):
-                if retrieval_tool_routed:
-                    logger.warning(
-                        "Skipping additional retrieval tool call in one turn: %s",
-                        tool_call.tool_name,
-                    )
-                    continue
-                retrieval_tool_routed = True
-
             tool_call_id = tool_call.tool_call_id
             if tool_call_id is None:
                 return Err(
@@ -111,7 +101,7 @@ class RouteToolCallsHandler(
                     )
                 )
 
-            contents.append(tool_call.user_message)
+            tool_call_ids.append(tool_call_id)
             try:
                 save_result = await self._tool_call_store.save(tool_call)
                 if is_err(save_result):
@@ -151,7 +141,7 @@ class RouteToolCallsHandler(
                     )
                 )
 
-        return Ok(RouteToolCallsResult(contents=contents))
+        return Ok(RouteToolCallsResult(tool_call_ids=tool_call_ids))
 
 
 def _validate_tool_call(
@@ -163,12 +153,6 @@ def _validate_tool_call(
         return UseCaseError(
             type=ErrorType.VALIDATION_ERROR,
             message=f"Unsupported tool call: {tool_call.tool_name}",
-        )
-
-    if not tool_call.user_message.strip():
-        return UseCaseError(
-            type=ErrorType.VALIDATION_ERROR,
-            message="Tool call user_message must not be empty",
         )
 
     return None
@@ -189,7 +173,3 @@ def _with_tool_call_metadata(
     if updated.character_id == character_id:
         return updated
     return updated.model_copy(update={"character_id": character_id})
-
-
-def _requires_retrieved_context(tool_name: str) -> bool:
-    return tool_name in {"web_search", "memory.search"}

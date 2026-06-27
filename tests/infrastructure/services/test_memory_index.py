@@ -20,6 +20,9 @@ from app.infrastructure.memory.markdown import (
     parse_memory_markdown,
     render_memory_markdown,
 )
+from app.infrastructure.orm_models.memory_index_backup_orm import (
+    MemoryIndexBackupORM,
+)
 from app.infrastructure.orm_models.memory_index_orm import MemoryIndexDocumentORM
 from app.infrastructure.queries.memory_index_query_service import (
     FilesystemMemoryIndex,
@@ -34,6 +37,7 @@ from tests._agent_profile_fixture import _character_id
 
 _memory_index_source_id = cast(Any, MemoryIndexDocumentORM.source_id)
 _memory_index_user_id = cast(Any, MemoryIndexDocumentORM.user_id)
+_memory_backup_scope_user_id = cast(Any, MemoryIndexBackupORM.scope_user_id)
 
 
 def test_search_memory_index_ranks_entity_alias_and_separates_users() -> None:
@@ -237,14 +241,52 @@ async def test_memory_index_maintenance_rebuilds_and_repairs_snapshot(
         row = await session.execute(
             select(MemoryIndexDocumentORM).where(_memory_index_source_id == "desk-1")
         )
+        backup_rows = await session.execute(
+            select(MemoryIndexBackupORM).where(
+                _memory_backup_scope_user_id == "u1"
+            )
+        )
+
+    orm_row = row.scalars().first()
+    backup_row = backup_rows.scalars().first()
+    assert orm_row is not None
+    assert backup_row is None
+
+    write_service.write_entity(
+        MemoryEntity(
+            id="desk-1",
+            user_id="u1",
+            label="Standing Desk Pro",
+            entity_type="object",
+            status="active",
+            aliases=["workbench"],
+            attributes={"color": "gray"},
+            confidence=0.95,
+        )
+    )
+
+    second_rebuild_result = await maintenance.rebuild_memory_index(user_id="u1")
+
+    assert not is_err(second_rebuild_result)
+    assert second_rebuild_result.value >= 1
+
+    async with session_factory() as session:
+        backup_rows = await session.execute(
+            select(MemoryIndexBackupORM).where(
+                _memory_backup_scope_user_id == "u1"
+            )
+        )
         rows = await session.execute(
             select(MemoryIndexDocumentORM).where(_memory_index_user_id == "u1")
         )
 
-    orm_row = row.scalars().first()
+    backup_row = backup_rows.scalars().first()
     user_rows = rows.scalars().all()
-    assert orm_row is not None
-    assert len(user_rows) >= 1
+    assert backup_row is not None
+    assert backup_row.source_path == "entities/u1/desk-1.md"
+    assert backup_row.backed_up_at
+    assert "Standing Desk" in backup_row.indexed_text
+    assert any("Standing Desk Pro" in row.indexed_text for row in user_rows)
     assert orm_row.source_path == "entities/u1/desk-1.md"
     assert orm_row.source_id == "desk-1"
     assert len(orm_row.content_hash) == 64
@@ -375,7 +417,8 @@ def _document(
 
 
 def _create_index_db(path: Path) -> None:
-    with sqlite3.connect(path) as connection:
+    connection = sqlite3.connect(path)
+    try:
         connection.execute(
             """
             create table memory_index_documents (
@@ -399,10 +442,13 @@ def _create_index_db(path: Path) -> None:
             """
         )
         connection.commit()
+    finally:
+        connection.close()
 
 
 def _insert_index_row(path: Path, row: dict[str, object]) -> None:
-    with sqlite3.connect(path) as connection:
+    connection = sqlite3.connect(path)
+    try:
         connection.execute(
             """
             insert into memory_index_documents (
@@ -444,3 +490,5 @@ def _insert_index_row(path: Path, row: dict[str, object]) -> None:
             {**row, "embedding": json.dumps(row["embedding"])},
         )
         connection.commit()
+    finally:
+        connection.close()

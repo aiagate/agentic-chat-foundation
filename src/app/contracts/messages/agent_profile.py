@@ -18,17 +18,10 @@ class AgentProfileBundle:
     profile: MemoryProfile
     character: CharacterDefinition
     persona_context: str
-    communication_style: tuple[str, ...]
-    known_constraints: tuple[str, ...]
-    atmosphere: tuple[str, ...]
-    behavior: tuple[str, ...]
     relationship_entity_id: str
     relationship_entity_label: str
     relationship_entity_type: str
     relationship_tag: str
-    relationship: tuple[str, ...]
-    fallback: tuple[str, ...]
-    memory_reading_rules: tuple[str, ...]
     relationship_defaults: RelationshipDefaults = RelationshipDefaults()
 
 

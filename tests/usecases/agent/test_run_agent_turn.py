@@ -16,27 +16,23 @@ from app.contracts.messages.chat_events import (
     CHAT_TOOL_REQUESTED_TOPIC,
     DISCORD_CHAT_REPLY_READY_TOPIC,
 )
+from app.contracts.messages.chat_history import ChatHistoryItem
 from app.contracts.messages.generated_content import GeneratedContent
 from app.contracts.messages.memory_context import (
-    MemoryContextFrame,
     MemoryContextPack,
     MemoryEntity,
-    MemoryFrameSection,
+    MemoryManifestItem,
     MemoryProfile,
-    MemorySource,
     MemoryTimelineEntry,
 )
-from app.contracts.messages.retrieved_context import (
-    RetrievedContext,
-    RetrievedContextItem,
-)
 from app.contracts.messages.tool_contracts import ToolCall
+from app.contracts.messages.tool_result_context import ToolResultContext
 from app.contracts.ports.agent_profile_service import IAgentProfileService
 from app.contracts.ports.ai_service import AIServiceError, IAIService
 from app.contracts.ports.event_bus import IEventBus
-from app.contracts.ports.retrieved_context_store import (
-    IRetrievedContextStore,
-    RetrievedContextStoreError,
+from app.contracts.ports.tool_result_store import (
+    IToolResultStore,
+    ToolResultStoreError,
 )
 from app.domain.aggregates.chat import DiscordChat, LineChat
 from app.domain.repositories import IUnitOfWork
@@ -45,10 +41,10 @@ from app.domain.value_objects.message_content import MessageContent
 from app.infrastructure.orm_mapping import ORMMappingRegistry
 from app.infrastructure.orm_models.chat_orm import ChatORM
 from app.infrastructure.services.tool_catalog import StaticToolCatalog
-from app.infrastructure.stores.retrieved_context_store import (
-    InMemoryRetrievedContextStore,
-)
 from app.infrastructure.stores.tool_call_store import InMemoryToolCallStore
+from app.infrastructure.stores.tool_result_store import (
+    InMemoryToolResultStore,
+)
 from app.usecases.agent.route_tool_calls import (
     RouteToolCallsCommand,
     RouteToolCallsHandler,
@@ -56,12 +52,72 @@ from app.usecases.agent.route_tool_calls import (
 from app.usecases.agent.run_agent_turn import (
     RunAgentTurnHandler,
     RunAgentTurnQuery,
+    _latest_session_window,
 )
 from app.usecases.memory.retrieve_memory_context import RetrieveMemoryContextQuery
 
 RUN_AGENT_MODULE = "app.usecases.agent.run_agent_turn"
 CHARACTER_ID = "shirasagi-reina"
 RELATIONSHIP_ENTITY_ID = f"relationship:{CHARACTER_ID}"
+
+
+def test_session_window_keeps_messages_across_utc_date_change() -> None:
+    """A UTC date rollover alone must not break an active conversation."""
+
+    history = [
+        ChatHistoryItem(
+            id="before-midnight",
+            chat_type=ChatType.LINE,
+            role="user",
+            content="before",
+            occurred_at=datetime(2026, 6, 21, 23, 53, tzinfo=UTC),
+        ),
+        ChatHistoryItem(
+            id="after-midnight",
+            chat_type=ChatType.LINE,
+            role="assistant",
+            content="after",
+            occurred_at=datetime(2026, 6, 22, 0, 13, tzinfo=UTC),
+        ),
+    ]
+
+    session, boundary = _latest_session_window(
+        history,
+        memory_boundary_at=None,
+    )
+
+    assert [item.id for item in session] == ["before-midnight", "after-midnight"]
+    assert boundary is None
+
+
+def test_session_window_uses_24_hour_fallback_boundary() -> None:
+    """A gap over 24 hours starts a new session without memory sleep."""
+
+    history = [
+        ChatHistoryItem(
+            id="old",
+            chat_type=ChatType.LINE,
+            role="user",
+            content="old",
+            occurred_at=datetime(2026, 6, 20, 0, 0, tzinfo=UTC),
+        ),
+        ChatHistoryItem(
+            id="new",
+            chat_type=ChatType.LINE,
+            role="user",
+            content="new",
+            occurred_at=datetime(2026, 6, 21, 0, 1, tzinfo=UTC),
+        ),
+    ]
+
+    session, boundary = _latest_session_window(
+        history,
+        memory_boundary_at=None,
+    )
+
+    assert [item.id for item in session] == ["new"]
+    assert boundary is not None
+    assert boundary[2] == 24 * 60 + 1
 
 
 class _FakeAgentProfileService(IAgentProfileService):
@@ -73,16 +129,9 @@ class _FakeAgentProfileService(IAgentProfileService):
 
 
 AGENT_PROFILE_BUNDLE = AgentProfileBundle(
-    profile=MemoryProfile(
-        user_id="ai",
-        display_name="Jon Due",
-        summary="A test host persona.",
-        traits=["calm"],
-        preferences=["quiet places"],
-    ),
+    profile=MemoryProfile(user_id="ai"),
     character=CharacterDefinition(
         character_id=CHARACTER_ID,
-        display_name="Jon Due",
         relationship_entity_id=RELATIONSHIP_ENTITY_ID,
         relationship_entity_label="Relationship with Jon Due",
     ),
@@ -99,17 +148,10 @@ AGENT_PROFILE_BUNDLE = AgentProfileBundle(
         "- Leave a conversational opening with at most one easy-to-answer "
         "question when the topic is not complete."
     ),
-    communication_style=("Speak naturally in English",),
-    known_constraints=("Do not mention being an AI",),
-    atmosphere=("A quiet evening with city lights in the distance.",),
-    behavior=("Maintain a composed, respectful tone.",),
     relationship_entity_id=RELATIONSHIP_ENTITY_ID,
     relationship_entity_label="Relationship with Jon Due",
     relationship_entity_type="relationship",
     relationship_tag="agent-growth",
-    relationship=("Minimal self-disclosure",),
-    fallback=("Choose something seasonal and quiet",),
-    memory_reading_rules=("Test bundle is read from memory files.",),
 )
 
 
@@ -135,22 +177,15 @@ def mock_agent_profile_service() -> IAgentProfileService:
 
 
 @pytest.fixture
-def mock_retrieved_context_store(mocker: Any) -> IRetrievedContextStore:
-    store = mocker.Mock(spec=IRetrievedContextStore)
+def mock_tool_result_store(mocker: Any) -> IToolResultStore:
+    store = mocker.Mock(spec=IToolResultStore)
     store.get = mocker.AsyncMock(
         return_value=Ok(
-            RetrievedContext(
+            ToolResultContext(
                 tool_call_id="tool-1",
                 character_id=CHARACTER_ID,
-                query="ollama web search",
                 tool_name="web_search",
-                items=[
-                    RetrievedContextItem(
-                        title="Result",
-                        url="https://example.com",
-                        snippet="Example snippet",
-                    )
-                ],
+                status="ok",
                 rendered_text="## Retrieved Context\n- example",
             )
         )
@@ -196,7 +231,7 @@ async def test_run_agent_turn_persists_reply(
     mock_ai_service: IAIService,
     mock_event_bus: Any,
     mock_agent_profile_service: IAgentProfileService,
-    mock_retrieved_context_store: IRetrievedContextStore,
+    mock_tool_result_store: IToolResultStore,
     mock_tool_catalog: StaticToolCatalog,
     mocker: Any,
 ) -> None:
@@ -204,7 +239,6 @@ async def test_run_agent_turn_persists_reply(
 
     async def send_async(request: Any) -> Any:
         if isinstance(request, RetrieveMemoryContextQuery):
-            assert request.prompt == "hello"
             return Ok(_memory_context_pack())
         raise AssertionError(f"Unexpected request: {type(request)!r}")
 
@@ -227,7 +261,7 @@ async def test_run_agent_turn_persists_reply(
 
     handler = RunAgentTurnHandler(
         mock_ai_service,
-        mock_retrieved_context_store,
+        mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
@@ -251,19 +285,20 @@ async def test_run_agent_turn_persists_reply(
         session = cast(Any, getattr(uow, "_session", None))
         if session is None:
             raise RuntimeError("Unit of work session is not available")
+        table = cast(Any, ChatORM).__table__
         statement = (
-            select(ChatORM)
+            select(table)
             .where(
-                ChatORM.type == ChatType.DISCORD.to_primitive(),
-                ChatORM.user_id == "u1",
-                ChatORM.role == "assistant",
+                table.c.type == ChatType.DISCORD.to_primitive(),
+                table.c.user_id == "u1",
+                table.c.role == "assistant",
             )
-            .order_by(desc(ChatORM.created_at), desc(ChatORM.id))
+            .order_by(desc(table.c.created_at), desc(table.c.id))
             .limit(1)
         )
         saved_result = await session.execute(statement)
-        saved_chat = saved_result.scalars().one()
-        assert saved_chat.message_content["payload"]["texts"] == [
+        saved_chat = saved_result.mappings().one()
+        assert saved_chat["message_content"]["payload"]["texts"] == [
             "Generated Content"
         ]
     ai_stub: Any = mock_ai_service.generate_content
@@ -271,13 +306,12 @@ async def test_run_agent_turn_persists_reply(
     tool_definitions = ai_stub.call_args.kwargs["tool_definitions"]
     assert {tool.name for tool in tool_definitions} == {
         "web_search",
-        "memory.search",
+        "memory.read",
         "memory.write_candidate",
-        "discord.reply",
-        "discord.post_channel",
+        "discord.send",
     }
-    retrieved_store_mock: Any = mock_retrieved_context_store.get
-    retrieved_store_mock.assert_not_awaited()
+    tool_result_store_mock: Any = mock_tool_result_store.get
+    tool_result_store_mock.assert_not_awaited()
     publish_mock = mock_event_bus.publish
     publish_mock.assert_awaited_once_with(
         DISCORD_CHAT_REPLY_READY_TOPIC,
@@ -297,7 +331,7 @@ async def test_run_agent_turn_resolves_prompt_from_chat_id(
     mock_ai_service: IAIService,
     mock_event_bus: Any,
     mock_agent_profile_service: IAgentProfileService,
-    mock_retrieved_context_store: IRetrievedContextStore,
+    mock_tool_result_store: IToolResultStore,
     mock_tool_catalog: StaticToolCatalog,
     mocker: Any,
 ) -> None:
@@ -305,7 +339,6 @@ async def test_run_agent_turn_resolves_prompt_from_chat_id(
 
     async def send_async(request: Any) -> Any:
         if isinstance(request, RetrieveMemoryContextQuery):
-            assert request.prompt == "hello"
             return Ok(_memory_context_pack())
         raise AssertionError(f"Unexpected request: {type(request)!r}")
 
@@ -328,7 +361,7 @@ async def test_run_agent_turn_resolves_prompt_from_chat_id(
 
     handler = RunAgentTurnHandler(
         mock_ai_service,
-        mock_retrieved_context_store,
+        mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
@@ -356,7 +389,7 @@ async def test_run_agent_turn_filters_previous_session_history(
     mock_ai_service: IAIService,
     mock_event_bus: Any,
     mock_agent_profile_service: IAgentProfileService,
-    mock_retrieved_context_store: IRetrievedContextStore,
+    mock_tool_result_store: IToolResultStore,
     mock_tool_catalog: StaticToolCatalog,
     mocker: Any,
 ) -> None:
@@ -364,8 +397,6 @@ async def test_run_agent_turn_filters_previous_session_history(
 
     async def send_async(request: Any) -> Any:
         if isinstance(request, RetrieveMemoryContextQuery):
-            assert [item.content for item in request.history] == ["today dinner"]
-            assert request.prompt == "today dinner"
             return Ok(_memory_context_pack())
         raise AssertionError(f"Unexpected request: {type(request)!r}")
 
@@ -375,7 +406,7 @@ async def test_run_agent_turn_filters_previous_session_history(
     )
 
     async with uow:
-        await _seed_raw_chat(
+        previous_user_id = await _seed_raw_chat(
             uow,
             DiscordChat.create(
                 guild_id="DM",
@@ -385,7 +416,7 @@ async def test_run_agent_turn_filters_previous_session_history(
             user_id="u1",
             created_at=datetime(2026, 6, 1, 18, 0, tzinfo=UTC),
         )
-        await _seed_raw_chat(
+        previous_assistant_id = await _seed_raw_chat(
             uow,
             DiscordChat.create(
                 guild_id="DM",
@@ -405,11 +436,18 @@ async def test_run_agent_turn_filters_previous_session_history(
             user_id="u1",
             created_at=datetime(2026, 6, 2, 12, 0, tzinfo=UTC),
         )
+        mark_result = await (
+            uow.GetMemoryConsolidatedChatSourceRepository().mark_consolidated(
+                [previous_user_id, previous_assistant_id],
+                consolidated_at=datetime(2026, 6, 2, 3, 0, tzinfo=UTC),
+            )
+        )
+        assert not is_err(mark_result)
         await uow.commit()
 
     handler = RunAgentTurnHandler(
         mock_ai_service,
-        mock_retrieved_context_store,
+        mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
@@ -446,7 +484,7 @@ async def test_run_agent_turn_limits_tools_for_line_chat(
     mock_ai_service: IAIService,
     mock_event_bus: Any,
     mock_agent_profile_service: IAgentProfileService,
-    mock_retrieved_context_store: IRetrievedContextStore,
+    mock_tool_result_store: IToolResultStore,
     mock_tool_catalog: StaticToolCatalog,
     mocker: Any,
 ) -> None:
@@ -454,7 +492,6 @@ async def test_run_agent_turn_limits_tools_for_line_chat(
 
     async def send_async(request: Any) -> Any:
         if isinstance(request, RetrieveMemoryContextQuery):
-            assert request.prompt == "hello"
             return Ok(_memory_context_pack())
         raise AssertionError(f"Unexpected request: {type(request)!r}")
 
@@ -476,7 +513,7 @@ async def test_run_agent_turn_limits_tools_for_line_chat(
 
     handler = RunAgentTurnHandler(
         mock_ai_service,
-        mock_retrieved_context_store,
+        mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
@@ -499,9 +536,9 @@ async def test_run_agent_turn_limits_tools_for_line_chat(
     tool_definitions = ai_stub.call_args.kwargs["tool_definitions"]
     assert {tool.name for tool in tool_definitions} == {
         "web_search",
-        "memory.search",
+        "memory.read",
         "memory.write_candidate",
-        "line.reply",
+        "line.send",
     }
 
 
@@ -511,11 +548,11 @@ async def test_run_agent_turn_includes_retrieved_context(
     mock_ai_service: IAIService,
     mock_event_bus: Any,
     mock_agent_profile_service: IAgentProfileService,
-    mock_retrieved_context_store: IRetrievedContextStore,
+    mock_tool_result_store: IToolResultStore,
     mock_tool_catalog: StaticToolCatalog,
     mocker: Any,
 ) -> None:
-    """Test that retrieved context is appended to the system instruction."""
+    """Test that retrieved context becomes the current tool-result input."""
 
     async def send_async(request: Any) -> Any:
         if isinstance(request, RetrieveMemoryContextQuery):
@@ -529,7 +566,7 @@ async def test_run_agent_turn_includes_retrieved_context(
 
     handler = RunAgentTurnHandler(
         mock_ai_service,
-        mock_retrieved_context_store,
+        mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
@@ -550,16 +587,15 @@ async def test_run_agent_turn_includes_retrieved_context(
 
     assert not is_err(result)
     ai_stub: Any = mock_ai_service.generate_content
+    assert "## Retrieved Context" in ai_stub.call_args.args[0]
     system_instruction = ai_stub.call_args.kwargs["system_instruction"]
-    assert "Memory Context" in system_instruction
+    assert "Memory manifest:" in system_instruction
     assert "Identity:" in system_instruction
     assert "Do not mention that you are an AI" in system_instruction
-    assert "## Retrieved Context" in system_instruction
-    assert "Web search results are already provided above." in system_instruction
     tool_definitions = ai_stub.call_args.kwargs["tool_definitions"]
-    assert all(tool.name != "web_search" for tool in tool_definitions)
-    retrieved_store_mock: Any = mock_retrieved_context_store.get
-    retrieved_store_mock.assert_awaited_once_with(
+    assert any(tool.name == "web_search" for tool in tool_definitions)
+    tool_result_store_mock: Any = mock_tool_result_store.get
+    tool_result_store_mock.assert_awaited_once_with(
         "tool-1",
         character_id=CHARACTER_ID,
     )
@@ -571,7 +607,7 @@ async def test_run_agent_turn_prefers_direct_answering_in_system_instruction(
     mock_ai_service: IAIService,
     mock_event_bus: Any,
     mock_agent_profile_service: IAgentProfileService,
-    mock_retrieved_context_store: IRetrievedContextStore,
+    mock_tool_result_store: IToolResultStore,
     mock_tool_catalog: StaticToolCatalog,
     mocker: Any,
 ) -> None:
@@ -589,7 +625,7 @@ async def test_run_agent_turn_prefers_direct_answering_in_system_instruction(
 
     handler = RunAgentTurnHandler(
         mock_ai_service,
-        mock_retrieved_context_store,
+        mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
@@ -615,22 +651,15 @@ async def test_run_agent_turn_prefers_direct_answering_in_system_instruction(
 
 
 @pytest.mark.anyio
-async def test_in_memory_retrieved_context_store_returns_copy() -> None:
+async def test_in_memory_tool_result_store_returns_copy() -> None:
     """Test that the in-memory retrieved context store returns a copy."""
 
-    store = InMemoryRetrievedContextStore()
-    saved = RetrievedContext(
+    store = InMemoryToolResultStore()
+    saved = ToolResultContext(
         tool_call_id="tool-1",
         character_id=CHARACTER_ID,
-        query="ollama web search",
         tool_name="web_search",
-        items=[
-            RetrievedContextItem(
-                title="Result",
-                url="https://example.com",
-                snippet="Example snippet",
-            )
-        ],
+        status="ok",
         rendered_text="## Retrieved Context\n- example",
     )
     await store.save(saved)
@@ -648,14 +677,14 @@ async def test_run_agent_turn_continues_when_search_context_is_missing(
     mock_ai_service: IAIService,
     mock_event_bus: Any,
     mock_agent_profile_service: IAgentProfileService,
-    mock_retrieved_context_store: IRetrievedContextStore,
+    mock_tool_result_store: IToolResultStore,
     mock_tool_catalog: StaticToolCatalog,
     mocker: Any,
 ) -> None:
     """Test that missing retrieved context does not suppress the final reply."""
 
-    mock_retrieved_context_store.get = AsyncMock(
-        return_value=Err(RetrievedContextStoreError("Retrieved context not found"))
+    mock_tool_result_store.get = AsyncMock(
+        return_value=Err(ToolResultStoreError("Retrieved context not found"))
     )
 
     async def send_async(request: Any) -> Any:
@@ -670,7 +699,7 @@ async def test_run_agent_turn_continues_when_search_context_is_missing(
 
     handler = RunAgentTurnHandler(
         mock_ai_service,
-        mock_retrieved_context_store,
+        mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
@@ -691,8 +720,8 @@ async def test_run_agent_turn_continues_when_search_context_is_missing(
 
     assert not is_err(result)
     assert result.value.contents == ["Generated Content"]
-    retrieved_store_mock: Any = mock_retrieved_context_store.get
-    retrieved_store_mock.assert_awaited_once_with(
+    tool_result_store_mock: Any = mock_tool_result_store.get
+    tool_result_store_mock.assert_awaited_once_with(
         "tool-1",
         character_id=CHARACTER_ID,
     )
@@ -706,11 +735,11 @@ async def test_run_agent_turn_includes_tool_failure_context(
     mock_ai_service: IAIService,
     mock_event_bus: Any,
     mock_agent_profile_service: IAgentProfileService,
-    mock_retrieved_context_store: IRetrievedContextStore,
+    mock_tool_result_store: IToolResultStore,
     mock_tool_catalog: StaticToolCatalog,
     mocker: Any,
 ) -> None:
-    """Test that tool failure notes are appended to the system instruction."""
+    """Test that tool failure notes become the current tool-result input."""
 
     async def send_async(request: Any) -> Any:
         if isinstance(request, RetrieveMemoryContextQuery):
@@ -724,7 +753,7 @@ async def test_run_agent_turn_includes_tool_failure_context(
 
     handler = RunAgentTurnHandler(
         mock_ai_service,
-        mock_retrieved_context_store,
+        mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
@@ -747,12 +776,13 @@ async def test_run_agent_turn_includes_tool_failure_context(
 
     assert not is_err(result)
     ai_stub: Any = mock_ai_service.generate_content
+    assert "Tool result received with an error." in ai_stub.call_args.args[0]
     assert (
         "Tool failure context: web_search failed with error: HTTP 500."
-        in (ai_stub.call_args.kwargs["system_instruction"])
+        in (ai_stub.call_args.args[0])
     )
     tool_definitions = ai_stub.call_args.kwargs["tool_definitions"]
-    assert all(tool.name != "web_search" for tool in tool_definitions)
+    assert any(tool.name == "web_search" for tool in tool_definitions)
 
 
 @pytest.mark.anyio
@@ -760,7 +790,7 @@ async def test_run_agent_turn_preserves_ai_service_error_message(
     uow: IUnitOfWork,
     mock_agent_profile_service: IAgentProfileService,
     mock_event_bus: Any,
-    mock_retrieved_context_store: IRetrievedContextStore,
+    mock_tool_result_store: IToolResultStore,
     mock_tool_catalog: StaticToolCatalog,
     mocker: Any,
 ) -> None:
@@ -783,7 +813,7 @@ async def test_run_agent_turn_preserves_ai_service_error_message(
 
     handler = RunAgentTurnHandler(
         ai_service,
-        mock_retrieved_context_store,
+        mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
@@ -810,18 +840,18 @@ async def test_run_agent_turn_routes_generic_tool_calls(
     uow: IUnitOfWork,
     mock_agent_profile_service: IAgentProfileService,
     mock_event_bus: Any,
-    mock_retrieved_context_store: IRetrievedContextStore,
+    mock_tool_result_store: IToolResultStore,
     mock_tool_catalog: StaticToolCatalog,
     tool_call_store: InMemoryToolCallStore,
     mocker: Any,
 ) -> None:
-    """Test that canonical tool calls are routed through the generic path."""
+    """Visible contents and tool calls are both processed."""
 
     ai_service = mocker.Mock(spec=IAIService)
     ai_service.generate_content = mocker.AsyncMock(
         return_value=Ok(
             GeneratedContent(
-                contents=[],
+                contents=["Searching now."],
                 tool_calls=[
                     ToolCall(
                         character_id=CHARACTER_ID,
@@ -831,7 +861,6 @@ async def test_run_agent_turn_routes_generic_tool_calls(
                             "max_results": 3,
                             "source_request_id": "chat-1",
                         },
-                        user_message="ちょっと検索してみます",
                     )
                 ],
             )
@@ -857,7 +886,7 @@ async def test_run_agent_turn_routes_generic_tool_calls(
 
     handler = RunAgentTurnHandler(
         ai_service,
-        mock_retrieved_context_store,
+        mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
@@ -876,35 +905,36 @@ async def test_run_agent_turn_routes_generic_tool_calls(
     )
 
     assert not is_err(result)
-    assert result.value.contents == ["ちょっと検索してみます"]
+    assert result.value.contents == ["Searching now."]
     publish_mock = mock_event_bus.publish
-    publish_mock.assert_awaited()
-    topic, payload = publish_mock.await_args.args
+    assert publish_mock.await_count == 2
+    reply_topic, reply_payload = publish_mock.await_args_list[0].args
+    assert reply_topic == DISCORD_CHAT_REPLY_READY_TOPIC
+    assert reply_payload["contents"] == ["Searching now."]
+    topic, payload = publish_mock.await_args_list[1].args
     assert topic == CHAT_TOOL_REQUESTED_TOPIC
     assert payload["tool_name"] == "web_search"
     assert payload["character_id"] == CHARACTER_ID
     assert "arguments" not in payload
-    assert "user_message" not in payload
     stored = await tool_call_store.get(
         payload["tool_call_id"],
         character_id=CHARACTER_ID,
     )
     assert not is_err(stored)
     assert stored.value.character_id == CHARACTER_ID
-    assert stored.value.user_message == "ちょっと検索してみます"
 
 
 @pytest.mark.anyio
-async def test_run_agent_turn_routes_memory_search_tool_calls(
+async def test_run_agent_turn_routes_memory_read_tool_calls(
     uow: IUnitOfWork,
     mock_agent_profile_service: IAgentProfileService,
     mock_event_bus: Any,
-    mock_retrieved_context_store: IRetrievedContextStore,
+    mock_tool_result_store: IToolResultStore,
     mock_tool_catalog: StaticToolCatalog,
     tool_call_store: InMemoryToolCallStore,
     mocker: Any,
 ) -> None:
-    """Test that memory search tool calls flow through the generic runtime."""
+    """Test that memory read tool calls flow through the generic runtime."""
 
     ai_service = mocker.Mock(spec=IAIService)
     ai_service.generate_content = mocker.AsyncMock(
@@ -914,11 +944,10 @@ async def test_run_agent_turn_routes_memory_search_tool_calls(
                 tool_calls=[
                     ToolCall(
                         character_id=CHARACTER_ID,
-                        tool_name="memory.search",
+                        tool_name="memory.read",
                         arguments={
-                            "query": "memory lookup",
+                            "memory_id": "entity:memory-lookup",
                         },
-                        user_message="記憶を確認します",
                     )
                 ],
             )
@@ -944,7 +973,7 @@ async def test_run_agent_turn_routes_memory_search_tool_calls(
 
     handler = RunAgentTurnHandler(
         ai_service,
-        mock_retrieved_context_store,
+        mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
@@ -952,7 +981,7 @@ async def test_run_agent_turn_routes_memory_search_tool_calls(
     )
     result = await handler.handle(
         RunAgentTurnQuery(
-            prompt="memory lookup",
+            prompt="read memory",
             chat_id="chat-1",
             guild_id="DM",
             channel_id="123",
@@ -963,33 +992,32 @@ async def test_run_agent_turn_routes_memory_search_tool_calls(
     )
 
     assert not is_err(result)
-    assert result.value.contents == ["記憶を確認します"]
+    assert result.value.contents == []
     publish_mock = mock_event_bus.publish
     publish_mock.assert_awaited_once()
     topic, payload = publish_mock.await_args.args
     assert topic == CHAT_TOOL_REQUESTED_TOPIC
-    assert payload["tool_name"] == "memory.search"
+    assert payload["tool_name"] == "memory.read"
     assert "arguments" not in payload
-    assert "user_message" not in payload
     stored = await tool_call_store.get(
         payload["tool_call_id"],
         character_id=CHARACTER_ID,
     )
     assert not is_err(stored)
-    assert stored.value.arguments == {"query": "memory lookup"}
+    assert stored.value.arguments == {"memory_id": "entity:memory-lookup"}
 
 
 @pytest.mark.anyio
-async def test_run_agent_turn_routes_only_one_retrieval_tool_call_per_turn(
+async def test_run_agent_turn_routes_all_tool_calls_per_turn(
     uow: IUnitOfWork,
     mock_agent_profile_service: IAgentProfileService,
     mock_event_bus: Any,
-    mock_retrieved_context_store: IRetrievedContextStore,
+    mock_tool_result_store: IToolResultStore,
     mock_tool_catalog: StaticToolCatalog,
     tool_call_store: InMemoryToolCallStore,
     mocker: Any,
 ) -> None:
-    """Test that only one retrieved-context-producing tool is routed per turn."""
+    """Test that every requested tool is routed independently."""
 
     ai_service = mocker.Mock(spec=IAIService)
     ai_service.generate_content = mocker.AsyncMock(
@@ -1005,15 +1033,13 @@ async def test_run_agent_turn_routes_only_one_retrieval_tool_call_per_turn(
                             "max_results": 3,
                             "source_request_id": "chat-1",
                         },
-                        user_message="ちょっと検索してみます",
                     ),
                     ToolCall(
                         character_id=CHARACTER_ID,
-                        tool_name="memory.search",
+                        tool_name="memory.read",
                         arguments={
-                            "query": "memory lookup",
+                            "memory_id": "entity:memory-lookup",
                         },
-                        user_message="記憶を確認します",
                     ),
                 ],
             )
@@ -1039,7 +1065,7 @@ async def test_run_agent_turn_routes_only_one_retrieval_tool_call_per_turn(
 
     handler = RunAgentTurnHandler(
         ai_service,
-        mock_retrieved_context_store,
+        mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
@@ -1058,36 +1084,31 @@ async def test_run_agent_turn_routes_only_one_retrieval_tool_call_per_turn(
     )
 
     assert not is_err(result)
-    assert result.value.contents == ["ちょっと検索してみます"]
+    assert result.value.contents == []
     publish_mock = mock_event_bus.publish
-    assert publish_mock.await_count == 1
-    topic, payload = publish_mock.await_args.args
-    assert topic == CHAT_TOOL_REQUESTED_TOPIC
-    assert payload["tool_name"] == "web_search"
+    assert publish_mock.await_count == 2
+    tool_names = [call.args[1]["tool_name"] for call in publish_mock.await_args_list]
+    assert tool_names == ["web_search", "memory.read"]
 
 
 def _memory_context_pack() -> MemoryContextPack:
     return MemoryContextPack(
         user_id="u1",
-        assembled_context="Memory Context:\n## Primary\nUse concise answers.",
-        context_frame=MemoryContextFrame(
-            assembled_context="Memory Context:\n## Primary\nUse concise answers.",
-            sections=[
-                MemoryFrameSection(
-                    name="primary",
-                    content="Use concise answers.",
-                    sources=[
-                        MemorySource(
-                            id="profile:u1",
-                            memory_type="profile",
-                            title="Dorothy",
-                            user_id="u1",
-                            reference="profile:u1",
-                        )
-                    ],
-                )
-            ],
+        assembled_context=(
+            "Memory manifest:\n"
+            "Use memory.read with a memory_id when detailed memory is needed.\n"
+            "- profile:u1 | profile | Dorothy | Likes concise answers."
         ),
+        manifest_items=[
+            MemoryManifestItem(
+                memory_id="profile:u1",
+                memory_type="profile",
+                title="Dorothy",
+                summary="Likes concise answers.",
+                tags=[],
+                updated_at="2026-05-11T00:00:00Z",
+            )
+        ],
         profile=MemoryProfile(
             user_id="u1",
             display_name="Dorothy",

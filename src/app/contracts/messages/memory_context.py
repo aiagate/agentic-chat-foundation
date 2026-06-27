@@ -7,7 +7,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 MemoryType = Literal["profile", "timeline", "entity"]
-MemoryFrameSectionName = Literal["primary", "functional", "peripheral"]
 MemoryScalar = str | int | float | bool
 MemoryPropertyValue = MemoryScalar | list[MemoryScalar] | None
 
@@ -115,31 +114,26 @@ class MemorySearchHit(BaseModel):
     )
 
 
-class MemoryFrameSection(BaseModel):
-    """One ordered section of the assembled memory context frame."""
+class MemoryManifestItem(BaseModel):
+    """Compact manifest entry always eligible for prompt injection."""
 
     model_config = ConfigDict(extra="forbid")
 
-    name: MemoryFrameSectionName = Field(description="Context frame section name.")
-    content: str = Field(description="Section text already assembled for prompting.")
-    sources: list[MemorySource] = Field(
-        default_factory=list,
-        description="Sources represented in this section.",
+    memory_id: str = Field(description="Stable memory lookup identifier.")
+    memory_type: MemoryType = Field(description="Memory layer for the entry.")
+    when: str | None = Field(
+        default=None,
+        description="Episode date for timeline memories, when known.",
     )
-
-
-class MemoryContextFrame(BaseModel):
-    """Assembled context frame returned by the memory service."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    sections: list[MemoryFrameSection] = Field(
+    title: str = Field(description="Short display title for the memory.")
+    summary: str = Field(description="One-line summary for manifest injection.")
+    tags: list[str] = Field(
         default_factory=list,
-        description="Ordered primary, functional, and peripheral sections.",
+        description="Optional tags for routing and retrieval decisions.",
     )
-    assembled_context: str = Field(
-        default="",
-        description="Prompt-ready memory context assembled by infrastructure.",
+    updated_at: str | None = Field(
+        default=None,
+        description="Last update timestamp in ISO-8601 format when known.",
     )
 
 
@@ -153,13 +147,9 @@ class MemoryContextPack(BaseModel):
         default=None,
         description="Prompt-ready context assembled by the memory service.",
     )
-    context_frame: MemoryContextFrame | None = Field(
-        default=None,
-        description="Structured context frame for diagnostics and future consumers.",
-    )
-    search_hits: list[MemorySearchHit] = Field(
+    manifest_items: list[MemoryManifestItem] = Field(
         default_factory=list,
-        description="Ranked memory search hits used to assemble the frame.",
+        description="Compact manifest entries exposed in every agent turn.",
     )
     profile: MemoryProfile | None = Field(
         default=None,
@@ -172,4 +162,18 @@ class MemoryContextPack(BaseModel):
     entities: list[MemoryEntity] = Field(
         default_factory=list,
         description="Relevant entities.",
+    )
+
+
+class MemoryReadResult(BaseModel):
+    """Resolved long-form memory content addressed by memory_id."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    memory_id: str = Field(description="Stable memory lookup identifier.")
+    source: MemorySource = Field(description="Resolved source attribution.")
+    title: str = Field(description="Display title for the memory.")
+    summary: str = Field(description="One-line manifest summary for the memory.")
+    rendered_text: str = Field(
+        description="Prompt-ready detailed memory text for re-prompting.",
     )

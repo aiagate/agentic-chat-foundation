@@ -19,7 +19,6 @@ class CharacterDefinition:
     """Stable metadata for one built-in agent character."""
 
     character_id: str
-    display_name: str
     relationship_entity_id: str
     relationship_entity_label: str
     relationship_entity_type: str = "relationship"

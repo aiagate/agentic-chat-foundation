@@ -47,5 +47,5 @@ async def test_save_line_chat_persists_message(
         query = uow.GetChatHistoryQuery()
         history = await query.get_recent_history(ChatType.LINE, limit=10)
         assert not is_err(history)
-        assert history.value[-1].role == "user"
-        assert history.value[-1].content == "hello"
+        assert history.value.items[-1].role == "user"
+        assert history.value.items[-1].content == "hello"

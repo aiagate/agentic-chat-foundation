@@ -18,10 +18,6 @@ from app.contracts.ports.memory_write_service import (
     IMemoryWriteService,
     MemoryWriteServiceError,
 )
-from app.contracts.ports.retrieved_context_store import (
-    IRetrievedContextStore,
-    RetrievedContextStoreError,
-)
 from app.contracts.ports.tool_call_store import IToolCallStore, ToolCallStoreError
 from app.contracts.ports.tool_catalog import IToolCatalog
 from app.contracts.ports.tool_execution_lock import (
@@ -33,6 +29,7 @@ from app.contracts.ports.tool_executor import (
     ToolExecutionContext,
     ToolExecutorError,
 )
+from app.contracts.ports.tool_result_store import IToolResultStore, ToolResultStoreError
 from app.contracts.ports.web_search_service import (
     IWebSearchService,
     WebSearchServiceError,
@@ -51,19 +48,19 @@ __all__ = [
     "IMemorySemanticExtractionService",
     "IMemoryStore",
     "IMemoryWriteService",
-    "IRetrievedContextStore",
     "IToolCallStore",
     "MemoryIndexError",
     "MemoryServiceError",
     "MemorySemanticExtractionError",
     "MemoryWriteServiceError",
-    "RetrievedContextStoreError",
     "ToolCallStoreError",
     "IToolCatalog",
     "IToolExecutor",
     "IToolExecutionLock",
     "ToolExecutionContext",
     "ToolExecutorError",
+    "IToolResultStore",
+    "ToolResultStoreError",
     "ToolExecutionLockError",
     "IWebSearchService",
     "WebSearchServiceError",

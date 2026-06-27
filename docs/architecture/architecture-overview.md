@@ -90,7 +90,7 @@ presentation ──▶ usecases ──▶ domain
 - `tool_catalog.py`: 利用可能 tool 定義の列挙
 - `tool_executor.py`: 検証済み tool call の実行
 - `tool_call_store.py`: tool call の短期保存
-- `retrieved_context_store.py`: retrieved context の短期保存
+- `tool_result_store.py`: tool result の短期保存
 - `web_search_service.py`: 外部 web search の実行
 
 `IAIService` や `IEventBus` のようなアプリケーション境界の契約は、
@@ -106,10 +106,10 @@ presentation ──▶ usecases ──▶ domain
 
 - `agentic.py`: `AgentEnvelope`
 - `chat_events.py`: `chat.discord.saved`、`chat.line.saved`、
-  `chat.tool.requested`、`chat.tool.completed`、
+  `chat.agent_turn.requested`、`chat.tool.requested`、`chat.tool.completed`、
   `chat.discord.reply_ready`、`chat.line.reply_ready`
 - `tool_contracts.py`: `ToolDefinition`、`ToolCall`、`ToolExecutionResult`
-- `retrieved_context.py`: `RetrievedContext`
+- `tool_result_context.py`: `ToolResultContext`
 - `generated_content.py`: AI 生成結果 DTO
 - `memory_context.py`: メモリコンテキスト DTO
 - `agent_profile.py`: `AgentProfileBundle`
@@ -197,13 +197,13 @@ LINE webhook
 
 worker
   └─ handlers/chat_reply_handlers.py
-      └─ Mediator.send_async(RunAgentTurnQuery)
+      └─ publish chat.agent_turn.requested
+          └─ Mediator.send_async(RunAgentTurnQuery)
           └─ usecases/agent/run_agent_turn.py
               ├─ history と memory context を組み立てる
               ├─ IAIService.generate_content(...)
-              ├─ tool_calls があれば RouteToolCallsCommand を送る
-              └─ tool_calls がない場合は assistant message を保存し、
-                 chat.*.reply_ready を publish する
+              ├─ contents があれば assistant message を保存して reply_ready を publish
+              └─ tool_calls をすべて RouteToolCallsCommand へ送る
 
 tool flow
   └─ usecases/agent/route_tool_calls.py
@@ -213,17 +213,16 @@ tool flow
       └─ worker/handlers/tool_handlers.py
           ├─ HandleToolExecutionCommand を起動する
           ├─ IToolExecutor.execute(...)
-          └─ chat.tool.completed を publish する
-              └─ web_search / memory.search は retrieved context を
-                 tool_call_id で保存して RunAgentTurnQuery に再入する
+              └─ chat.tool.completed を publish する
+              └─ 非 send tool は tool result を保存して
+                 chat.agent_turn.requested を発行する
 
 sender
   ├─ bot subscribes chat.discord.reply_ready -> send_discord_reply
   └─ line subscribes chat.line.reply_ready -> send_line_reply
 ```
 
-`RunAgentTurnHandler` は、`tool_call_id` がある場合に retrieved context を再投入し、
-`web_search` の結果が既にあるときは再度の web_search を抑制します。
+`RunAgentTurnHandler` は、`tool_call_id` がある場合に対応する tool result を再投入します。
 
 ---
 
@@ -238,7 +237,7 @@ sender
 - `usecases/agent/run_agent_turn.py`: 履歴、メモリ、AI サービスを組み合わせて返信を生成する。
 - `usecases/agent/route_tool_calls.py`: tool call を検証して `chat.tool.requested` を発行する。
 - `usecases/agent/handle_tool_execution.py`: `tool_call_id` を正本に tool を実行して `chat.tool.completed` を発行する。
-- `usecases/search/run_web_search.py`: web search を実行して retrieved context を返す。
+- `usecases/search/run_web_search.py`: web search を実行して tool result を返す。
 - `usecases/memory/*`: メモリ取得、インデックス更新、睡眠処理を扱う。
 
 Presentation から DB や UoW を直接呼び出す実装は避けます。
@@ -267,7 +266,7 @@ Presentation から DB や UoW を直接呼び出す実装は避けます。
 - `orm_models`、`orm_mapping.py`、`orm_registry.py`: ORM と Domain の変換。
 - `repositories`: 永続化リポジトリ実装。
 - `queries`: 読み取り、選定、再構成ロジック。
-- `stores`: tool call と retrieved context の短期ストア。
+- `stores`: tool call と tool result の短期ストア。
 - `services`: AI provider、memory service、tool executor、tool catalog などの adapter。
 - `memory`: Markdown memory の低レベル I/O と補助処理。
 - `messaging`: `IEventBus` の実装。

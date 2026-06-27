@@ -8,6 +8,7 @@ import pytest
 from flow_med import Mediator
 
 from app.domain.value_objects.chat_type import ChatType
+from app.presentation.worker.handlers.agent_turn_handlers import on_agent_turn_requested
 from app.presentation.worker.handlers.app_error_handlers import on_app_error_detected
 from app.presentation.worker.handlers.chat_reply_handlers import (
     on_discord_chat_saved,
@@ -22,9 +23,35 @@ from app.presentation.worker.handlers.tool_handlers import (
 )
 from app.presentation.worker.handlers.user_handlers import on_user_created
 from app.usecases.agent.handle_tool_execution import HandleToolExecutionCommand
+from app.usecases.agent.request_agent_turn import RequestAgentTurnCommand
 from app.usecases.agent.run_agent_turn import RunAgentTurnQuery
 from app.usecases.memory.run_memory_sleep import RunMemorySleepCommand
 from app.usecases.users.welcome_user import WelcomeUserCommand
+
+
+@pytest.mark.anyio
+async def test_agent_turn_requested_handler_triggers_generation(
+    mocker: Any,
+) -> None:
+    """The canonical event is the only worker entrypoint for inference."""
+    send_async = AsyncMock(return_value=None)
+    mocker.patch.object(Mediator, "send_async", send_async)
+
+    await on_agent_turn_requested(
+        {
+            "chat_id": "chat-1",
+            "user_id": "u1",
+            "chat_type": "DISCORD",
+            "guild_id": "DM",
+            "channel_id": "123",
+            "character_id": "shirasagi-reina",
+            "tool_call_id": "tool-1",
+        }
+    )
+
+    request = cast(Any, send_async.await_args).args[0]
+    assert isinstance(request, RunAgentTurnQuery)
+    assert request.tool_call_id == "tool-1"
 
 
 @pytest.mark.anyio
@@ -50,7 +77,7 @@ async def test_discord_chat_saved_handler_triggers_generation(
 
     send_async.assert_awaited_once()
     request = cast(Any, send_async.await_args).args[0]
-    assert isinstance(request, RunAgentTurnQuery)
+    assert isinstance(request, RequestAgentTurnCommand)
     assert request.chat_type is ChatType.DISCORD
     assert request.user_id == "u1"
     assert request.agent_context is not None
@@ -78,7 +105,7 @@ async def test_line_chat_saved_handler_triggers_generation(
 
     send_async.assert_awaited_once()
     request = cast(Any, send_async.await_args).args[0]
-    assert isinstance(request, RunAgentTurnQuery)
+    assert isinstance(request, RequestAgentTurnCommand)
     assert request.chat_type is ChatType.LINE
     assert request.user_id == "u1"
     assert request.agent_context is not None
@@ -105,7 +132,7 @@ async def test_line_chat_saved_handler_falls_back_to_active_character(
 
     send_async.assert_awaited_once()
     request = cast(Any, send_async.await_args).args[0]
-    assert isinstance(request, RunAgentTurnQuery)
+    assert isinstance(request, RequestAgentTurnCommand)
     assert request.character_id == "shirasagi-reina"
     assert request.chat_type is ChatType.LINE
     assert request.user_id == "u1"
@@ -165,6 +192,7 @@ async def test_chat_tool_completed_error_for_web_search_keeps_reprompting(
             "chat_id": "chat-1",
             "chat_type": "DISCORD",
             "status": "error",
+            "continuation": "reenter",
             "user_id": "u1",
             "guild_id": "DM",
             "channel_id": "123",
@@ -179,7 +207,7 @@ async def test_chat_tool_completed_error_for_web_search_keeps_reprompting(
 
     send_async.assert_awaited_once()
     request = cast(Any, send_async.await_args).args[0]
-    assert isinstance(request, RunAgentTurnQuery)
+    assert isinstance(request, RequestAgentTurnCommand)
     assert request.tool_failure_context is not None
     assert "HTTP 500" in request.tool_failure_context
 
@@ -214,10 +242,10 @@ async def test_chat_tool_requested_handler_triggers_execution(
 
 
 @pytest.mark.anyio
-async def test_chat_tool_completed_error_status_for_memory_search_keeps_reprompting(
+async def test_chat_tool_completed_error_status_for_memory_read_keeps_reprompting(
     mocker: Any,
 ) -> None:
-    """Test that failed memory search completions still re-enter the agent loop."""
+    """Test that failed memory read completions still re-enter the agent loop."""
 
     send_async = AsyncMock(return_value=None)
     mocker.patch.object(Mediator, "send_async", send_async)
@@ -227,11 +255,12 @@ async def test_chat_tool_completed_error_status_for_memory_search_keeps_reprompt
             "chat_id": "chat-1",
             "chat_type": "DISCORD",
             "status": "error",
+            "continuation": "reenter",
             "user_id": "u1",
             "guild_id": "DM",
             "channel_id": "123",
             "character_id": "shirasagi-reina",
-            "tool_name": "memory.search",
+            "tool_name": "memory.read",
             "error": "Memory backend timeout",
             "event_id": "event-5",
             "agent_run_id": "run-5",
@@ -241,7 +270,7 @@ async def test_chat_tool_completed_error_status_for_memory_search_keeps_reprompt
 
     send_async.assert_awaited_once()
     request = cast(Any, send_async.await_args).args[0]
-    assert isinstance(request, RunAgentTurnQuery)
+    assert isinstance(request, RequestAgentTurnCommand)
     assert request.tool_failure_context is not None
     assert "Memory backend timeout" in request.tool_failure_context
 
@@ -260,11 +289,12 @@ async def test_chat_tool_completed_error_status_is_ignored_for_non_search_tools(
             "chat_id": "chat-1",
             "chat_type": "DISCORD",
             "status": "error",
+            "continuation": "terminal",
             "user_id": "u1",
             "guild_id": "DM",
             "channel_id": "123",
             "character_id": "shirasagi-reina",
-            "tool_name": "discord.reply",
+            "tool_name": "discord.send",
             "error": "message send failed",
             "event_id": "event-5",
             "agent_run_id": "run-5",
@@ -303,7 +333,7 @@ async def test_app_error_detected_handler_triggers_agent_reentry(
 
     send_async.assert_awaited_once()
     request = cast(Any, send_async.await_args).args[0]
-    assert isinstance(request, RunAgentTurnQuery)
+    assert isinstance(request, RequestAgentTurnCommand)
     assert request.source_request_id == "req-1"
     assert request.agent_context is not None
     assert request.agent_context.agent_run_id == "run-7"

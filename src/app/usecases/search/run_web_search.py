@@ -1,20 +1,17 @@
-"""Execute a web search and persist retrieved context."""
+"""Execute a web search and render its result."""
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Literal
 
 from flow_med import Request, RequestHandler
 from flow_res import Err, Ok, Result, is_err
 from injector import inject
 
-from app.contracts.messages.retrieved_context import (
-    RetrievedContext,
-    RetrievedContextItem,
-)
-from app.contracts.messages.tool_contracts import SearchToolArguments, ToolName
-from app.contracts.ports.retrieved_context_store import IRetrievedContextStore
+from app.contracts.messages.tool_contracts import SearchToolArguments
+from app.contracts.messages.web_search_result import WebSearchResultItem
 from app.contracts.ports.web_search_service import IWebSearchService
 from app.usecases.result import ErrorType, UseCaseError
 
@@ -26,6 +23,7 @@ class RunWebSearchResult:
     """Search execution metadata."""
 
     result_count: int
+    rendered_text: str
 
 
 @dataclass
@@ -34,10 +32,9 @@ class RunWebSearchCommand(Request[Result[RunWebSearchResult, UseCaseError]]):
 
     tool_call_id: str
     query: str
-    user_message: str
     source_request_id: str
     character_id: str
-    tool_name: ToolName = "web_search"
+    tool_name: Literal["web_search"] = "web_search"
     max_results: int | None = None
 
 
@@ -50,15 +47,13 @@ class RunWebSearchHandler(
     def __init__(
         self,
         web_search_service: IWebSearchService,
-        retrieved_context_store: IRetrievedContextStore,
     ) -> None:
         self._web_search_service = web_search_service
-        self._retrieved_context_store = retrieved_context_store
 
     async def handle(
         self, request: RunWebSearchCommand
     ) -> Result[RunWebSearchResult, UseCaseError]:
-        """Execute search and store retrieved context."""
+        """Execute search and return prompt-ready result text."""
         search_result = await self._web_search_service.search(
             SearchToolArguments(
                 query=request.query,
@@ -78,46 +73,28 @@ class RunWebSearchHandler(
         items = _normalize_items(payload.get("results", []))
         rendered_text = _render_retrieved_context(request.tool_call_id, items)
         logger.info(
-            "Storing web retrieved context: tool_call_id=%s query=%s items=%d",
-            request.tool_call_id,
-            request.query,
-            len(items),
-        )
-        save_result = await self._retrieved_context_store.save(
-            RetrievedContext(
-                tool_call_id=request.tool_call_id,
-                character_id=request.character_id,
-                query=request.query,
-                tool_name=request.tool_name,
-                items=items,
-                rendered_text=rendered_text,
-            )
-        )
-        if is_err(save_result):
-            return Err(
-                UseCaseError(
-                    type=ErrorType.UNEXPECTED,
-                    message="Failed to store retrieved context",
-                )
-            )
-        logger.info(
             "Web search completed: tool_call_id=%s result_count=%d",
             request.tool_call_id,
             len(items),
         )
 
-        return Ok(RunWebSearchResult(result_count=len(items)))
+        return Ok(
+            RunWebSearchResult(
+                result_count=len(items),
+                rendered_text=rendered_text,
+            )
+        )
 
 
-def _normalize_items(raw_results: object) -> list[RetrievedContextItem]:
-    items: list[RetrievedContextItem] = []
+def _normalize_items(raw_results: object) -> list[WebSearchResultItem]:
+    items: list[WebSearchResultItem] = []
     if not isinstance(raw_results, list):
         return items
     for raw_item in raw_results:
         if not isinstance(raw_item, dict):
             continue
         items.append(
-            RetrievedContextItem(
+            WebSearchResultItem(
                 title=_as_str_or_none(raw_item.get("title")),
                 url=_as_str_or_none(raw_item.get("url")),
                 snippet=_as_str(raw_item.get("content")),
@@ -130,7 +107,7 @@ def _normalize_items(raw_results: object) -> list[RetrievedContextItem]:
 
 def _render_retrieved_context(
     tool_call_id: str,
-    items: list[RetrievedContextItem],
+    items: list[WebSearchResultItem],
 ) -> str:
     lines = [
         "## Retrieved Context",

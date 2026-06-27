@@ -36,31 +36,17 @@ class _ScenarioAgentProfileService(IAgentProfileService):
 
     def load_agent_profile_bundle(self) -> AgentProfileBundle:
         return AgentProfileBundle(
-            profile=MemoryProfile(
-                user_id="ai",
-                display_name="Jon Due",
-                summary="A calm host persona.",
-                traits=["calm"],
-                preferences=["quiet places"],
-            ),
+            profile=MemoryProfile(user_id="ai"),
             character=CharacterDefinition(
                 character_id="jondue",
-                display_name="Jon Due",
                 relationship_entity_id="relationship:jondue",
                 relationship_entity_label="Relationship with Jon Due",
             ),
             persona_context="Persona Contract:\n- test persona",
-            communication_style=("Speak naturally in English",),
-            known_constraints=("Do not mention being an AI",),
-            atmosphere=("A quiet evening with city lights in the distance.",),
-            behavior=("Maintain a composed, respectful tone.",),
             relationship_entity_id="relationship:jondue",
             relationship_entity_label="Relationship with Jon Due",
             relationship_entity_type="relationship",
             relationship_tag="agent-growth",
-            relationship=("Minimal self-disclosure",),
-            fallback=("Choose something seasonal and quiet",),
-            memory_reading_rules=("Scenario bundle is read from memory files.",),
         )
 
 

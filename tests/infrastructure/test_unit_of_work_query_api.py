@@ -19,10 +19,16 @@ async def test_uow_query_api_reuses_cached_instances(
         query_second = uow.GetChatHistoryQuery()
         raw_query_first = uow.GetRawChatLogQuery()
         raw_query_second = uow.GetRawChatLogQuery()
+        chat_record_repo_first = uow.GetChatRecordRepository()
+        chat_record_repo_second = uow.GetChatRecordRepository()
+        source_repo_first = uow.GetMemoryConsolidatedChatSourceRepository()
+        source_repo_second = uow.GetMemoryConsolidatedChatSourceRepository()
 
         assert repo_first is repo_second
         assert query_first is query_second
         assert raw_query_first is raw_query_second
+        assert chat_record_repo_first is chat_record_repo_second
+        assert source_repo_first is source_repo_second
 
 
 @pytest.mark.anyio
@@ -35,6 +41,12 @@ async def test_uow_query_api_requires_active_session(
 
     with pytest.raises(RuntimeError):
         uow.GetRawChatLogQuery()
+
+    with pytest.raises(RuntimeError):
+        uow.GetChatRecordRepository()
+
+    with pytest.raises(RuntimeError):
+        uow.GetMemoryConsolidatedChatSourceRepository()
 
     with pytest.raises(RuntimeError):
         uow.GetRepository(User, UserId)

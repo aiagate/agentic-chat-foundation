@@ -2,7 +2,7 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Protocol, cast, runtime_checkable
+from typing import cast
 
 from flow_med import Request, RequestHandler
 from flow_res import Err, Ok, Result, is_err
@@ -16,21 +16,9 @@ from app.contracts.ports.event_bus import IEventBus
 from app.domain.aggregates.chat import LineChat
 from app.domain.repositories import IUnitOfWork
 from app.domain.value_objects.message_content import MessageContent
-from app.infrastructure.messaging.null_event_bus import NullEventBus
-from app.infrastructure.orm_mapping import ORMMappingRegistry
-from app.infrastructure.orm_models.chat_orm import ChatORM
 from app.usecases.result import ErrorType, UseCaseError
 
 logger = logging.getLogger(__name__)
-
-
-@runtime_checkable
-class _SessionProtocol(Protocol):
-    """Subset of async session behavior needed by this use case."""
-
-    def add(self, instance: object) -> None: ...
-
-    async def flush(self) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -57,10 +45,10 @@ class SaveChatHandler(
     def __init__(
         self,
         uow: IUnitOfWork,
-        event_bus: IEventBus | None = None,
+        event_bus: IEventBus,
     ) -> None:
         self._uow = uow
-        self._event_bus = event_bus or NullEventBus()
+        self._event_bus = event_bus
 
     async def handle(
         self, request: SaveLineChatCommand
@@ -109,26 +97,20 @@ async def _save_raw_line_chat(
     content: str,
 ) -> Result[LineChat, UseCaseError]:
     """Persist a raw LINE chat row with user scope and role."""
-    session = getattr(uow, "_session", None)
-    if not isinstance(session, _SessionProtocol):
+    chat_record_repository = uow.GetChatRecordRepository()
+    save_result = await chat_record_repository.add(
+        LineChat.create_user_chat(
+            line_user_id=user_id,
+            message_content=MessageContent.text(content),
+        ),
+        user_id=user_id,
+        role="user",
+    )
+    if is_err(save_result):
         return Err(
             UseCaseError(
                 type=ErrorType.UNEXPECTED,
-                message="Unit of work session is not available",
+                message="Failed to save chat message",
             )
         )
-
-    chat_orm = cast(
-        ChatORM,
-        ORMMappingRegistry.to_orm(
-            LineChat.create_user_chat(
-                line_user_id=user_id,
-                message_content=MessageContent.text(content),
-            )
-        ),
-    )
-    chat_orm.user_id = user_id
-    chat_orm.role = "user"
-    session.add(chat_orm)
-    await session.flush()
-    return Ok(cast(LineChat, ORMMappingRegistry.from_orm(chat_orm)))
+    return Ok(cast(LineChat, save_result.value))

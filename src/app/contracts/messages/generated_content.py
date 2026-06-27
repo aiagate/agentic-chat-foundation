@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from pydantic import ConfigDict, Field
-from pydantic import model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from app.contracts.messages.agentic import AgentEnvelope
 from app.contracts.messages.tool_contracts import ToolCall
@@ -80,12 +79,6 @@ def _normalize_legacy_tool_call(value: object) -> dict[str, object] | None:
     if isinstance(tool_call_id, str) and tool_call_id.strip():
         normalized["tool_call_id"] = tool_call_id.strip()
 
-    user_message = value.get("user_message")
-    if not isinstance(user_message, str) or not user_message.strip():
-        user_message = _derive_user_message(dict(raw_arguments))
-    if user_message:
-        normalized["user_message"] = user_message
-
     for key in (
         "event_id",
         "correlation_id",
@@ -101,32 +94,6 @@ def _normalize_legacy_tool_call(value: object) -> dict[str, object] | None:
             normalized[key] = raw_value.strip()
 
     return normalized
-
-
-def _derive_user_message(arguments: dict[str, object]) -> str:
-    """Derive a human-readable message from legacy tool arguments."""
-
-    content = arguments.get("content")
-    if isinstance(content, str) and content.strip():
-        return content.strip()
-
-    contents = arguments.get("contents")
-    if isinstance(contents, list):
-        normalized_contents = [
-            str(item).strip()
-            for item in contents
-            if isinstance(item, str) and item.strip()
-        ]
-        if normalized_contents:
-            return "\n".join(normalized_contents)
-
-    query = arguments.get("query")
-    if isinstance(query, str) and query.strip():
-        return query.strip()
-
-    return ""
-
-
 def _normalize_contents_field(value: object) -> list[str] | None:
     """Normalize the contents field into a list of non-empty strings."""
 

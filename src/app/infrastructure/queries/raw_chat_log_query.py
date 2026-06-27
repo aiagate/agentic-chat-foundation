@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, cast
 
 from flow_res import Err, Ok, Result
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +16,9 @@ from app.domain.queries.raw_chat_log_query import (
 from app.domain.repositories.interfaces import RepositoryError, RepositoryErrorType
 from app.domain.value_objects.chat_type import ChatType
 from app.infrastructure.orm_models.chat_orm import ChatORM
+from app.infrastructure.orm_models.memory_consolidated_chat_source_orm import (
+    MemoryConsolidatedChatSourceORM,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +39,14 @@ class SQLAlchemyRawChatLogQuery(IRawChatLogQuery):
         try:
             table = cast(Any, ChatORM).__table__
             statement = (
-                select(table.c.user_id).distinct().where(table.c.user_id.is_not(None))
+                select(table.c.user_id)
+                .distinct()
+                .where(
+                    table.c.user_id.is_not(None),
+                    ~exists().where(
+                        MemoryConsolidatedChatSourceORM.chat_id == table.c.id
+                    ),
+                )
             )
             if since is not None:
                 statement = statement.where(table.c.created_at >= since)
@@ -70,6 +80,9 @@ class SQLAlchemyRawChatLogQuery(IRawChatLogQuery):
             conditions: list[Any] = [
                 table.c.user_id == user_id,
                 table.c.type == chat_type.to_primitive(),
+                ~exists().where(
+                    MemoryConsolidatedChatSourceORM.chat_id == table.c.id
+                ),
             ]
             if since is not None:
                 conditions.append(table.c.created_at >= since)

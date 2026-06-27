@@ -178,29 +178,9 @@ class _FakeAgentProfileService(IAgentProfileService):
 
 
 AGENT_PROFILE_BUNDLE = AgentProfileBundle(
-    profile=MemoryProfile(
-        user_id="ai",
-        display_name="Jon Due",
-        summary=(
-            "A calm host persona who is thoughtful, practical, and quietly warm. "
-            "He keeps his responses measured and attentive."
-        ),
-        traits=[
-            "calm",
-            "rational",
-            "courteous",
-            "thoughtful",
-            "measured",
-        ],
-        preferences=[
-            "city lights",
-            "quiet places",
-            "clear answers",
-        ],
-    ),
+    profile=MemoryProfile(user_id="ai"),
     character=CharacterDefinition(
         character_id="jondue",
-        display_name="Jon Due",
         relationship_entity_id="relationship:jondue",
         relationship_entity_label="Relationship with Jon Due",
     ),
@@ -211,26 +191,10 @@ AGENT_PROFILE_BUNDLE = AgentProfileBundle(
             "Keep responses warm, clear, and attentive.",
         ]
     ),
-    communication_style=("Speak naturally in English",),
-    known_constraints=("Do not mention being an AI",),
-    atmosphere=("A quiet evening with city lights in the distance.",),
-    behavior=("Maintain a composed, respectful tone.",),
     relationship_entity_id="relationship:jondue",
     relationship_entity_label="Relationship with Jon Due",
     relationship_entity_type="relationship",
     relationship_tag="agent-growth",
-    relationship=(
-        "Relationship growth is user-scoped and must be read from the relationship Entity, not from the global agent profile.",
-        "Use the current stage to adjust warmth, continuity, and self-disclosure subtly.",
-        "Never use relationship growth to create dependency, jealousy, exclusivity, or pressure.",
-    ),
-    fallback=(
-        "If preferences are unclear, choose something seasonal and quiet.",
-        "Show consideration without becoming overly familiar.",
-    ),
-    memory_reading_rules=(
-        "This file holds the long-term recap that complements the AGENTS, SOUL, and PERSONAL files.",
-    ),
 )
 
 
@@ -560,6 +524,81 @@ async def test_run_memory_sleep_uses_semantic_extraction_service(
 
 
 @pytest.mark.anyio
+async def test_memory_consolidation_reuses_existing_section_for_same_raw_logs(
+    tmp_path: Path,
+) -> None:
+    """A repeat sleep run should not create a second section for the same raws."""
+
+    store = FilesystemMemoryStore(tmp_path / "memory")
+    day = datetime(2026, 5, 18).date()
+    _write_timeline_summary(
+        store,
+        user_id="u1",
+        day=day,
+        section_slug="existing-work-progress",
+        title="Existing work progress",
+        body_lines=["- 何について話した: Earlier summary"],
+        source_chat_ids=["raw-1", "raw-2"],
+    )
+    raw_logs = [
+        MemorySleepSourceItem(
+            id="raw-1",
+            user_id="u1",
+            role="user",
+            chat_type=ChatType.DISCORD,
+            message_content={"payload": {"text": "Discussed project progress."}},
+            created_at=datetime(2026, 5, 18, 10, 0, tzinfo=UTC),
+        ),
+        MemorySleepSourceItem(
+            id="raw-2",
+            user_id="u1",
+            role="assistant",
+            chat_type=ChatType.LINE,
+            message_content={"payload": {"text": "Captured memory update."}},
+            created_at=datetime(2026, 5, 18, 11, 0, tzinfo=UTC),
+        ),
+    ]
+    service = MemoryConsolidationService(
+        semantic_extraction_service=MemorySemanticExtractionService(
+            _FakeAIService(),
+            _FakeAgentProfileService(),
+        ),
+        agent_profile_service=_FakeAgentProfileService(),
+    )
+
+    consolidated_count = await service.consolidate_chat_logs(
+        store,
+        user_id="u1",
+        day=day,
+        raw_logs=raw_logs,
+        reference_time=datetime(2026, 5, 19, tzinfo=UTC),
+    )
+
+    existing_path = store.section_timeline_path(
+        user_id="u1",
+        day=day,
+        section_slug="existing-work-progress",
+    )
+    new_path = store.section_timeline_path(
+        user_id="u1",
+        day=day,
+        section_slug="work-progress",
+    )
+    existing = store.read_document(
+        existing_path,
+        expected_memory_type="timeline",
+        expected_user_id="u1",
+    )
+
+    assert consolidated_count == 1
+    assert existing_path.exists()
+    assert not new_path.exists()
+    assert existing.front_matter["section_slug"] == "existing-work-progress"
+    assert existing.front_matter["source_chat_ids"] == ["raw-1", "raw-2"]
+    assert "Team planning" in existing.body
+
+
+@pytest.mark.anyio
 async def test_memory_consolidation_upserts_relationship_entity_with_clamped_growth(
     tmp_path: Path,
 ) -> None:
@@ -697,7 +736,9 @@ def _write_timeline_summary(
     section_slug: str,
     title: str,
     body_lines: list[str],
+    source_chat_ids: list[str] | None = None,
 ) -> None:
+    resolved_source_chat_ids = source_chat_ids or []
     store.write_document(
         store.section_timeline_path(
             user_id=user_id,
@@ -715,7 +756,7 @@ def _write_timeline_summary(
             "occurred_at": f"{day.isoformat()}T00:00:00+00:00",
             "source": "consolidation",
             "entity_ids": [],
-            "summary_of": [],
+            "summary_of": resolved_source_chat_ids,
             "section_slug": section_slug,
             "section_title": title,
             "consolidation_state": "complete",
@@ -730,7 +771,7 @@ def _write_timeline_summary(
             "confidence": 1.0,
             "pinned": False,
             "metadata": {},
-            "source_chat_ids": [],
+            "source_chat_ids": resolved_source_chat_ids,
             "extraction_confidence": 1.0,
         },
         body="\n".join(["# " + title, "", *body_lines]),

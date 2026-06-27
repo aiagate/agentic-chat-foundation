@@ -50,31 +50,17 @@ class _FakeAgentProfileService(IAgentProfileService):
 
 
 AGENT_PROFILE_BUNDLE = AgentProfileBundle(
-    profile=MemoryProfile(
-        user_id="ai",
-        display_name="Jon Due",
-        summary="A test host persona.",
-        traits=["calm"],
-        preferences=["quiet places"],
-    ),
+    profile=MemoryProfile(user_id="ai"),
     character=CharacterDefinition(
         character_id="jondue",
-        display_name="Jon Due",
         relationship_entity_id="relationship:jondue",
         relationship_entity_label="Relationship with Jon Due",
     ),
     persona_context="Persona Contract:\n- test persona",
-    communication_style=("Speak naturally in English",),
-    known_constraints=("Do not mention being an AI",),
-    atmosphere=("A quiet evening with city lights in the distance.",),
-    behavior=("Maintain a composed, respectful tone.",),
     relationship_entity_id="relationship:jondue",
     relationship_entity_label="Relationship with Jon Due",
     relationship_entity_type="relationship",
     relationship_tag="agent-growth",
-    relationship=("Minimal self-disclosure",),
-    fallback=("Choose something seasonal and quiet",),
-    memory_reading_rules=("Test bundle is read from memory files.",),
 )
 
 
@@ -90,6 +76,12 @@ async def test_run_memory_sleep_handler_invokes_consolidation_service(
     uow.__aexit__ = AsyncMock(return_value=None)
     raw_chat_log_query = mocker.Mock()
     uow.GetRawChatLogQuery = mocker.Mock(return_value=raw_chat_log_query)
+    source_repository = mocker.Mock()
+    source_repository.mark_consolidated = AsyncMock(return_value=Ok(2))
+    uow.GetMemoryConsolidatedChatSourceRepository = mocker.Mock(
+        return_value=source_repository
+    )
+    uow.commit = AsyncMock(return_value=Ok(None))
     memory_sleep_query_service = mocker.Mock(spec=MemorySleepQueryService)
     memory_sleep_query_service.list_pending_targets = AsyncMock(
         return_value=[
@@ -144,6 +136,11 @@ async def test_run_memory_sleep_handler_invokes_consolidation_service(
         "raw-2",
     ]
     assert await_args.kwargs["reference_time"] == datetime(2026, 5, 19, tzinfo=UTC)
+    source_repository.mark_consolidated.assert_awaited_once_with(
+        ["raw-1", "raw-2"],
+        consolidated_at=datetime(2026, 5, 19, tzinfo=UTC),
+    )
+    uow.commit.assert_awaited_once()
 
 
 @pytest.mark.anyio
@@ -274,6 +271,12 @@ async def test_run_memory_sleep_handler_consolidates_sqlite_raw_logs(
         expected_user_id="u1",
     )
     assert morning.front_matter["timeline_type"] == "section_summary"
+    assert morning.front_matter["memory_id"] == "timeline:u1-2026-05-18-morning-routine"
+    assert morning.front_matter["manifest_title"] == "Morning routine"
+    assert (
+        morning.front_matter["manifest_summary"]
+        == "Started the day early | The early start was noted."
+    )
     assert morning.front_matter["section_slug"] == "morning-routine"
     assert morning.front_matter["summary_of"] == [
         "raw-yesterday-discord",
@@ -284,6 +287,12 @@ async def test_run_memory_sleep_handler_consolidates_sqlite_raw_logs(
     assert "Source Chat IDs" not in morning.body
     assert "Evidence" not in morning.body
     assert work.front_matter["section_slug"] == "work-progress"
+    assert work.front_matter["memory_id"] == "timeline:u1-2026-05-18-work-progress"
+    assert work.front_matter["manifest_title"] == "Work progress"
+    assert (
+        work.front_matter["manifest_summary"]
+        == "Reviewed implementation | Compatibility removal was reviewed."
+    )
     assert "Reviewed implementation" in work.body
     assert "Compatibility removal was reviewed." in work.body
     assert "Source Chat IDs" not in work.body

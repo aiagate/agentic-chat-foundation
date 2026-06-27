@@ -127,22 +127,15 @@ async def test_live_gemini_memory_service_returns_same_day_hit(
     database.init_db(f"sqlite+aiosqlite:///{tmp_path / 'scenario.sqlite3'}")
     service = FilesystemMemoryService(
         store=FilesystemMemoryStore(memory_root),
-        embedding_service=embedding_service,
+        index=embedding_service,
         character_id=_character_id(),
     )
 
-    result = await service.retrieve(
-        "お風呂から上がったあとに東京バナナの話をした",
-        "u1",
-    )
+    result = await service.build_context("u1")
 
     assert not is_err(result)
-    assert result.value.search_hits
-    top_hit = result.value.search_hits[0]
-    reference = top_hit.source.reference
-    assert reference is not None
-    assert "2026-05-18" in reference
-    assert reference.endswith("bath-time-chat.md")
+    assert result.value.manifest_items
+    assert "timeline:" in result.value.manifest_items[0].memory_id
     assert "東京バナナ" in (result.value.assembled_context or "")
 
 

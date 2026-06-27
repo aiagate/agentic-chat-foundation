@@ -21,12 +21,14 @@ sequenceDiagram
     participant Raw as IRawChatLogQuery
     participant Service as IMemoryConsolidationService
     participant Store as IMemoryStore
+    participant Projection as memory_consolidated_chat_sources
 
     Worker->>UC: RunMemorySleepCommand
     UC->>Raw: pending raw chat logs
     UC->>UC: group logs by user/day
     UC->>Service: consolidate_chat_logs(store, user_id, day, raw_logs, reference_time)
     Service->>Store: write/update markdown memory
+    UC->>Projection: mark source chat IDs + commit
 ```
 
 ### 実装上の入口
@@ -35,6 +37,8 @@ sequenceDiagram
 - そこから [RunMemorySleepHandler](../../src/app/usecases/memory/run_memory_sleep.py) を呼ぶ
 - `RunMemorySleepHandler` は [IRawChatLogQuery](../../src/app/domain/queries/raw_chat_log_query.py) を使って対象ログを選ぶ
 - 意味圧縮と memory 更新は [IMemoryConsolidationService](../../src/app/contracts/ports/memory_consolidation.py) に委譲する
+- 正常完了したchat IDは`memory_consolidated_chat_sources` projectionへ記録し、次回sleep対象と短期会話履歴から除外する
+- 短期会話セッションは最新のmemory処理境界以降を使用し、memory処理が止まった場合は24時間超の無操作を補助境界とする
 
 ## raw Timeline 書き込み
 
@@ -51,7 +55,8 @@ raw Timeline Markdown を書く。
 
 ## 読み取りとの分離
 
-- read: `RunAgentTurnHandler` -> `RetrieveMemoryContextQuery` -> `IMemoryService.retrieve(...)`
+- read: `RunAgentTurnHandler` -> `RetrieveMemoryContextQuery` -> `IMemoryService.build_context(...)`
+- detailed read: `memory.read` -> `IMemoryService.read_memory(...)`
 - write: `memory.sleep` -> `RunMemorySleepHandler` -> `IMemoryConsolidationService.consolidate_chat_logs(...)`
 - candidate write: `GenericToolExecutor` -> `IMemoryWriteService.add_log(...)`
 

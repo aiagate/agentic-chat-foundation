@@ -30,7 +30,7 @@ async def test_get_recent_history_returns_chronological_order(
             limit=10,
         )
         assert is_ok(result)
-        history = result.value
+        history = result.value.items
 
         assert len(history) == 3
         assert [item.role for item in history] == [
@@ -74,8 +74,40 @@ async def test_get_recent_history_filters_by_scope(
         )
 
     assert is_ok(result)
-    history = result.value
+    history = result.value.items
     assert [item.id for item in history] == ["chat-1", "chat-2", "chat-3"]
+
+
+@pytest.mark.anyio
+async def test_get_recent_history_starts_after_memory_consolidation(
+    uow: IUnitOfWork,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Consolidated rows become a durable conversation boundary."""
+
+    await _seed_chat_rows(session_factory)
+    async with uow:
+        mark_result = await (
+            uow.GetMemoryConsolidatedChatSourceRepository().mark_consolidated(
+                ["chat-1", "chat-2"],
+                consolidated_at=datetime(2026, 5, 19, 3, 0, tzinfo=UTC),
+            )
+        )
+        assert is_ok(mark_result)
+        await uow.commit()
+
+    async with uow:
+        result = await uow.GetChatHistoryQuery().get_recent_history(
+            ChatType.DISCORD,
+            user_id="u1",
+            guild_id="DM",
+            channel_id="123",
+            limit=10,
+        )
+
+    assert is_ok(result)
+    assert [item.id for item in result.value.items] == ["chat-3"]
+    assert result.value.memory_boundary_at == datetime(2026, 5, 18, 10, 5)
 
 
 async def _seed_chat_rows(

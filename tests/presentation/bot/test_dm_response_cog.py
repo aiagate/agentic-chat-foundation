@@ -27,7 +27,7 @@ class _FakeDMChannel:
 @dataclass
 class _FakeMessage:
     author: _FakeAuthor
-    channel: object
+    channel: _FakeDMChannel
     content: str | None
 
 
@@ -62,7 +62,9 @@ async def test_dm_response_cog_saves_text_message(
     await cog.on_message(message)  # type: ignore[arg-type]
 
     send_async.assert_awaited_once()
-    request = send_async.await_args.args[0]
+    await_args = send_async.await_args
+    assert await_args is not None
+    request = await_args.args[0]
     assert isinstance(request, SaveDiscordChatCommand)
     assert request.user_id == "123"
     assert request.guild_id == "DM"

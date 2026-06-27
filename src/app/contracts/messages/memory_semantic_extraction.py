@@ -6,7 +6,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.value_objects.chat_type import ChatType
+from app.contracts.messages.chat_type import ChatType
 
 
 class MemorySleepChatLog(BaseModel):

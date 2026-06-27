@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from flow_res import Result
 
-from app.contracts.messages.chat_history import ChatHistoryItem
+from app.contracts.messages.chat_history import ChatHistoryWindow
 from app.domain.value_objects.chat_type import ChatType
 
 if TYPE_CHECKING:
@@ -25,6 +25,6 @@ class IChatHistoryQuery(ABC):
         guild_id: str | None = None,
         channel_id: str | None = None,
         limit: int = 20,
-    ) -> Result[list[ChatHistoryItem], RepositoryError]:
+    ) -> Result[ChatHistoryWindow, RepositoryError]:
         """指定したチャット種別の最新履歴を取得する。"""
         pass

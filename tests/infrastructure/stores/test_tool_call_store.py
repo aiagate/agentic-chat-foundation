@@ -7,15 +7,10 @@ from typing import Any
 import pytest
 from flow_res import is_err
 
-import app.infrastructure.stores.retrieved_context_store as retrieved_store_module
 import app.infrastructure.stores.tool_call_store as store_module
-import app.infrastructure.stores.tool_execution_lock as lock_module
-from app.contracts.messages.retrieved_context import RetrievedContext
+import app.infrastructure.stores.tool_result_store as result_store_module
 from app.contracts.messages.tool_contracts import ToolCall
-from app.infrastructure.stores.retrieved_context_store import (
-    InMemoryRetrievedContextStore,
-    RedisRetrievedContextStore,
-)
+from app.contracts.messages.tool_result_context import ToolResultContext
 from app.infrastructure.stores.tool_call_store import (
     InMemoryToolCallStore,
     RedisToolCallStore,
@@ -23,6 +18,10 @@ from app.infrastructure.stores.tool_call_store import (
 from app.infrastructure.stores.tool_execution_lock import (
     InMemoryToolExecutionLock,
     RedisToolExecutionLock,
+)
+from app.infrastructure.stores.tool_result_store import (
+    InMemoryToolResultStore,
+    RedisToolResultStore,
 )
 
 CHARACTER_ID = "shirasagi-reina"
@@ -38,7 +37,6 @@ async def test_in_memory_tool_call_store_returns_copy() -> None:
         character_id=CHARACTER_ID,
         tool_name="web_search",
         arguments={"query": "hello"},
-        user_message="searching",
     )
 
     save_result = await store.save(tool_call)
@@ -63,7 +61,6 @@ async def test_in_memory_tool_call_store_separates_characters() -> None:
             character_id="reina",
             tool_name="web_search",
             arguments={"query": "reina"},
-            user_message="searching",
         )
     )
     await store.save(
@@ -72,7 +69,6 @@ async def test_in_memory_tool_call_store_separates_characters() -> None:
             character_id="mio",
             tool_name="web_search",
             arguments={"query": "mio"},
-            user_message="searching",
         )
     )
 
@@ -103,7 +99,7 @@ async def test_redis_tool_call_store_round_trips_payload(mocker: Any) -> None:
 
     redis_stub = RedisStub()
     mocker.patch.object(
-        retrieved_store_module.redis,
+        store_module.redis,
         "from_url",
         return_value=redis_stub,
     )
@@ -113,9 +109,8 @@ async def test_redis_tool_call_store_round_trips_payload(mocker: Any) -> None:
         ToolCall(
             tool_call_id="tool-1",
             character_id=CHARACTER_ID,
-            tool_name="memory.search",
-            arguments={"query": "memory"},
-            user_message="checking memory",
+            tool_name="memory.read",
+            arguments={"memory_id": "entity:memory"},
         )
     )
     loaded_result = await store.get("tool-1", character_id=CHARACTER_ID)
@@ -123,8 +118,8 @@ async def test_redis_tool_call_store_round_trips_payload(mocker: Any) -> None:
     assert not is_err(save_result)
     assert redis_stub.ttl == 30
     assert not is_err(loaded_result)
-    assert loaded_result.value.tool_name == "memory.search"
-    assert loaded_result.value.arguments == {"query": "memory"}
+    assert loaded_result.value.tool_name == "memory.read"
+    assert loaded_result.value.arguments == {"memory_id": "entity:memory"}
 
 
 @pytest.mark.anyio
@@ -154,7 +149,6 @@ async def test_redis_tool_call_store_uses_character_namespaced_keys(
             character_id=CHARACTER_ID,
             tool_name="web_search",
             arguments={"query": "reina"},
-            user_message="searching",
         )
     )
 
@@ -166,17 +160,16 @@ async def test_redis_tool_call_store_uses_character_namespaced_keys(
 
 
 @pytest.mark.anyio
-async def test_in_memory_retrieved_context_store_separates_characters() -> None:
-    """Retrieved context should not cross character boundaries."""
+async def test_in_memory_tool_result_store_separates_characters() -> None:
+    """Tool results should not cross character boundaries."""
 
-    store = InMemoryRetrievedContextStore()
+    store = InMemoryToolResultStore()
     await store.save(
-        RetrievedContext(
+        ToolResultContext(
             tool_call_id="tool-1",
             character_id="reina",
-            query="query",
             tool_name="web_search",
-            items=[],
+            status="ok",
             rendered_text="reina context",
         )
     )
@@ -188,10 +181,10 @@ async def test_in_memory_retrieved_context_store_separates_characters() -> None:
 
 
 @pytest.mark.anyio
-async def test_redis_retrieved_context_store_round_trips_payload(
+async def test_redis_tool_result_store_round_trips_payload(
     mocker: Any,
 ) -> None:
-    """Redis retrieved context should round-trip with TTL and character keys."""
+    """Redis tool results should round-trip with TTL and character keys."""
 
     class RedisStub:
         def __init__(self) -> None:
@@ -207,19 +200,18 @@ async def test_redis_retrieved_context_store_round_trips_payload(
 
     redis_stub = RedisStub()
     mocker.patch.object(
-        lock_module.redis,
+        result_store_module.redis,
         "from_url",
         return_value=redis_stub,
     )
-    store = RedisRetrievedContextStore(redis_url="redis://test", ttl_seconds=45)
+    store = RedisToolResultStore(redis_url="redis://test", ttl_seconds=45)
 
     save_result = await store.save(
-        RetrievedContext(
+        ToolResultContext(
             tool_call_id="tool-1",
             character_id="reina",
-            query="current info",
             tool_name="web_search",
-            items=[],
+            status="ok",
             rendered_text="## Retrieved Context",
         )
     )
@@ -227,7 +219,7 @@ async def test_redis_retrieved_context_store_round_trips_payload(
 
     assert not is_err(save_result)
     assert redis_stub.ttl == 45
-    assert "agent:reina:retrieved_context:tool-1" in redis_stub.values
+    assert "agent:reina:tool_result:tool-1" in redis_stub.values
     assert not is_err(loaded_result)
     assert loaded_result.value.character_id == "reina"
     assert loaded_result.value.rendered_text == "## Retrieved Context"

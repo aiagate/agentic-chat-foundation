@@ -100,27 +100,27 @@ Worker は `src/app/presentation/worker/__main__.py` で `app.presentation.worke
 - Discord は `DirectMessageResponseCog.on_message` で `SaveDiscordChatCommand` を実行します。
 - LINE は `POST /callback` で `SaveLineChatCommand` を実行します。
 - それぞれの UseCase は DB 保存後に `chat.discord.saved` / `chat.line.saved` を publish します。
-- Worker は保存イベントを購読し、`RunAgentTurnQuery` を再起動します。
+- Worker は保存イベントを `chat.agent_turn.requested` に変換し、共通購読経路から `RunAgentTurnQuery` を起動します。
 
 ### 2. Agent turn
 
 - `RunAgentTurnHandler` は LLM の応答を生成します。
-- 生成結果に tool call がない場合、assistant メッセージを保存したあと `chat.discord.reply_ready` または `chat.line.reply_ready` を publish します。
-- tool call がある場合は `RouteToolCallsCommand` に分岐し、reply-ready はこの turn では publish しません。
+- `contents` があれば tool call の有無にかかわらずassistantメッセージを保存し、reply-readyをpublishします。
+- `tool_calls` があれば、返信処理後にすべて `RouteToolCallsCommand` へ渡します。
 
 ### 3. Tool routing
 
 - `RouteToolCallsHandler` は検証済み tool call を `chat.tool.requested` に変換します。
-- 1 turn で retrieval 系 tool は 1 件までに抑えます。
+- 1 turn の tool call をすべて独立してイベントへ変換します。
 - `chat.tool.requested` を受けた Worker は `HandleToolExecutionCommand` を実行します。
 
 ### 4. Tool execution
 
 - `HandleToolExecutionHandler` は `tool_call_id` で `ToolCall` を `IToolCallStore` から引き、
-  `IToolExecutor` を呼び出し、結果の成否に関係なく `chat.tool.completed` を publish します。
+  結果の成否に関係なく `chat.tool.completed` を publish します。
 - `GenericToolExecutor` は tool の種類ごとに実処理を行います。
-- `web_search` と `memory.search` は retrieved context を保存し、後続の `RunAgentTurnQuery` に戻せる形で結果を返します。
-- `line.reply` / `discord.reply` / `discord.post_channel` は reply-ready topic を直接 publish します。
+- 非 send tool は tool result を保存し、`chat.agent_turn.requested` 経由で後続推論へ戻します。
+- `line.send` / `discord.send` は現在の会話スコープへ送信してターンを終了します。
 
 ### 5. Error observation
 
@@ -153,7 +153,7 @@ Worker は `src/app/presentation/worker/__main__.py` で `app.presentation.worke
 `chat.tool.completed` はすべての tool で再入を起こすわけではありません。
 
 - `web_search` の失敗は `tool_failure_context` を付けて `RunAgentTurnQuery` に戻します。
-- `web_search` と `memory.search` の成功は retrieved context を使って `RunAgentTurnQuery` に戻します。
+- `web_search` と `memory.read` の成功は tool result を使って `RunAgentTurnQuery` に戻します。
 - それ以外の tool 完了はここで終了します。
 
 ### App error からの再入
@@ -192,7 +192,7 @@ stateDiagram-v2
     ExecutingTool --> ToolCompleted: publish chat.tool.completed
     ExecutingTool --> ErrorObserved: tool execution error
 
-    ToolCompleted --> RunningAgentTurn: retrieved context or web_search retry
+    ToolCompleted --> RunningAgentTurn: tool result or web_search retry
     ToolCompleted --> [*]: non-retrieval tool completed
 
     PersistingReply --> ReplyReady: publish chat.discord.reply_ready / chat.line.reply_ready
