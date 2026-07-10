@@ -8,14 +8,14 @@ from flow_med import Request, RequestHandler
 from flow_res import Ok, Result
 from injector import inject
 
-from app.contracts.messages.agentic import AgentEnvelope
+from app.contracts.messages.agentic import AgentEnvelope, with_character_id
 from app.contracts.messages.chat_events import (
     CHAT_AGENT_TURN_REQUESTED_TOPIC,
     build_agent_turn_requested_payload,
 )
+from app.contracts.messages.use_case_error import UseCaseError
 from app.contracts.ports.event_bus import IEventBus
 from app.domain.value_objects.chat_type import ChatType
-from app.usecases.result import UseCaseError
 
 
 @dataclass
@@ -56,19 +56,10 @@ class RequestAgentTurnHandler(
                 channel_id=request.channel_id,
                 source_request_id=request.source_request_id,
                 tool_failure_context=request.tool_failure_context,
-                agent_envelope=_with_character_id(
+                agent_envelope=with_character_id(
                     request.agent_context,
                     request.character_id,
                 ),
             ),
         )
         return Ok(None)
-
-
-def _with_character_id(
-    envelope: AgentEnvelope | None,
-    character_id: str,
-) -> AgentEnvelope:
-    if envelope is None:
-        return AgentEnvelope(character_id=character_id)
-    return envelope.model_copy(update={"character_id": character_id})

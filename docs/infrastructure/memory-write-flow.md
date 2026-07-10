@@ -55,7 +55,7 @@ raw Timeline Markdown を書く。
 
 ## 読み取りとの分離
 
-- read: `RunAgentTurnHandler` -> `RetrieveMemoryContextQuery` -> `IMemoryService.build_context(...)`
+- read: `RunAgentTurnHandler` -> `IMemoryService.build_context(...)`
 - detailed read: `memory.read` -> `IMemoryService.read_memory(...)`
 - write: `memory.sleep` -> `RunMemorySleepHandler` -> `IMemoryConsolidationService.consolidate_chat_logs(...)`
 - candidate write: `GenericToolExecutor` -> `IMemoryWriteService.add_log(...)`

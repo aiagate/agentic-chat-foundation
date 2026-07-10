@@ -5,6 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from flow_res import Err, Ok, Result
+
+from app.domain.aggregates.team_membership_errors import (
+    TeamMembershipTransitionError,
+    TeamMembershipTransitionErrorType,
+)
 from app.domain.value_objects import (
     MembershipId,
     MembershipRole,
@@ -97,17 +103,38 @@ class TeamMembership:
     def updated_at(self) -> datetime:
         return self._updated_at
 
-    def change_role(self, new_role: MembershipRole) -> TeamMembership:
+    def change_role(
+        self, new_role: MembershipRole
+    ) -> Result[TeamMembership, TeamMembershipTransitionError]:
         """参加者の役割を変更する。"""
         self._role = new_role
-        return self
+        return Ok(self)
 
-    def activate(self) -> TeamMembership:
+    def activate(self) -> Result[TeamMembership, TeamMembershipTransitionError]:
         """参加状態を有効化する。"""
-        self._status = MembershipStatus.ACTIVE
-        return self
+        if self._status is not MembershipStatus.PENDING:
+            return Err(
+                TeamMembershipTransitionError(
+                    type=TeamMembershipTransitionErrorType.INVALID_STATUS_TRANSITION,
+                    message=(
+                        "Membership can only be activated from PENDING status "
+                        f"(current: {self._status.value})"
+                    ),
+                )
+            )
 
-    def leave(self) -> TeamMembership:
+        self._status = MembershipStatus.ACTIVE
+        return Ok(self)
+
+    def leave(self) -> Result[TeamMembership, TeamMembershipTransitionError]:
         """参加状態を離脱に変更する。"""
+        if self._status is MembershipStatus.LEAVED:
+            return Err(
+                TeamMembershipTransitionError(
+                    type=TeamMembershipTransitionErrorType.INVALID_STATUS_TRANSITION,
+                    message="Membership has already left the team",
+                )
+            )
+
         self._status = MembershipStatus.LEAVED
-        return self
+        return Ok(self)

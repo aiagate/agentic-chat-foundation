@@ -18,9 +18,7 @@ from app.infrastructure.orm_models.memory_consolidated_chat_source_orm import (
 )
 
 
-class MemoryConsolidatedChatSourceRepository(
-    IMemoryConsolidatedChatSourceRepository
-):
+class MemoryConsolidatedChatSourceRepository(IMemoryConsolidatedChatSourceRepository):
     """Persist the exact chat rows completed by memory consolidation."""
 
     def __init__(self, session: AsyncSession) -> None:

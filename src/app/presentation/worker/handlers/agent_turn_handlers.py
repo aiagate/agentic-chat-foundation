@@ -14,7 +14,7 @@ from app.presentation.worker.event_payloads import (
     parse_worker_event_payload,
 )
 from app.presentation.worker.registry import event_handler
-from app.usecases.agent.run_agent_turn import RunAgentTurnQuery
+from app.usecases.agent.run_agent_turn import RunAgentTurnCommand
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ async def on_agent_turn_requested(payload: Mapping[str, object]) -> None:
         logger.warning("Agent turn request missing character_id: %s", payload)
         return
     await Mediator.send_async(
-        RunAgentTurnQuery(
+        RunAgentTurnCommand(
             chat_id=event.chat_id,
             user_id=event.user_id,
             chat_type=event.chat_type,

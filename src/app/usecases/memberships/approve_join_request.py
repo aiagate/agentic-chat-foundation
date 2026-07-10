@@ -7,10 +7,13 @@ from flow_med import Request, RequestHandler
 from flow_res import Err, Ok, Result, is_err
 from injector import inject
 
+from app.contracts.messages.use_case_error import ErrorType, UseCaseError
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.domain.aggregates.team_membership import TeamMembership
-from app.domain.repositories import IUnitOfWork
-from app.domain.value_objects import MembershipId, MembershipStatus
-from app.usecases.result import ErrorType, UseCaseError
+from app.domain.aggregates.team_membership_errors import (
+    TeamMembershipTransitionErrorType,
+)
+from app.domain.value_objects import MembershipId
 
 logger = logging.getLogger(__name__)
 
@@ -72,15 +75,27 @@ class ApproveJoinRequestHandler(
 
             membership = membership_result.unwrap()
 
-            if membership.status != MembershipStatus.PENDING:
+            activation_result = membership.activate()
+            if is_err(activation_result):
+                if (
+                    activation_result.error.type
+                    is TeamMembershipTransitionErrorType.INVALID_STATUS_TRANSITION
+                ):
+                    return Err(
+                        UseCaseError(
+                            type=ErrorType.VALIDATION_ERROR,
+                            message=(
+                                "Membership is not in PENDING status "
+                                f"(current: {membership.status.value})"
+                            ),
+                        )
+                    )
                 return Err(
                     UseCaseError(
-                        type=ErrorType.VALIDATION_ERROR,
-                        message=f"Membership is not in PENDING status (current: {membership.status.value})",
+                        type=ErrorType.UNEXPECTED,
+                        message=activation_result.error.message,
                     )
                 )
-
-            membership.activate()
 
             update_result = await membership_repo.update(membership)
             if is_err(update_result):

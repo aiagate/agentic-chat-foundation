@@ -139,7 +139,9 @@ def _build_prompt(
         "- 自分がどう感じたか",
         "- 相手がどう感じていそうか",
         "- 結果として何が残ったか / 決定事項",
-        "source chat IDs は JSON には返さないでください。呼び出し側が raw logs から決定的に付与します。",
+        "各 section の source_chat_ids には、その section の根拠となった raw log の id だけを返してください。",
+        "source_chat_ids は Raw logs に実在する id だけを使い、1 つ以上指定してください。",
+        "1 つの raw log id を複数の section に重複して割り当てないでください。",
         "返答は 1 つの JSON オブジェクトのみで、次のスキーマに厳密に一致させてください。",
         "{",
         '  "sections": [',
@@ -149,6 +151,7 @@ def _build_prompt(
         '      "day": "YYYY-MM-DD",',
         '      "section_slug": "coffee-break",',
         '      "title": "日本語の短い見出し",',
+        '      "source_chat_ids": ["raw-chat-id"],',
         '      "summary": {',
         '        "topic": "string",',
         '        "self_feeling": "string",',
@@ -298,8 +301,7 @@ def _summarize_text_list(
         return "(none)"
 
     summarized_values = [
-        _summarize_text(value, max_length=max_length)
-        for value in values[:max_items]
+        _summarize_text(value, max_length=max_length) for value in values[:max_items]
     ]
     if len(values) > max_items:
         summarized_values.append(f"...(+{len(values) - max_items} more)")
@@ -399,9 +401,7 @@ def _summarize_generated_content(
     """Return a short preview for log messages."""
 
     preview = " | ".join(
-        content.strip()
-        for content in generated_content.contents
-        if content.strip()
+        content.strip() for content in generated_content.contents if content.strip()
     )
     if not preview:
         return "(empty)"

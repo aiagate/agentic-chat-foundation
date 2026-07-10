@@ -15,13 +15,13 @@
 
 1. `RunAgentTurnHandler` が履歴、memory context、agent profile を集める
 2. `IAIService.generate_content(...)` に tool definitions を渡して推論する
-3. 推論結果が `tool_calls` を含む場合、`RouteToolCallsHandler` が検証して `chat.tool.requested` を発行する
+3. 推論結果が `tool_calls` を含む場合、`IToolCallRouter` が検証して `chat.tool.requested` を発行する
 4. `tool_handlers.py` が `chat.tool.requested` を受け、`HandleToolExecutionCommand` を起動する
 5. `HandleToolExecutionHandler` が `tool_call_id` から `ToolCall` を取得し、`GenericToolExecutor` が `web_search` を実行する
 6. `GenericToolExecutor` が `ToolResultContext` を `tool_call_id` で短期 store に保存する
 7. `HandleToolExecutionHandler` が `chat.tool.completed` を発行する
 8. `tool_handlers.py` が `chat.tool.completed` を `chat.agent_turn.requested` に変換する
-9. 共通 handler が `tool_call_id` 付きで `RunAgentTurnQuery` を起動し、tool resultを再投入する
+9. 共通 handler が `tool_call_id` 付きで `RunAgentTurnCommand` を起動し、tool resultを再投入する
 10. 最終応答を保存し、`chat.*.reply_ready` を発行する
 
 ## DTO
@@ -45,9 +45,9 @@ class GeneratedContent(AgentEnvelope):
     tool_calls: list[ToolCall]
 ```
 
-`tool_call_id` は `RouteToolCallsHandler` で未設定なら採番する。
+`tool_call_id` は `ToolCallRoutingService` で未設定なら採番する。
 以降の tool request、tool completed、tool result store の正本キーはこの ID である。
-`RouteToolCallsHandler` は全 tool call を独立してルーティングする。
+`ToolCallRoutingService` は全 tool call を独立してルーティングする。
 
 ## 現行の補足
 

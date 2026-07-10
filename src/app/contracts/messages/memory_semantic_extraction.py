@@ -70,6 +70,10 @@ class MemoryTimelineSectionPatch(BaseModel):
     day: str = Field(description="Timeline day in YYYY-MM-DD format.")
     section_slug: str = Field(description="Stable section slug.")
     title: str = Field(description="Human-readable section title.")
+    source_chat_ids: list[str] = Field(
+        min_length=1,
+        description="Source chat identifiers belonging to this section.",
+    )
     summary: MemorySectionSummary = Field(description="Structured daily summary.")
     entity_ids: list[str] = Field(
         default_factory=list,

@@ -221,9 +221,7 @@ def _timeline_manifest_summary(content: str) -> str:
 
 def _one_line_excerpt(value: str, *, limit: int = 96) -> str:
     compact = " ".join(
-        line.strip("#*- ").strip()
-        for line in value.splitlines()
-        if line.strip()
+        line.strip("#*- ").strip() for line in value.splitlines() if line.strip()
     ).strip()
     if len(compact) <= limit:
         return compact

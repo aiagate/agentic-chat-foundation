@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock
 import pytest
 from flow_res import is_err, is_ok
 
-from app.domain.repositories import IUnitOfWork
+from app.contracts.messages.use_case_error import ErrorType
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.usecases.memberships.approve_join_request import (
     ApproveJoinRequestCommand,
     ApproveJoinRequestHandler,
@@ -17,7 +18,6 @@ from app.usecases.memberships.request_join_team import (
     RequestJoinTeamCommand,
     RequestJoinTeamHandler,
 )
-from app.usecases.result import ErrorType
 from app.usecases.teams.create_team import CreateTeamCommand, CreateTeamHandler
 from app.usecases.users.create_user import CreateUserCommand, CreateUserHandler
 
@@ -31,7 +31,7 @@ async def test_join_team_success(uow: IUnitOfWork, event_bus: AsyncMock) -> None
     assert is_ok(team_result)
     team_id = team_result.value.id
 
-    user_handler = CreateUserHandler(uow, event_bus)
+    user_handler = CreateUserHandler(uow)
     user_result = await user_handler.handle(
         CreateUserCommand(display_name="User A", email="user@example.com")
     )
@@ -89,7 +89,7 @@ async def test_request_join_team_success(
     team_result = await team_handler.handle(CreateTeamCommand(name="Team B"))
     team_id = team_result.expect("Success").id
 
-    user_handler = CreateUserHandler(uow, event_bus)
+    user_handler = CreateUserHandler(uow)
     user_result = await user_handler.handle(
         CreateUserCommand(display_name="User B", email="userB@example.com")
     )
@@ -119,7 +119,7 @@ async def test_approve_join_request_success(
         .id
     )
 
-    user_handler = CreateUserHandler(uow, event_bus)
+    user_handler = CreateUserHandler(uow)
     user_id = (
         (
             await user_handler.handle(
@@ -163,7 +163,7 @@ async def test_leave_team_success(uow: IUnitOfWork, event_bus: AsyncMock) -> Non
         .id
     )
 
-    user_handler = CreateUserHandler(uow, event_bus)
+    user_handler = CreateUserHandler(uow)
     user_id = (
         (
             await user_handler.handle(
@@ -201,7 +201,7 @@ async def test_change_role_success(uow: IUnitOfWork, event_bus: AsyncMock) -> No
         .id
     )
 
-    user_handler = CreateUserHandler(uow, event_bus)
+    user_handler = CreateUserHandler(uow)
     user_id = (
         (
             await user_handler.handle(

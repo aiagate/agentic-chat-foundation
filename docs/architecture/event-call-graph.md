@@ -20,6 +20,7 @@ flowchart LR
     subgraph "Worker process"
         WorkerBoot["worker/__main__.py"]
         ChatSavedHandlers["chat saved handlers"]
+        AgentTurnHandlers["agent turn handlers"]
         ToolHandlers["tool handlers"]
         ErrorHandlers["app error handlers"]
         UserHandlers["user handlers"]
@@ -29,21 +30,24 @@ flowchart LR
     subgraph "Use cases"
         SaveDiscord["SaveDiscordChatHandler"]
         SaveLine["SaveLineChatHandler"]
+        RequestAgent["RequestAgentTurnHandler"]
         RunAgent["RunAgentTurnHandler"]
-        RouteToolCalls["RouteToolCallsHandler"]
         HandleToolExecution["HandleToolExecutionHandler"]
-        RunWebSearch["RunWebSearchHandler"]
         RunMemorySleep["RunMemorySleepHandler"]
         WelcomeUser["WelcomeUserHandler"]
     end
 
     subgraph "Infrastructure services"
+        AgentReplyWriter["TransactionalAgentReplyWriter"]
+        ToolCallRouter["ToolCallRoutingService"]
         ToolExecutor["GenericToolExecutor"]
+        WebSearchService["IWebSearchService implementation"]
     end
 
     subgraph "Event topics"
         DiscordSaved["chat.discord.saved"]
         LineSaved["chat.line.saved"]
+        AgentTurnRequested["chat.agent_turn.requested"]
         ToolRequested["chat.tool.requested"]
         ToolCompleted["chat.tool.completed"]
         DiscordReplyReady["chat.discord.reply_ready"]
@@ -52,26 +56,28 @@ flowchart LR
         UserCreated["user.created"]
     end
 
-    DiscordIn --> SaveDiscord --> DiscordSaved --> ChatSavedHandlers --> RunAgent
-    LineIn --> SaveLine --> LineSaved --> ChatSavedHandlers --> RunAgent
+    DiscordIn --> SaveDiscord --> DiscordSaved --> ChatSavedHandlers --> RequestAgent
+    LineIn --> SaveLine --> LineSaved --> ChatSavedHandlers --> RequestAgent
+    RequestAgent --> AgentTurnRequested --> AgentTurnHandlers --> RunAgent
 
-    RunAgent --> RouteToolCalls --> ToolRequested --> ToolHandlers --> HandleToolExecution
+    RunAgent --> ToolCallRouter --> ToolRequested --> ToolHandlers --> HandleToolExecution
+    RunAgent --> AgentReplyWriter
     HandleToolExecution --> ToolExecutor
-    ToolExecutor --> RunWebSearch
-    ToolExecutor --> DiscordReplyReady
-    ToolExecutor --> LineReplyReady
-    HandleToolExecution --> ToolCompleted --> ToolHandlers --> RunAgent
+    ToolExecutor --> WebSearchService
+    HandleToolExecution --> AgentReplyWriter
+    HandleToolExecution --> ToolCompleted --> ToolHandlers --> RequestAgent
 
-    RunAgent --> DiscordReplyReady --> DiscordReply
-    RunAgent --> LineReplyReady --> LineReply
+    AgentReplyWriter --> DiscordReplyReady --> DiscordReply
+    AgentReplyWriter --> LineReplyReady --> LineReply
 
     WorkerBoot --> ChatSavedHandlers
+    WorkerBoot --> AgentTurnHandlers
     WorkerBoot --> ToolHandlers
     WorkerBoot --> ErrorHandlers
     WorkerBoot --> UserHandlers
     WorkerBoot --> MemorySleep --> RunMemorySleep
 
-    AppError --> ErrorHandlers --> RunAgent
+    AppError --> ErrorHandlers --> RequestAgent
     UserCreated --> UserHandlers --> WelcomeUser
 ```
 
@@ -82,11 +88,12 @@ Worker は `src/app/presentation/worker/__main__.py` で `app.presentation.worke
 
 | Topic | Subscriber | Next use case |
 | --- | --- | --- |
-| `chat.discord.saved` | `on_discord_chat_saved` | `RunAgentTurnQuery` |
-| `chat.line.saved` | `on_line_chat_saved` | `RunAgentTurnQuery` |
+| `chat.discord.saved` | `on_discord_chat_saved` | `RequestAgentTurnCommand` |
+| `chat.line.saved` | `on_line_chat_saved` | `RequestAgentTurnCommand` |
+| `chat.agent_turn.requested` | `on_agent_turn_requested` | `RunAgentTurnCommand` |
 | `chat.tool.requested` | `on_chat_tool_requested` | `HandleToolExecutionCommand` |
-| `chat.tool.completed` | `on_chat_tool_completed` | `RunAgentTurnQuery` または終了 |
-| `app.error.detected` | `on_app_error_detected` | `RunAgentTurnQuery` または終了 |
+| `chat.tool.completed` | `on_chat_tool_completed` | `RequestAgentTurnCommand` または終了 |
+| `app.error.detected` | `on_app_error_detected` | `RequestAgentTurnCommand` または終了 |
 | `user.created` | `on_user_created` | `WelcomeUserCommand` |
 | `chat.discord.reply_ready` | Discord process の `send_discord_reply` | Discord 送信 |
 | `chat.line.reply_ready` | LINE process の `send_line_reply` | LINE 送信 |
@@ -99,18 +106,18 @@ Worker は `src/app/presentation/worker/__main__.py` で `app.presentation.worke
 
 - Discord は `DirectMessageResponseCog.on_message` で `SaveDiscordChatCommand` を実行します。
 - LINE は `POST /callback` で `SaveLineChatCommand` を実行します。
-- それぞれの UseCase は DB 保存後に `chat.discord.saved` / `chat.line.saved` を publish します。
-- Worker は保存イベントを `chat.agent_turn.requested` に変換し、共通購読経路から `RunAgentTurnQuery` を起動します。
+- それぞれの UseCaseはchatと `chat.discord.saved` / `chat.line.saved` Outboxを同時commitします。
+- Worker は保存イベントを `chat.agent_turn.requested` に変換し、共通購読経路から `RunAgentTurnCommand` を起動します。
 
 ### 2. Agent turn
 
 - `RunAgentTurnHandler` は LLM の応答を生成します。
 - `contents` があれば tool call の有無にかかわらずassistantメッセージを保存し、reply-readyをpublishします。
-- `tool_calls` があれば、返信処理後にすべて `RouteToolCallsCommand` へ渡します。
+- `tool_calls` があれば、返信処理後にすべて `IToolCallRouter` へ渡します。
 
 ### 3. Tool routing
 
-- `RouteToolCallsHandler` は検証済み tool call を `chat.tool.requested` に変換します。
+- `ToolCallRoutingService` は検証済み tool call を `chat.tool.requested` に変換します。
 - 1 turn の tool call をすべて独立してイベントへ変換します。
 - `chat.tool.requested` を受けた Worker は `HandleToolExecutionCommand` を実行します。
 
@@ -126,7 +133,7 @@ Worker は `src/app/presentation/worker/__main__.py` で `app.presentation.worke
 
 - `mediator_observer.install(...)` は `Mediator.send_async(...)` を差し替えます。
 - UseCase が例外または `Result` エラーを返すと `app.error.detected` を publish します。
-- Worker の `on_app_error_detected` は inference 系の失敗を除き、`RunAgentTurnQuery` を再起動します。
+- Worker の `on_app_error_detected` は inference 系の失敗を除き、`RunAgentTurnCommand` を再起動します。
 
 ### 6. User onboarding
 
@@ -152,13 +159,13 @@ Worker は `src/app/presentation/worker/__main__.py` で `app.presentation.worke
 
 `chat.tool.completed` はすべての tool で再入を起こすわけではありません。
 
-- `web_search` の失敗は `tool_failure_context` を付けて `RunAgentTurnQuery` に戻します。
-- `web_search` と `memory.read` の成功は tool result を使って `RunAgentTurnQuery` に戻します。
+- `web_search` の失敗は `tool_failure_context` を付けて `RunAgentTurnCommand` に戻します。
+- `web_search` と `memory.read` の成功は tool result を使って `RunAgentTurnCommand` に戻します。
 - それ以外の tool 完了はここで終了します。
 
 ### App error からの再入
 
-`app.error.detected` は `RetrieveMemoryContextQuery` と `RunAgentTurnQuery` の失敗を除外します。
+`app.error.detected` は `RunAgentTurnCommand` の失敗を除外します。
 それ以外の失敗だけを Agent の再入点として扱います。
 
 ## 実装メモ
@@ -166,7 +173,7 @@ Worker は `src/app/presentation/worker/__main__.py` で `app.presentation.worke
 - Worker の handler は `src/app/presentation/worker/handlers/__init__.py` から集約されています。
 - `chat.discord.reply_ready` は Discord process のみが購読します。
 - `chat.line.reply_ready` は LINE process のみが購読します。
-- `RunAgentTurnHandler` と `GenericToolExecutor` の両方が reply-ready topic を publish するため、reply の発火元は 1 箇所ではありません。
+- `RunAgentTurnHandler` と `GenericToolExecutor` はともに `IAgentReplyWriter` を使い、reply-ready Outboxの生成を一箇所へ集約します。
 
 ## 状態遷移図
 
@@ -178,7 +185,7 @@ stateDiagram-v2
     [*] --> ReceivingMessage
 
     ReceivingMessage --> PersistingIncomingChat: SaveDiscordChatCommand / SaveLineChatCommand
-    PersistingIncomingChat --> IncomingChatSaved: DB commit + publish chat.*.saved
+    PersistingIncomingChat --> IncomingChatSaved: chat + Outbox atomic commit
     PersistingIncomingChat --> [*]: save failure
 
     IncomingChatSaved --> RunningAgentTurn: Worker subscribes saved event

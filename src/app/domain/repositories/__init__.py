@@ -7,7 +7,6 @@ from app.domain.repositories.interfaces import (
     IMemoryConsolidatedChatSourceRepository,
     IRepository,
     IRepositoryWithId,
-    IUnitOfWork,
     RepositoryError,
     RepositoryErrorType,
 )
@@ -19,7 +18,6 @@ __all__ = [
     "IRepositoryWithId",
     "IChatHistoryQuery",
     "IRawChatLogQuery",
-    "IUnitOfWork",
     "RepositoryError",
     "RepositoryErrorType",
 ]

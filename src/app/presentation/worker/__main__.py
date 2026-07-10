@@ -9,6 +9,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from flow_med import Mediator
+from flow_res import is_err
 from injector import Injector
 
 from app import container
@@ -16,6 +17,7 @@ from app.contracts.ports.event_bus import IEventBus
 from app.infrastructure.database import init_db
 from app.infrastructure.mediator_observer import install as install_mediator_observer
 from app.presentation.worker.registry import EventRegistry
+from app.usecases.memory.rebuild_memory_index import RebuildMemoryIndexCommand
 
 logging.basicConfig(
     level=logging.INFO,
@@ -124,12 +126,20 @@ async def main() -> None:
 
     # 1. データベースとDIコンテナの初期化
     db_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./bot.db")
-    init_db(db_url, echo=True)
+    init_db(db_url, echo=False)
 
     injector = Injector([container.configure])
 
     # Mediatorの初期化
     Mediator.initialize(injector)
+
+    rebuild_result = await Mediator.send_async(RebuildMemoryIndexCommand())
+    if is_err(rebuild_result):
+        raise RuntimeError(str(rebuild_result.error))
+    logger.info(
+        "Memory index projection rebuilt: %s rows",
+        rebuild_result.value.indexed_count,
+    )
 
     # 2. EventBusの取得
     event_bus = injector.get(IEventBus)
@@ -143,6 +153,7 @@ async def main() -> None:
         await event_bus.subscribe(topic, handler)
         logger.info("Registered event handler for topic: %s", topic)
 
+    await event_bus.start()
     _start_scheduled_tasks(registry)
 
     logger.info("Worker process initialized and listening for events.")
@@ -163,9 +174,6 @@ async def main() -> None:
         except NotImplementedError:
             # add_signal_handler がサポートされていない環境（Windows等）
             pass
-
-    # 5. イベントバスの起動
-    await event_bus.start()
 
     try:
         # 停止信号を待機

@@ -80,9 +80,7 @@ class SQLAlchemyRawChatLogQuery(IRawChatLogQuery):
             conditions: list[Any] = [
                 table.c.user_id == user_id,
                 table.c.type == chat_type.to_primitive(),
-                ~exists().where(
-                    MemoryConsolidatedChatSourceORM.chat_id == table.c.id
-                ),
+                ~exists().where(MemoryConsolidatedChatSourceORM.chat_id == table.c.id),
             ]
             if since is not None:
                 conditions.append(table.c.created_at >= since)

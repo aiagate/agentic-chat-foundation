@@ -14,8 +14,8 @@ from flow_med import Mediator, Request
 from flow_res import Err, Ok, Result, is_err
 
 from app.contracts.messages.app_error import APP_ERROR_DETECTED_TOPIC
+from app.contracts.messages.use_case_error import ErrorType, UseCaseError
 from app.infrastructure import mediator_observer
-from app.usecases.result import ErrorType, UseCaseError
 
 
 @dataclass

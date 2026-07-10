@@ -6,13 +6,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, auto
-from typing import Any, overload
 
 from flow_res import Result
 
 from app.domain.aggregates.chat import Chat
-from app.domain.queries.chat_history_query import IChatHistoryQuery
-from app.domain.queries.raw_chat_log_query import IRawChatLogQuery
 
 
 class RepositoryErrorType(Enum):
@@ -98,93 +95,4 @@ class IMemoryConsolidatedChatSourceRepository(ABC):
     ) -> Result[int, RepositoryError]:
         """指定chat IDをmemory処理済みとして記録する。"""
 
-        pass
-
-
-class IUnitOfWork(ABC):
-    """トランザクション境界を表す Unit of Work 契約。"""
-
-    @overload
-    def GetRepository[T](self, entity_type: type[T]) -> IRepository[T]:
-        """追加・更新・削除用のリポジトリを取得する。
-
-        Args:
-            entity_type: ドメインエンティティ型。
-
-        Returns:
-            リポジトリ実装。
-        """
-        ...
-
-    @overload
-    def GetRepository[T, K](
-        self, entity_type: type[T], key_type: type[K]
-    ) -> IRepositoryWithId[T, K]:
-        """ID 参照付きリポジトリを取得する。
-
-        Args:
-            entity_type: ドメインエンティティ型。
-            key_type: 主キー型。
-
-        Returns:
-            ID 参照を含むリポジトリ実装。
-        """
-        ...
-
-    @abstractmethod
-    def GetRepository[T, K](
-        self, entity_type: type[T], key_type: type[K] | None = None
-    ) -> IRepository[T] | IRepositoryWithId[T, K]:
-        """エンティティ型に対応するリポジトリを取得する。
-
-        Args:
-            entity_type: ドメインエンティティ型。
-            key_type: 任意の主キー型。
-
-        Returns:
-            リポジトリ実装。
-        """
-        pass
-
-    @abstractmethod
-    async def commit(self) -> Result[None, RepositoryError]:
-        """トランザクションを確定する。"""
-        pass
-
-    @abstractmethod
-    async def rollback(self) -> None:
-        """トランザクションを破棄して巻き戻す。"""
-        pass
-
-    @abstractmethod
-    def GetChatHistoryQuery(self) -> IChatHistoryQuery:
-        """チャット履歴クエリを取得する。"""
-        pass
-
-    @abstractmethod
-    def GetRawChatLogQuery(self) -> IRawChatLogQuery:
-        """生ログクエリを取得する。"""
-        pass
-
-    @abstractmethod
-    def GetChatRecordRepository(self) -> IChatRecordRepository:
-        """チャット正本の書き込みリポジトリを取得する。"""
-        pass
-
-    @abstractmethod
-    def GetMemoryConsolidatedChatSourceRepository(
-        self,
-    ) -> IMemoryConsolidatedChatSourceRepository:
-        """memory処理済みchat projectionのrepositoryを取得する。"""
-
-        pass
-
-    @abstractmethod
-    async def __aenter__(self) -> IUnitOfWork:
-        """非同期コンテキストに入る。"""
-        pass
-
-    @abstractmethod
-    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        """非同期コンテキストを抜ける。"""
         pass

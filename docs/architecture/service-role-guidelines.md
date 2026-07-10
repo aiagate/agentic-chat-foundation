@@ -48,7 +48,7 @@
 
 - `GptService` と `GeminiService` は、外部 AI 境界の差し替え実装なので `Service` として妥当である。
 - `OllamaWebSearchService` は、外部 web search API のアダプタなので `Service` として妥当である。
-- `FilesystemMemoryService` は、`src/app/infrastructure/memory/store.py` と検索インデックスを束ねる取得オーケストレーションなので `Service` として妥当である。
+- `FilesystemMemoryService` は、main DB projection query と Markdown store を束ねる取得オーケストレーションなので `Service` として妥当である。
 - `FilesystemAgentProfileService` は、プロファイル束の読み込みサービスなので `Service` として妥当である。
 - `MemoryConsolidationService` は、抽出結果の反映というオーケストレーションを持つため `Service` として妥当である。
 - `GenericToolExecutor` は、tool ごとの実行先をまとめるアダプタなので `Service` として妥当である。

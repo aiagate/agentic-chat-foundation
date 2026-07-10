@@ -24,7 +24,7 @@ from app.presentation.worker.handlers.tool_handlers import (
 from app.presentation.worker.handlers.user_handlers import on_user_created
 from app.usecases.agent.handle_tool_execution import HandleToolExecutionCommand
 from app.usecases.agent.request_agent_turn import RequestAgentTurnCommand
-from app.usecases.agent.run_agent_turn import RunAgentTurnQuery
+from app.usecases.agent.run_agent_turn import RunAgentTurnCommand
 from app.usecases.memory.run_memory_sleep import RunMemorySleepCommand
 from app.usecases.users.welcome_user import WelcomeUserCommand
 
@@ -50,7 +50,7 @@ async def test_agent_turn_requested_handler_triggers_generation(
     )
 
     request = cast(Any, send_async.await_args).args[0]
-    assert isinstance(request, RunAgentTurnQuery)
+    assert isinstance(request, RunAgentTurnCommand)
     assert request.tool_call_id == "tool-1"
 
 
@@ -316,7 +316,7 @@ async def test_app_error_detected_handler_triggers_agent_reentry(
 
     await on_app_error_detected(
         {
-            "operation": "RunWebSearchCommand",
+            "operation": "CreateTeamCommand",
             "error_code": "unexpected",
             "message": "Search failed",
             "character_id": "shirasagi-reina",
@@ -338,7 +338,7 @@ async def test_app_error_detected_handler_triggers_agent_reentry(
     assert request.agent_context is not None
     assert request.agent_context.agent_run_id == "run-7"
     assert request.tool_failure_context is not None
-    assert "RunWebSearchCommand failed with unexpected" in (
+    assert "CreateTeamCommand failed with unexpected" in (
         request.tool_failure_context
     )
 
@@ -354,7 +354,7 @@ async def test_app_error_detected_handler_skips_inference_errors(
 
     await on_app_error_detected(
         {
-            "operation": "RunAgentTurnQuery",
+            "operation": "RunAgentTurnCommand",
             "error_code": "unexpected",
             "message": "LLM failed",
             "chat_id": "chat-1",
@@ -377,7 +377,7 @@ async def test_app_error_detected_handler_requires_route_fields(
 
     await on_app_error_detected(
         {
-            "operation": "RunWebSearchCommand",
+            "operation": "CreateTeamCommand",
             "error_code": "unexpected",
             "message": "Search failed",
         }

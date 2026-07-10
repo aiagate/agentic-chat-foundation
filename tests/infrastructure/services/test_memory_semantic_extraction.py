@@ -17,8 +17,10 @@ from app.contracts.messages.chat_history import ChatHistoryItem
 from app.contracts.messages.generated_content import GeneratedContent
 from app.contracts.messages.memory_context import MemoryProfile
 from app.contracts.messages.memory_semantic_extraction import (
+    MemorySectionSummary,
     MemorySemanticExtractionRequest,
     MemorySleepChatLog,
+    MemoryTimelineSectionPatch,
 )
 from app.contracts.messages.relationship_growth import MAX_DAILY_SCORE_INCREASE
 from app.contracts.messages.tool_contracts import ToolDefinition
@@ -27,7 +29,10 @@ from app.contracts.ports.ai_service import AIServiceError, IAIService
 from app.domain.queries.raw_chat_log_query import MemorySleepSourceItem
 from app.domain.value_objects.chat_type import ChatType
 from app.infrastructure.memory.store import FilesystemMemoryStore
-from app.infrastructure.services.memory_consolidation import MemoryConsolidationService
+from app.infrastructure.services.memory_consolidation import (
+    MemoryConsolidationService,
+    _validate_section_source_chat_ids,
+)
 from app.infrastructure.services.memory_semantic_extraction import (
     MemorySemanticExtractionService,
 )
@@ -50,6 +55,7 @@ class _FakeAIService(IAIService):
                     "day": "2026-05-18",
                     "section_slug": "work-progress",
                     "title": "Work progress",
+                    "source_chat_ids": ["raw-1", "raw-2"],
                     "summary": {
                         "topic": "Team planning",
                         "self_feeling": "Focused and steady.",
@@ -126,6 +132,7 @@ class _RetryingAIService(IAIService):
                     "day": "2026-05-18",
                     "section_slug": "work-progress",
                     "title": "Work progress",
+                    "source_chat_ids": ["raw-1", "raw-2"],
                     "summary": {
                         "topic": "Team planning",
                         "self_feeling": "Focused and steady.",
@@ -198,6 +205,46 @@ AGENT_PROFILE_BUNDLE = AgentProfileBundle(
 )
 
 
+def _section_patch(
+    section_id: str,
+    source_chat_ids: list[str],
+) -> MemoryTimelineSectionPatch:
+    return MemoryTimelineSectionPatch(
+        id=section_id,
+        user_id="u1",
+        day="2026-05-18",
+        section_slug=section_id,
+        title=section_id,
+        source_chat_ids=source_chat_ids,
+        summary=MemorySectionSummary(
+            topic="topic",
+            self_feeling="feeling",
+            other_feeling="other feeling",
+            outcome="outcome",
+        ),
+        confidence=0.9,
+    )
+
+
+def test_section_source_chat_ids_must_reference_available_raw_logs() -> None:
+    with pytest.raises(ValueError, match="unknown source_chat_ids"):
+        _validate_section_source_chat_ids(
+            [_section_patch("section-one", ["raw-unknown"])],
+            available_source_chat_ids=["raw-1"],
+        )
+
+
+def test_source_chat_id_must_belong_to_exactly_one_section() -> None:
+    with pytest.raises(ValueError, match="exactly one section"):
+        _validate_section_source_chat_ids(
+            [
+                _section_patch("section-one", ["raw-1"]),
+                _section_patch("section-two", ["raw-1"]),
+            ],
+            available_source_chat_ids=["raw-1"],
+        )
+
+
 class _RelationshipAIService(IAIService):
     async def generate_content(
         self,
@@ -254,6 +301,7 @@ async def test_memory_semantic_extraction_service_parses_structured_json() -> No
     result = await service.extract_memory_updates(request)
 
     assert is_ok(result)
+    assert result.value.sections[0].source_chat_ids == ["raw-1", "raw-2"]
     assert result.value.sections[0].summary.topic == "Team planning"
     assert result.value.sections[0].summary.self_feeling == "Focused and steady."
     assert result.value.sections[0].summary.outcome == "The memory update was agreed."
@@ -453,6 +501,8 @@ async def test_memory_consolidation_includes_recent_timeline_summaries_in_prompt
 
     assert consolidated_count == 1
     assert recording_ai.last_prompt is not None
+    assert '"source_chat_ids": ["raw-chat-id"]' in recording_ai.last_prompt
+    assert "1 つの raw log id を複数の section" in recording_ai.last_prompt
     assert "既存の Timeline 要約:" in recording_ai.last_prompt
     assert "2026-05-17:" in recording_ai.last_prompt
     assert "Yesterday summary" in recording_ai.last_prompt

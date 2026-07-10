@@ -3,8 +3,8 @@
 import pytest
 from flow_res import is_ok
 
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.domain.aggregates.user import User
-from app.domain.repositories import IUnitOfWork
 from app.domain.value_objects import DisplayName, Email, UserId
 from app.usecases.users.welcome_user import WelcomeUserCommand, WelcomeUserHandler
 

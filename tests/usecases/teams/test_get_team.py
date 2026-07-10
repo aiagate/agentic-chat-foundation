@@ -3,10 +3,10 @@
 import pytest
 from flow_res import is_err, is_ok
 
+from app.contracts.messages.use_case_error import ErrorType
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.domain.aggregates.team import Team
-from app.domain.repositories import IUnitOfWork
 from app.domain.value_objects import TeamName
-from app.usecases.result import ErrorType
 from app.usecases.teams.get_team import GetTeamHandler, GetTeamQuery
 
 

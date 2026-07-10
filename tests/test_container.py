@@ -6,19 +6,33 @@ import pytest
 from injector import Injector
 
 from app import container
+from app.contracts.ports.agent_inference_context import IAgentInferenceContextService
+from app.contracts.ports.agent_reply_writer import IAgentReplyWriter
 from app.contracts.ports.event_bus import IEventBus
 from app.contracts.ports.memory_consolidation import IMemoryConsolidationService
 from app.contracts.ports.memory_service import IMemoryService
 from app.contracts.ports.memory_store import IMemoryStore
+from app.contracts.ports.tool_call_router import IToolCallRouter
+from app.contracts.ports.tool_completion_notifier import IToolCompletionNotifier
 from app.contracts.ports.tool_execution_lock import IToolExecutionLock
-from app.domain.repositories import IUnitOfWork
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.infrastructure.memory.store import FilesystemMemoryStore
 from app.infrastructure.messaging.in_memory_event_bus import InMemoryEventBus
 from app.infrastructure.messaging.redis_event_bus import RedisEventBus
+from app.infrastructure.services.agent_inference_context import (
+    AgentInferenceContextService,
+)
+from app.infrastructure.services.agent_reply_writer import (
+    TransactionalAgentReplyWriter,
+)
 from app.infrastructure.services.memory_consolidation import (
     MemoryConsolidationService,
 )
 from app.infrastructure.services.memory_service import FilesystemMemoryService
+from app.infrastructure.services.tool_call_router import ToolCallRoutingService
+from app.infrastructure.services.tool_completion_notifier import (
+    EventBusToolCompletionNotifier,
+)
 from app.infrastructure.stores.tool_execution_lock import RedisToolExecutionLock
 from app.infrastructure.unit_of_work import SQLAlchemyUnitOfWork
 from tests._agent_profile_fixture import copy_agent_profile_bundle
@@ -42,6 +56,10 @@ async def test_di_container_bindings(
     memory_store = injector.get(IMemoryStore)
     memory_consolidation_service = injector.get(IMemoryConsolidationService)
     memory_service = injector.get(IMemoryService)
+    agent_reply_writer = injector.get(IAgentReplyWriter)
+    tool_call_router = injector.get(IToolCallRouter)
+    inference_context_service = injector.get(IAgentInferenceContextService)
+    tool_completion_notifier = injector.get(IToolCompletionNotifier)
 
     assert isinstance(uow_instance, SQLAlchemyUnitOfWork)
     assert isinstance(memory_store, FilesystemMemoryStore)
@@ -50,6 +68,10 @@ async def test_di_container_bindings(
         MemoryConsolidationService,
     )
     assert isinstance(memory_service, FilesystemMemoryService)
+    assert isinstance(agent_reply_writer, TransactionalAgentReplyWriter)
+    assert isinstance(tool_call_router, ToolCallRoutingService)
+    assert isinstance(inference_context_service, AgentInferenceContextService)
+    assert isinstance(tool_completion_notifier, EventBusToolCompletionNotifier)
 
 
 @pytest.mark.anyio

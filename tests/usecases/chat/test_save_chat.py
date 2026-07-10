@@ -1,26 +1,27 @@
 """Tests for save chat use case."""
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from flow_res import is_err
+from sqlalchemy import select
 
 from app.contracts.messages.chat_events import DISCORD_CHAT_SAVED_TOPIC
-from app.domain.repositories import IUnitOfWork
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.domain.value_objects.chat_type import ChatType
+from app.infrastructure.orm_models.outbox_message_orm import OutboxMessageORM
 from app.usecases.chat.save_discord_chat import (
-    SaveChatHandler,
     SaveDiscordChatCommand,
+    SaveDiscordChatHandler,
 )
 
 
 @pytest.mark.anyio
 async def test_save_chat_persists_discord_message(
     uow: IUnitOfWork,
-    event_bus: Any,
 ) -> None:
     """Test that incoming DM messages are persisted."""
-    handler = SaveChatHandler(uow, event_bus)
+    handler = SaveDiscordChatHandler(uow)
 
     result = await handler.handle(
         SaveDiscordChatCommand(
@@ -33,17 +34,14 @@ async def test_save_chat_persists_discord_message(
 
     assert not is_err(result)
     assert result.value.id
-    event_bus.publish.assert_awaited_once_with(
-        DISCORD_CHAT_SAVED_TOPIC,
-        {
-            "chat_id": result.value.id,
-            "user_id": "u1",
-            "guild_id": "DM",
-            "channel_id": "123",
-        },
-    )
-
     async with uow:
+        session = cast(Any, uow)._session
+        outbox_result = await session.execute(select(OutboxMessageORM))
+        outbox_message = outbox_result.scalar_one()
+        assert outbox_message.topic == DISCORD_CHAT_SAVED_TOPIC
+        assert outbox_message.payload["chat_id"] == result.value.id
+        assert outbox_message.payload["event_id"] == outbox_message.id
+
         raw_query = uow.GetRawChatLogQuery()
         raw_history = await raw_query.get_memory_sleep_source_items(
             "u1",

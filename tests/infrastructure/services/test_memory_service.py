@@ -3,13 +3,19 @@
 from pathlib import Path
 
 import pytest
-from flow_res import is_err
+from flow_res import Ok, Result, is_err
 
 from app.contracts.messages.memory_context import (
     MemoryContextPack,
     MemoryEntity,
     MemoryProfile,
 )
+from app.contracts.messages.memory_index import MemoryIndexDocument
+from app.contracts.ports.memory_index_query import (
+    IMemoryIndexQuery,
+    MemoryIndexQueryError,
+)
+from app.infrastructure.memory.context_loader import read_index_documents
 from app.infrastructure.memory.markdown import (
     MemoryMarkdownError,
     parse_memory_markdown,
@@ -17,10 +23,8 @@ from app.infrastructure.memory.markdown import (
 )
 from app.infrastructure.memory.store import (
     FilesystemMemoryStore,
+    default_memory_root,
     encode_path_segment,
-)
-from app.infrastructure.queries.memory_index_query_service import (
-    FilesystemMemoryIndex,
 )
 from app.infrastructure.services.agent_profile_service import (
     FilesystemAgentProfileService,
@@ -33,6 +37,43 @@ from tests._agent_profile_fixture import (
     _character_id,
     copy_agent_profile_bundle,
 )
+
+
+class _FilesystemProjectionQuery(IMemoryIndexQuery):
+    """Unit-test query that projects the fixture Markdown documents in memory."""
+
+    def __init__(self, store: FilesystemMemoryStore) -> None:
+        self._store = store
+
+    async def list_documents(
+        self,
+        *,
+        user_id: str,
+        character_id: str,
+        relationship_entity_id: str,
+    ) -> Result[list[MemoryIndexDocument], MemoryIndexQueryError]:
+        return Ok(
+            read_index_documents(
+                self._store,
+                user_id,
+                character_id=character_id,
+                relationship_entity_id=relationship_entity_id,
+            )
+        )
+
+
+def _memory_service(
+    *,
+    store: FilesystemMemoryStore | None = None,
+    agent_profile_service: FilesystemAgentProfileService | None = None,
+    character_id: str,
+) -> FilesystemMemoryService:
+    resolved_store = store or FilesystemMemoryStore(default_memory_root())
+    return FilesystemMemoryService(
+        index_query=_FilesystemProjectionQuery(resolved_store),
+        agent_profile_service=agent_profile_service,
+        character_id=character_id,
+    )
 
 
 def test_filesystem_agent_profile_service_loads_localized_bundle() -> None:
@@ -62,7 +103,7 @@ async def test_filesystem_memory_service_build_context_returns_manifest_pack(
         store=FilesystemMemoryStore(tmp_path / "memory"),
         character_id=character_id,
     )
-    service = FilesystemMemoryService(
+    service = _memory_service(
         store=FilesystemMemoryStore(tmp_path / "memory"),
         agent_profile_service=agent_profile_service,
         character_id=character_id,
@@ -117,7 +158,7 @@ async def test_filesystem_memory_service_writes_profile_and_entities(
             confidence=0.9,
         )
     )
-    service = FilesystemMemoryService(
+    service = _memory_service(
         store=FilesystemMemoryStore(tmp_path / "memory"),
         character_id=_character_id(),
     )
@@ -151,7 +192,7 @@ async def test_filesystem_memory_service_reads_entity_by_memory_id(
     tmp_path: Path,
 ) -> None:
     """Detailed memory reads should keep properties and missing attributes."""
-    service = FilesystemMemoryService(
+    service = _memory_service(
         store=FilesystemMemoryStore(tmp_path / "memory"),
         character_id=_character_id(),
     )
@@ -222,7 +263,7 @@ async def test_filesystem_memory_service_filters_non_selected_relationship_entit
             confidence=1.0,
         )
     )
-    service = FilesystemMemoryService(
+    service = _memory_service(
         store=FilesystemMemoryStore(tmp_path / "memory"),
         agent_profile_service=FilesystemAgentProfileService(
             store=FilesystemMemoryStore(tmp_path / "memory"),
@@ -253,7 +294,7 @@ async def test_filesystem_memory_service_writes_timeline_markdown(
         content="remember this",
         metadata={"chat_type": "DISCORD"},
     )
-    service = FilesystemMemoryService(
+    service = _memory_service(
         store=FilesystemMemoryStore(tmp_path / "memory"),
         character_id=_character_id(),
     )
@@ -271,9 +312,8 @@ async def test_filesystem_memory_service_writes_timeline_markdown(
     assert timeline_manifest[0].when is not None
     assert timeline_manifest[0].title == "remember this"
     assert timeline_manifest[0].summary == "remember this"
-    assert (
-        f"{timeline_manifest[0].memory_id} | when={timeline_manifest[0].when}"
-        in (result.value.assembled_context or "")
+    assert f"{timeline_manifest[0].memory_id} | when={timeline_manifest[0].when}" in (
+        result.value.assembled_context or ""
     )
 
     files = sorted((tmp_path / "memory" / "timeline" / "u1" / "raw").rglob("*.md"))
@@ -341,7 +381,7 @@ async def test_filesystem_memory_service_returns_err_for_malformed_user_file(
     tmp_path: Path,
 ) -> None:
     """Malformed selected user-scoped files should become MemoryServiceError."""
-    service = FilesystemMemoryService(
+    service = _memory_service(
         store=FilesystemMemoryStore(tmp_path / "memory"),
         character_id=_character_id(),
     )
@@ -362,7 +402,7 @@ async def test_filesystem_memory_service_rejects_path_scope_mismatch(
     tmp_path: Path,
 ) -> None:
     """A file under one user scope must not claim another front matter user_id."""
-    service = FilesystemMemoryService(
+    service = _memory_service(
         store=FilesystemMemoryStore(tmp_path / "memory"),
         character_id=_character_id(),
     )
@@ -401,7 +441,7 @@ async def test_filesystem_memory_service_prefers_memory_root_env(
     monkeypatch.setenv("MEMORY_ROOT", str(preferred_root))
 
     copy_agent_profile_bundle(preferred_root)
-    service = FilesystemMemoryService(character_id=_character_id())
+    service = _memory_service(character_id=_character_id())
     result = await service.build_context("u1")
 
     assert not is_err(result)
@@ -423,18 +463,17 @@ async def test_filesystem_memory_service_prefers_memory_root_env(
 
 
 @pytest.mark.anyio
-async def test_filesystem_memory_service_accepts_concrete_index(
+async def test_filesystem_memory_service_accepts_projection_query(
     tmp_path: Path,
 ) -> None:
-    """The service should accept the concrete filesystem index implementation."""
+    """The service should resolve documents through its projection query."""
     copy_agent_profile_bundle(tmp_path / "memory")
     agent_profile_service = FilesystemAgentProfileService(
         store=FilesystemMemoryStore(tmp_path / "memory"),
         character_id=_character_id(),
     )
-    service = FilesystemMemoryService(
+    service = _memory_service(
         store=FilesystemMemoryStore(tmp_path / "memory"),
-        index=FilesystemMemoryIndex(),
         agent_profile_service=agent_profile_service,
         character_id=_character_id(),
     )

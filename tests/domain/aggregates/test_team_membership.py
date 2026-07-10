@@ -2,6 +2,8 @@
 
 from datetime import UTC, datetime
 
+from flow_res import is_err, is_ok
+
 from app.domain.aggregates.team_membership import TeamMembership
 from app.domain.value_objects import (
     MembershipRole,
@@ -45,8 +47,9 @@ def test_team_membership_change_role() -> None:
     user_id = UserId.generate().expect("Success")
     membership = TeamMembership.join(team_id=team_id, user_id=user_id)
 
-    membership.change_role(MembershipRole.ADMIN)
+    result = membership.change_role(MembershipRole.ADMIN)
 
+    assert is_ok(result)
     assert membership.role == MembershipRole.ADMIN
 
 
@@ -56,8 +59,9 @@ def test_team_membership_activate() -> None:
     user_id = UserId.generate().expect("Success")
     membership = TeamMembership.request_join(team_id=team_id, user_id=user_id)
 
-    membership.activate()
+    result = membership.activate()
 
+    assert is_ok(result)
     assert membership.status == MembershipStatus.ACTIVE
 
 
@@ -67,8 +71,34 @@ def test_team_membership_leave() -> None:
     user_id = UserId.generate().expect("Success")
     membership = TeamMembership.join(team_id=team_id, user_id=user_id)
 
-    membership.leave()
+    result = membership.leave()
 
+    assert is_ok(result)
+    assert membership.status == MembershipStatus.LEAVED
+
+
+def test_team_membership_activate_fails_when_not_pending() -> None:
+    """Test activation fails unless membership is pending."""
+    team_id = TeamId.generate().expect("Success")
+    user_id = UserId.generate().expect("Success")
+    membership = TeamMembership.join(team_id=team_id, user_id=user_id)
+
+    result = membership.activate()
+
+    assert is_err(result)
+    assert membership.status == MembershipStatus.ACTIVE
+
+
+def test_team_membership_leave_fails_when_already_left() -> None:
+    """Test leaving fails after membership already left."""
+    team_id = TeamId.generate().expect("Success")
+    user_id = UserId.generate().expect("Success")
+    membership = TeamMembership.join(team_id=team_id, user_id=user_id)
+    membership.leave().expect("leave should succeed")
+
+    result = membership.leave()
+
+    assert is_err(result)
     assert membership.status == MembershipStatus.LEAVED
 
 

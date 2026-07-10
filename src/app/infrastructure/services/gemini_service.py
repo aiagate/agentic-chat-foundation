@@ -3,7 +3,6 @@
 import json
 import logging
 import os
-from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 from flow_res import Err, Ok, Result
@@ -26,9 +25,11 @@ from app.infrastructure.services.ai_request_logging import (
     serialize_history,
     serialize_tool_definitions,
 )
+from app.infrastructure.services.retry_support import (
+    call_with_exponential_backoff,
+)
 
 logger = logging.getLogger(__name__)
-_MAX_ATTEMPTS = 4
 
 
 def _parse_generated_content(payload: Any) -> GeneratedContent:
@@ -97,7 +98,7 @@ class GeminiService(IAIService):
             )
             config.system_instruction = instructions
 
-            response = await _generate_with_retries(
+            response = await call_with_exponential_backoff(
                 lambda: client.aio.models.generate_content(
                     model=self._model,
                     contents=cast(
@@ -113,6 +114,7 @@ class GeminiService(IAIService):
                     config=config,
                 ),
                 service_name="Gemini",
+                logger=logger,
             )
             if response.parsed is not None:
                 parsed_content = _parse_generated_content(response.parsed)
@@ -208,30 +210,3 @@ def _serialize_gemini_contents(
         }
     )
     return serialized_messages
-
-
-async def _generate_with_retries[T](
-    operation: Callable[[], Awaitable[T]],
-    *,
-    service_name: str,
-) -> T:
-    """Run an external AI call with up to three retries."""
-
-    last_error: Exception | None = None
-    for attempt in range(1, _MAX_ATTEMPTS + 1):
-        try:
-            return await operation()
-        except Exception as error:
-            last_error = error
-            if attempt >= _MAX_ATTEMPTS:
-                raise
-            logger.warning(
-                "%s API call failed; retrying %s/%s: %s",
-                service_name,
-                attempt,
-                _MAX_ATTEMPTS - 1,
-                error,
-            )
-
-    assert last_error is not None
-    raise last_error

@@ -36,16 +36,16 @@ agentic なワークフローへ流す現在の実装をまとめる。
 Saved chat
   └─ presentation/chat handler
       └─ chat.agent_turn.requested
-          └─ Mediator.send_async(RunAgentTurnQuery)
+          └─ Mediator.send_async(RunAgentTurnCommand)
           └─ usecases/agent/run_agent_turn.py
               ├─ history と memory context を組み立てる
               ├─ agent profile を読み込む
               ├─ IAIService.generate_content(...)
-              ├─ contents があれば reply_ready を publish する
-              └─ tool_calls をすべて RouteToolCallsCommand へ送る
+              ├─ contents があれば IAgentReplyWriter へ渡す
+              └─ tool_calls をすべて IToolCallRouter へ渡す
 
 tool request
-  └─ usecases/agent/route_tool_calls.py
+  └─ infrastructure/services/tool_call_router.py
       ├─ ToolCatalog で検証する
       ├─ tool_call_id を採番する
       ├─ IToolCallStore に保存する
@@ -58,8 +58,10 @@ tool execution
       └─ chat.tool.completed を publish する
           └─ usecases/agent/handle_tool_execution.py
               ├─ IToolCallStore から ToolCall を読む
-              ├─ send_message tool はassistant正本を保存してreply_readyを発行する
-              ├─ その他は IToolExecutor.execute(...) を呼ぶ
+              ├─ IToolExecutionLock で重複実行を防ぐ
+              ├─ 全toolを IToolExecutor.execute(...) へ渡す
+              ├─ send_message toolはExecutorからIAgentReplyWriterへ渡す
+              ├─ IToolCompletionNotifierで完了eventを発行する
               └─ generic result を返す
 
 tool result replay
@@ -67,16 +69,17 @@ tool result replay
       └─ `chat.tool.completed` から `chat.agent_turn.requested` を発行する
 ```
 
-`RouteToolCallsHandler` は 1 turn の tool call をすべて独立してルーティングする。
+`ToolCallRoutingService` は 1 turn の tool call をすべて独立してルーティングする。
 各非 send tool の完了は個別に次の agent turn を要求し、結果の集約は行わない。
 
 ## 現行の責務
 
-- `RunAgentTurnHandler` は履歴、memory manifest、agent profile を組み立てて推論する。
-- `RouteToolCallsHandler` は tool call を検証し、短期保存して event に変換する。
-- `HandleToolExecutionHandler` は tool call を読み出し、send_message toolの保存・送信をオーケストレーションする。
-- `GenericToolExecutor` は tool 名ごとに `web_search`、`memory.read`、
-  `memory.write_candidate` を振り分ける。
+- `RunAgentTurnHandler` は取得済みcontextから推論し、返信保存とtool routingを指示する。
+- `AgentInferenceContextService` はmemory manifest、agent profile、tool状態をLLM入力へ組み立てる。
+- `ToolCallRoutingService` は tool call を検証し、短期保存して event に変換する。
+- `HandleToolExecutionHandler` は tool call の取得、lock、実行、完了通知をオーケストレーションする。
+- `GenericToolExecutor` は全toolを実行し、必要なresult保存やreply書き込みを行う。
+- `EventBusToolCompletionNotifier` は実行結果を `chat.tool.completed` に変換する。
 - `IToolResultStore` は再推論に必要な全 tool result を保持する。
 
 ## 共有型
@@ -97,7 +100,7 @@ tool result replay
 ## 参照すべき実装
 
 - `src/app/usecases/agent/run_agent_turn.py`
-- `src/app/usecases/agent/route_tool_calls.py`
+- `src/app/infrastructure/services/tool_call_router.py`
 - `src/app/usecases/agent/handle_tool_execution.py`
 - `src/app/infrastructure/services/tool_executor.py`
 - `src/app/infrastructure/stores/tool_call_store.py`

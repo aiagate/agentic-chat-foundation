@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from flow_res import Result
 
 from app.contracts.messages.tool_contracts import SearchToolArguments
+from app.contracts.messages.web_search_result import WebSearchResult
 
 
 class WebSearchServiceError(Exception):
@@ -29,6 +30,6 @@ class IWebSearchService(ABC):
     async def search(
         self,
         arguments: SearchToolArguments,
-    ) -> Result[dict[str, object], WebSearchServiceError]:
+    ) -> Result[WebSearchResult, WebSearchServiceError]:
         """Search the web and return a normalized payload."""
         raise NotImplementedError

@@ -67,7 +67,7 @@ Memory は raw chat log と long-term memory を分けて扱います。
 
 - SQL database: raw chat log の source of truth
 - Markdown memory: Profile、Timeline summary、Entity などの抽象 memory
-- SQLite metadata / index: 再構築可能な search projection
+- Main SQL database: migration 管理された再構築可能な search projection
 - Redis short-term store: tool call と tool result の一時状態
 
 現行の read path は skills-like な manifest 方式です。Agent turn では compact な

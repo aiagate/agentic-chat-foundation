@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
-from flow_res import Err, Ok, Result
+from flow_res import Err, Ok, Result, is_err
 
 from app.contracts.messages.agent_profile import AgentProfileBundle
-from app.contracts.messages.memory_context import MemoryContextPack, MemoryReadResult
+from app.contracts.messages.memory_context import (
+    MemoryContextPack,
+    MemoryEntity,
+    MemoryProfile,
+    MemoryReadResult,
+    MemoryTimelineEntry,
+)
+from app.contracts.messages.memory_index import MemoryIndexDocument
 from app.contracts.ports.agent_profile_service import IAgentProfileService
+from app.contracts.ports.memory_index_query import IMemoryIndexQuery
 from app.contracts.ports.memory_service import IMemoryService, MemoryServiceError
 from app.infrastructure.memory.context_formatter import (
     manifest_item_from_document,
@@ -14,17 +22,12 @@ from app.infrastructure.memory.context_formatter import (
     render_manifest_context,
 )
 from app.infrastructure.memory.context_loader import (
-    read_entities,
-    read_index_documents,
-    read_profile,
-    read_timelines,
+    entity_from_document,
+    profile_from_document,
+    timeline_from_document,
 )
 from app.infrastructure.memory.markdown import MemoryMarkdownError
-from app.infrastructure.memory.store import (
-    FilesystemMemoryStore,
-    MemoryStoreError,
-    default_memory_root,
-)
+from app.infrastructure.memory.store import MemoryStoreError
 
 
 class FilesystemMemoryService(IMemoryService):
@@ -32,14 +35,12 @@ class FilesystemMemoryService(IMemoryService):
 
     def __init__(
         self,
-        store: FilesystemMemoryStore | None = None,
-        index: object | None = None,
+        index_query: IMemoryIndexQuery,
         agent_profile_service: IAgentProfileService | None = None,
         *,
         character_id: str,
     ) -> None:
-        self._store = store or FilesystemMemoryStore(default_memory_root())
-        del index
+        self._index_query = index_query
         self._agent_profile_service = agent_profile_service
         self._character_id = character_id
 
@@ -52,12 +53,14 @@ class FilesystemMemoryService(IMemoryService):
         try:
             profile_bundle = self._load_profile_bundle()
             relationship_entity_id = self._relationship_entity_id(profile_bundle)
-            index_documents = read_index_documents(
-                self._store,
-                user_id,
+            documents_result = await self._index_query.list_documents(
+                user_id=user_id,
                 character_id=self._character_id,
                 relationship_entity_id=relationship_entity_id,
             )
+            if is_err(documents_result):
+                return Err(MemoryServiceError(str(documents_result.error)))
+            index_documents = documents_result.value
             manifest_items = [
                 manifest_item_from_document(document) for document in index_documents
             ]
@@ -69,14 +72,10 @@ class FilesystemMemoryService(IMemoryService):
                     profile=(
                         profile_bundle.profile
                         if profile_bundle is not None
-                        else read_profile(self._store, user_id)
+                        else _user_profile(index_documents, user_id=user_id)
                     ),
-                    timelines=read_timelines(self._store, user_id),
-                    entities=read_entities(
-                        self._store,
-                        user_id,
-                        relationship_entity_id=relationship_entity_id,
-                    ),
+                    timelines=_timelines(index_documents),
+                    entities=_entities(index_documents),
                 )
             )
         except (MemoryMarkdownError, MemoryStoreError, OSError, ValueError) as exc:
@@ -93,12 +92,14 @@ class FilesystemMemoryService(IMemoryService):
             relationship_entity_id = self._relationship_entity_id(
                 self._load_profile_bundle()
             )
-            index_documents = read_index_documents(
-                self._store,
-                user_id,
+            documents_result = await self._index_query.list_documents(
+                user_id=user_id,
                 character_id=self._character_id,
                 relationship_entity_id=relationship_entity_id,
             )
+            if is_err(documents_result):
+                return Err(MemoryServiceError(str(documents_result.error)))
+            index_documents = documents_result.value
             for document in index_documents:
                 manifest_item = manifest_item_from_document(document)
                 if manifest_item.memory_id != memory_id:
@@ -120,3 +121,34 @@ class FilesystemMemoryService(IMemoryService):
         if profile_bundle is None:
             return f"relationship:{self._character_id}"
         return profile_bundle.relationship_entity_id
+
+
+def _user_profile(
+    documents: list[MemoryIndexDocument],
+    *,
+    user_id: str,
+) -> MemoryProfile | None:
+    for document in documents:
+        front_matter = document.document.front_matter
+        if (
+            front_matter.get("memory_type") == "profile"
+            and front_matter.get("user_id") == user_id
+        ):
+            return profile_from_document(document.document)
+    return None
+
+
+def _timelines(documents: list[MemoryIndexDocument]) -> list[MemoryTimelineEntry]:
+    return [
+        timeline_from_document(document.document)
+        for document in documents
+        if document.document.front_matter.get("memory_type") == "timeline"
+    ]
+
+
+def _entities(documents: list[MemoryIndexDocument]) -> list[MemoryEntity]:
+    return [
+        entity_from_document(document.document)
+        for document in documents
+        if document.document.front_matter.get("memory_type") == "entity"
+    ]

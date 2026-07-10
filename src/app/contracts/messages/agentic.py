@@ -46,3 +46,15 @@ class AgentEnvelope(BaseModel):
         default=None,
         description="Observable summary of why the turn or call was made.",
     )
+
+
+def with_character_id(
+    envelope: AgentEnvelope | None,
+    character_id: str,
+) -> AgentEnvelope:
+    """Return an agent envelope bound to the active character."""
+    if envelope is None:
+        return AgentEnvelope(character_id=character_id)
+    if envelope.character_id == character_id:
+        return envelope
+    return envelope.model_copy(update={"character_id": character_id})

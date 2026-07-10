@@ -1,7 +1,5 @@
 """Tests for the dependency-free memory keyword index."""
 
-import json
-import sqlite3
 from pathlib import Path
 from typing import Any, cast
 
@@ -13,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.contracts.messages.memory_context import MemoryEntity
 from app.contracts.messages.memory_index import (
     MemoryIndexDocument,
+    MemoryIndexRecord,
     MemorySearchFilters,
 )
 from app.infrastructure.memory.embedding import embed_text_deterministically
@@ -20,12 +19,19 @@ from app.infrastructure.memory.markdown import (
     parse_memory_markdown,
     render_memory_markdown,
 )
+from app.infrastructure.memory.store import FilesystemMemoryStore
 from app.infrastructure.orm_models.memory_index_backup_orm import (
     MemoryIndexBackupORM,
 )
 from app.infrastructure.orm_models.memory_index_orm import MemoryIndexDocumentORM
+from app.infrastructure.queries.memory_index_projection_query import (
+    SQLAlchemyMemoryIndexQuery,
+)
 from app.infrastructure.queries.memory_index_query_service import (
-    FilesystemMemoryIndex,
+    MemoryIndexSearch,
+)
+from app.infrastructure.repositories.memory_index_repository import (
+    MemoryIndexRepository,
 )
 from app.infrastructure.services.memory_index_maintenance import (
     MemoryIndexMaintenanceService,
@@ -73,11 +79,10 @@ def test_search_memory_index_ranks_entity_alias_and_separates_users() -> None:
         ),
     ]
 
-    hits = FilesystemMemoryIndex().search_memory_index(
+    hits = MemoryIndexSearch().search_memory_index(
         "workbench gray",
         documents,
         MemorySearchFilters(user_id="u1", tags=("office",)),
-        character_id=_character_id(),
     )
 
     assert [hit.hit.source.id for hit in hits] == ["desk"]
@@ -148,7 +153,7 @@ def test_search_memory_index_filters_timeline_date_status_and_archived() -> None
         ),
     ]
 
-    timeline_hits = FilesystemMemoryIndex().search_memory_index(
+    timeline_hits = MemoryIndexSearch().search_memory_index(
         "memory index",
         documents,
         MemorySearchFilters(
@@ -157,19 +162,16 @@ def test_search_memory_index_filters_timeline_date_status_and_archived() -> None
             timeline_type="daily_summary",
             date_from="2026-05-01T00:00:00+00:00",
         ),
-        character_id=_character_id(),
     )
-    unresolved_hits = FilesystemMemoryIndex().search_memory_index(
+    unresolved_hits = MemoryIndexSearch().search_memory_index(
         "unknown repository",
         documents,
         MemorySearchFilters(user_id="u1", unresolved=True),
-        character_id=_character_id(),
     )
-    archived_hits = FilesystemMemoryIndex().search_memory_index(
+    archived_hits = MemoryIndexSearch().search_memory_index(
         "archived",
         documents,
         MemorySearchFilters(user_id="u1"),
-        character_id=_character_id(),
     )
 
     assert [hit.hit.source.id for hit in timeline_hits] == ["daily-1"]
@@ -177,8 +179,8 @@ def test_search_memory_index_filters_timeline_date_status_and_archived() -> None
     assert all(hit.hit.source.id != "archived-project" for hit in archived_hits)
 
 
-def test_filesystem_memory_index_wraps_search_function() -> None:
-    """The concrete filesystem index should delegate to the search function."""
+def test_memory_index_search_wraps_ranking_function() -> None:
+    """The search adapter should rank supplied projection documents."""
     documents = [
         _document(
             "entities/u1/desk.md",
@@ -196,12 +198,11 @@ def test_filesystem_memory_index_wraps_search_function() -> None:
         )
     ]
 
-    index = FilesystemMemoryIndex()
+    index = MemoryIndexSearch()
     wrapped_hits = index.search_memory_index(
         "workbench gray",
         documents,
         MemorySearchFilters(user_id="u1", tags=("office",)),
-        character_id=_character_id(),
     )
     assert [hit.hit.source.id for hit in wrapped_hits] == ["desk"]
 
@@ -242,9 +243,7 @@ async def test_memory_index_maintenance_rebuilds_and_repairs_snapshot(
             select(MemoryIndexDocumentORM).where(_memory_index_source_id == "desk-1")
         )
         backup_rows = await session.execute(
-            select(MemoryIndexBackupORM).where(
-                _memory_backup_scope_user_id == "u1"
-            )
+            select(MemoryIndexBackupORM).where(_memory_backup_scope_user_id == "u1")
         )
 
     orm_row = row.scalars().first()
@@ -272,9 +271,7 @@ async def test_memory_index_maintenance_rebuilds_and_repairs_snapshot(
 
     async with session_factory() as session:
         backup_rows = await session.execute(
-            select(MemoryIndexBackupORM).where(
-                _memory_backup_scope_user_id == "u1"
-            )
+            select(MemoryIndexBackupORM).where(_memory_backup_scope_user_id == "u1")
         )
         rows = await session.execute(
             select(MemoryIndexDocumentORM).where(_memory_index_user_id == "u1")
@@ -295,12 +292,21 @@ async def test_memory_index_maintenance_rebuilds_and_repairs_snapshot(
     assert orm_row.tags_json == "[]"
     assert len(orm_row.embedding) > 0
 
-    index = FilesystemMemoryIndex(root=memory_root)
+    projection_query = SQLAlchemyMemoryIndexQuery(
+        session_factory,
+        FilesystemMemoryStore(memory_root),
+    )
+    documents_result = await projection_query.list_documents(
+        user_id="u1",
+        character_id=_character_id(),
+        relationship_entity_id=f"relationship:{_character_id()}",
+    )
+    assert not is_err(documents_result)
+    index = MemoryIndexSearch()
     hits = index.search_memory_index(
         "standing desk",
-        [],
+        documents_result.value,
         MemorySearchFilters(user_id="u1"),
-        character_id=_character_id(),
     )
     assert hits
     assert hits[0].hit.source.id == "desk-1"
@@ -319,51 +325,33 @@ async def test_memory_index_maintenance_rebuilds_and_repairs_snapshot(
 
     assert repaired_row.scalars().first() is None
 
-    repaired_hits = index.search_memory_index(
-        "standing desk",
-        [],
-        MemorySearchFilters(user_id="u1"),
+    repaired_documents_result = await projection_query.list_documents(
+        user_id="u1",
         character_id=_character_id(),
+        relationship_entity_id=f"relationship:{_character_id()}",
     )
-    assert all(hit.hit.source.id != "desk-1" for hit in repaired_hits)
+    assert not is_err(repaired_documents_result)
+    assert repaired_documents_result.value == []
 
 
-def test_search_memory_index_uses_persisted_embedding_when_terms_do_not_match(
+@pytest.mark.anyio
+async def test_search_memory_index_uses_persisted_embedding_when_terms_do_not_match(
+    session_factory: async_sessionmaker[AsyncSession],
     tmp_path: Path,
 ) -> None:
     """Persisted embeddings should drive retrieval even without lexical overlap."""
-    index_db_path = tmp_path / "memory_index.sqlite3"
-    _create_index_db(index_db_path)
     query = "remember the constellation"
     query_embedding = embed_text_deterministically(query, dimension=8)
     stored_embedding = list(query_embedding)
-    _insert_index_row(
-        index_db_path,
-        {
-            "source_path": "profiles/users/u1.md",
-            "user_id": "u1",
-            "memory_type": "profile",
-            "source_id": "profile-u1",
-            "title": None,
-            "content_hash": "a" * 64,
-            "indexed_text": "",
-            "tags_json": "[]",
-            "status": None,
-            "timeline_type": None,
-            "occurred_at": None,
-            "updated_at": "2026-05-18T00:00:00+00:00",
-            "importance": 0.6,
-            "confidence": 1.0,
-            "decay_score": 1.0,
-            "embedding": stored_embedding,
-        },
-    )
-
-    documents = [
-        _document(
-            "profiles/users/u1.md",
+    memory_root = tmp_path / "memory"
+    store = FilesystemMemoryStore(memory_root)
+    profile_path = store.user_profile_path("u1")
+    profile_path.write_text(
+        render_memory_markdown(
             {
+                "schema_version": 1,
                 "memory_type": "profile",
+                "profile_scope": "user",
                 "id": "profile-u1",
                 "user_id": "u1",
                 "display_name": None,
@@ -371,17 +359,51 @@ def test_search_memory_index_uses_persisted_embedding_when_terms_do_not_match(
                 "traits": [],
                 "preferences": [],
                 "tags": [],
+                "created_at": "2026-05-18T00:00:00+00:00",
+                "updated_at": "2026-05-18T00:00:00+00:00",
             },
             "",
+        ),
+        encoding="utf-8",
+    )
+    async with session_factory() as session:
+        repository = MemoryIndexRepository(session)
+        await repository.upsert_records(
+            [
+                MemoryIndexRecord(
+                    source_path="profiles/users/u1.md",
+                    source_id="profile-u1",
+                    user_id="u1",
+                    memory_type="profile",
+                    title=None,
+                    content_hash="a" * 64,
+                    indexed_text="",
+                    tags_json="[]",
+                    status=None,
+                    timeline_type=None,
+                    occurred_at=None,
+                    updated_at="2026-05-18T00:00:00+00:00",
+                    importance=0.6,
+                    confidence=1.0,
+                    decay_score=1.0,
+                    embedding=stored_embedding,
+                )
+            ]
         )
-    ]
+        await session.commit()
 
-    hits = FilesystemMemoryIndex().search_memory_index(
-        query,
-        documents,
-        MemorySearchFilters(user_id="u1"),
+    projection_query = SQLAlchemyMemoryIndexQuery(session_factory, store)
+    documents_result = await projection_query.list_documents(
+        user_id="u1",
         character_id=_character_id(),
-        index_db_path=index_db_path,
+        relationship_entity_id=f"relationship:{_character_id()}",
+    )
+    assert not is_err(documents_result)
+
+    hits = MemoryIndexSearch().search_memory_index(
+        query,
+        documents_result.value,
+        MemorySearchFilters(user_id="u1"),
         query_embedding=query_embedding,
     )
 
@@ -414,81 +436,3 @@ def _document(
         reference=reference,
         document=parse_memory_markdown(render_memory_markdown(full_front_matter, body)),
     )
-
-
-def _create_index_db(path: Path) -> None:
-    connection = sqlite3.connect(path)
-    try:
-        connection.execute(
-            """
-            create table memory_index_documents (
-                source_path text primary key,
-                user_id text,
-                memory_type text not null,
-                source_id text not null,
-                title text,
-                content_hash text not null,
-                indexed_text text not null,
-                tags_json text not null,
-                status text,
-                timeline_type text,
-                occurred_at text,
-                updated_at text not null,
-                importance real not null,
-                confidence real not null,
-                decay_score real not null,
-                embedding json not null
-            )
-            """
-        )
-        connection.commit()
-    finally:
-        connection.close()
-
-
-def _insert_index_row(path: Path, row: dict[str, object]) -> None:
-    connection = sqlite3.connect(path)
-    try:
-        connection.execute(
-            """
-            insert into memory_index_documents (
-                source_path,
-                user_id,
-                memory_type,
-                source_id,
-                title,
-                content_hash,
-                indexed_text,
-                tags_json,
-                status,
-                timeline_type,
-                occurred_at,
-                updated_at,
-                importance,
-                confidence,
-                decay_score,
-                embedding
-            ) values (
-                :source_path,
-                :user_id,
-                :memory_type,
-                :source_id,
-                :title,
-                :content_hash,
-                :indexed_text,
-                :tags_json,
-                :status,
-                :timeline_type,
-                :occurred_at,
-                :updated_at,
-                :importance,
-                :confidence,
-                :decay_score,
-                json(:embedding)
-            )
-            """,
-            {**row, "embedding": json.dumps(row["embedding"])},
-        )
-        connection.commit()
-    finally:
-        connection.close()

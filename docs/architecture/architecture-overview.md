@@ -150,7 +150,7 @@ UseCase 固有で共有価値が低い型は `usecases` に残します。
 
 `src/app/presentation/worker` はイベント処理と定期ジョブのプロセスです。
 
-- `handlers/chat_reply_handlers.py` は保存済みチャットから `RunAgentTurnQuery` を起動する。
+- `handlers/chat_reply_handlers.py` は保存済みチャットから `RunAgentTurnCommand` を起動する。
 - `handlers/tool_handlers.py` は `chat.tool.requested` と `chat.tool.completed` を扱う。
 - `handlers/memory_sleep_handlers.py` は `RunMemorySleepCommand` を定期実行する。
 - `handlers/app_error_handlers.py` は失敗時の再実行を扱う。
@@ -167,12 +167,12 @@ bot/line 側の sender に戻します。
 実装は `src/app/infrastructure/messaging` にあります。
 
 - `InMemoryEventBus`: 単一プロセスやローカル開発向け。
-- `RedisEventBus`: Redis Pub/Sub による複数プロセス連携。
-- `PostgresEventBus`: PostgreSQL LISTEN/NOTIFY による複数プロセス連携。
+- `RedisEventBus`: Redis Streams と consumer group による耐久的な複数プロセス連携。
 - `NullEventBus`: ハンドラの単体テスト向けフォールバック。
 
-`src/app/container.py` は `EVENT_BUS_PROVIDER`、`REDIS_URL`、`DATABASE_URL`
-を見て実装を選びます。
+DB更新に伴うイベントは同一トランザクションで `outbox_messages` に保存され、Workerの
+`DispatchOutboxMessagesCommand` がRedis Streamsへ配送します。配送はat-least-onceで、
+Handlerが成功したメッセージだけACKされます。
 
 ---
 
@@ -185,28 +185,26 @@ Discord DM
   └─ presentation/bot/cogs/dm_response_cog.py
       └─ Mediator.send_async(SaveDiscordChatCommand)
           └─ usecases/chat/save_discord_chat.py
-              ├─ DB commit
-              └─ publish chat.discord.saved
+              └─ chat保存 + chat.discord.saved Outboxを同時commit
 
 LINE webhook
   └─ presentation/line/__main__.py /callback
       └─ Mediator.send_async(SaveLineChatCommand)
           └─ usecases/chat/save_line_chat.py
-              ├─ DB commit
-              └─ publish chat.line.saved
+              └─ chat保存 + chat.line.saved Outboxを同時commit
 
 worker
   └─ handlers/chat_reply_handlers.py
       └─ publish chat.agent_turn.requested
-          └─ Mediator.send_async(RunAgentTurnQuery)
+          └─ Mediator.send_async(RunAgentTurnCommand)
           └─ usecases/agent/run_agent_turn.py
               ├─ history と memory context を組み立てる
               ├─ IAIService.generate_content(...)
-              ├─ contents があれば assistant message を保存して reply_ready を publish
-              └─ tool_calls をすべて RouteToolCallsCommand へ送る
+              ├─ contents があれば IAgentReplyWriter で保存とOutboxを同時commit
+              └─ tool_calls をすべて IToolCallRouter へ送る
 
 tool flow
-  └─ usecases/agent/route_tool_calls.py
+  └─ infrastructure/services/tool_call_router.py
       ├─ tool call を検証する
       ├─ IToolCallStore に保存する
       └─ chat.tool.requested を publish する
@@ -235,10 +233,10 @@ sender
 - `usecases/chat/save_discord_chat.py`: Discord の受信メッセージを保存する。
 - `usecases/chat/save_line_chat.py`: LINE の受信メッセージを保存する。
 - `usecases/agent/run_agent_turn.py`: 履歴、メモリ、AI サービスを組み合わせて返信を生成する。
-- `usecases/agent/route_tool_calls.py`: tool call を検証して `chat.tool.requested` を発行する。
+- `infrastructure/services/tool_call_router.py`: tool call を検証して `chat.tool.requested` を発行する。
 - `usecases/agent/handle_tool_execution.py`: `tool_call_id` を正本に tool を実行して `chat.tool.completed` を発行する。
-- `usecases/search/run_web_search.py`: web search を実行して tool result を返す。
-- `usecases/memory/*`: メモリ取得、インデックス更新、睡眠処理を扱う。
+- `infrastructure/services/tool_executor.py`: web searchを含むtoolを実行して結果を短期保存する。
+- `usecases/memory/*`: メモリのインデックス更新と睡眠処理を扱う。
 
 Presentation から DB や UoW を直接呼び出す実装は避けます。
 
@@ -270,6 +268,11 @@ Presentation から DB や UoW を直接呼び出す実装は避けます。
 - `services`: AI provider、memory service、tool executor、tool catalog などの adapter。
 - `memory`: Markdown memory の低レベル I/O と補助処理。
 - `messaging`: `IEventBus` の実装。
+
+Memoryの正本はMarkdown、検索projectionはmain DBの`memory_index_documents`です。
+`SQLAlchemyMemoryIndexQuery`がprojectionからuser/character scopeを選び、選択された
+`source_path`だけをMarkdown storeから復元します。専用SQLite sidecarやfilesystem全走査への
+read fallbackは持ちません。Workerはイベント購読開始前に`RebuildMemoryIndexCommand`を実行します。
 
 DI は `src/app/container.py` に集約します。UseCase から具象クラスを直接 import せず、
 必要な port と binding を先に確認します。

@@ -8,10 +8,11 @@ from flow_res import is_err, is_ok
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.domain.aggregates.team import Team
 from app.domain.aggregates.user import User
 from app.domain.interfaces import IAuditable
-from app.domain.repositories import IUnitOfWork, RepositoryErrorType
+from app.domain.repositories import RepositoryErrorType
 from app.domain.value_objects import (
     DisplayName,
     Email,

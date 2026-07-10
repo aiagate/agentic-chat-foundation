@@ -28,35 +28,52 @@ from app.contracts.messages.memory_context import (
 from app.contracts.messages.tool_contracts import ToolCall
 from app.contracts.messages.tool_result_context import ToolResultContext
 from app.contracts.ports.agent_profile_service import IAgentProfileService
+from app.contracts.ports.agent_reply_writer import (
+    AgentReplyWriteError,
+    IAgentReplyWriter,
+)
 from app.contracts.ports.ai_service import AIServiceError, IAIService
 from app.contracts.ports.event_bus import IEventBus
+from app.contracts.ports.memory_service import (
+    IMemoryService,
+    MemoryServiceError,
+)
+from app.contracts.ports.tool_call_router import (
+    IToolCallRouter,
+    ToolCallRoutingError,
+)
 from app.contracts.ports.tool_result_store import (
     IToolResultStore,
     ToolResultStoreError,
 )
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.domain.aggregates.chat import DiscordChat, LineChat
-from app.domain.repositories import IUnitOfWork
 from app.domain.value_objects.chat_type import ChatType
 from app.domain.value_objects.message_content import MessageContent
 from app.infrastructure.orm_mapping import ORMMappingRegistry
 from app.infrastructure.orm_models.chat_orm import ChatORM
+from app.infrastructure.orm_models.outbox_message_orm import OutboxMessageORM
+from app.infrastructure.queries.agent_turn_context_query import (
+    SQLAlchemyAgentTurnContextQuery,
+    latest_session_window,
+)
+from app.infrastructure.services.agent_inference_context import (
+    AgentInferenceContextService,
+)
+from app.infrastructure.services.agent_reply_writer import (
+    TransactionalAgentReplyWriter,
+)
+from app.infrastructure.services.tool_call_router import ToolCallRoutingService
 from app.infrastructure.services.tool_catalog import StaticToolCatalog
 from app.infrastructure.stores.tool_call_store import InMemoryToolCallStore
 from app.infrastructure.stores.tool_result_store import (
     InMemoryToolResultStore,
 )
-from app.usecases.agent.route_tool_calls import (
-    RouteToolCallsCommand,
-    RouteToolCallsHandler,
-)
 from app.usecases.agent.run_agent_turn import (
+    RunAgentTurnCommand,
     RunAgentTurnHandler,
-    RunAgentTurnQuery,
-    _latest_session_window,
 )
-from app.usecases.memory.retrieve_memory_context import RetrieveMemoryContextQuery
 
-RUN_AGENT_MODULE = "app.usecases.agent.run_agent_turn"
 CHARACTER_ID = "shirasagi-reina"
 RELATIONSHIP_ENTITY_ID = f"relationship:{CHARACTER_ID}"
 
@@ -81,7 +98,7 @@ def test_session_window_keeps_messages_across_utc_date_change() -> None:
         ),
     ]
 
-    session, boundary = _latest_session_window(
+    session, boundary = latest_session_window(
         history,
         memory_boundary_at=None,
     )
@@ -110,7 +127,7 @@ def test_session_window_uses_24_hour_fallback_boundary() -> None:
         ),
     ]
 
-    session, boundary = _latest_session_window(
+    session, boundary = latest_session_window(
         history,
         memory_boundary_at=None,
     )
@@ -225,6 +242,45 @@ async def _seed_raw_chat(
     return chat.id.to_primitive()
 
 
+class _StaticMemoryService:
+    def __init__(self, result: Any | None = None) -> None:
+        self._result = result or Ok(_memory_context_pack())
+
+    async def build_context(self, user_id: str) -> Any:
+        del user_id
+        return self._result
+
+
+def _handler(
+    ai_service: IAIService,
+    tool_result_store: IToolResultStore,
+    tool_catalog: StaticToolCatalog,
+    uow: IUnitOfWork,
+    event_bus: IEventBus,
+    agent_profile_service: IAgentProfileService,
+    *,
+    memory_service: IMemoryService | None = None,
+    agent_reply_writer: IAgentReplyWriter | None = None,
+    tool_call_router: IToolCallRouter | None = None,
+    tool_call_store: InMemoryToolCallStore | None = None,
+) -> RunAgentTurnHandler:
+    return RunAgentTurnHandler(
+        ai_service,
+        SQLAlchemyAgentTurnContextQuery(cast(Any, uow)._session_factory),
+        AgentInferenceContextService(
+            memory_service or cast(IMemoryService, _StaticMemoryService()),
+            agent_profile_service,
+            tool_result_store,
+            tool_catalog,
+        ),
+        agent_reply_writer or TransactionalAgentReplyWriter(uow),
+        tool_call_router
+        or ToolCallRoutingService(
+            event_bus, tool_catalog, tool_call_store or InMemoryToolCallStore()
+        ),
+    )
+
+
 @pytest.mark.anyio
 async def test_run_agent_turn_persists_reply(
     uow: IUnitOfWork,
@@ -236,16 +292,6 @@ async def test_run_agent_turn_persists_reply(
     mocker: Any,
 ) -> None:
     """Test the happy path for a non-tool response."""
-
-    async def send_async(request: Any) -> Any:
-        if isinstance(request, RetrieveMemoryContextQuery):
-            return Ok(_memory_context_pack())
-        raise AssertionError(f"Unexpected request: {type(request)!r}")
-
-    mocker.patch(
-        f"{RUN_AGENT_MODULE}.Mediator.send_async",
-        new=AsyncMock(side_effect=send_async),
-    )
 
     async with uow:
         await _seed_raw_chat(
@@ -259,16 +305,16 @@ async def test_run_agent_turn_persists_reply(
         )
         await uow.commit()
 
-    handler = RunAgentTurnHandler(
+    handler = _handler(
         mock_ai_service,
         mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
-        agent_profile_service=mock_agent_profile_service,
+        mock_agent_profile_service,
     )
     result = await handler.handle(
-        RunAgentTurnQuery(
+        RunAgentTurnCommand(
             prompt="hello",
             chat_id="chat-1",
             guild_id="DM",
@@ -312,17 +358,12 @@ async def test_run_agent_turn_persists_reply(
     }
     tool_result_store_mock: Any = mock_tool_result_store.get
     tool_result_store_mock.assert_not_awaited()
-    publish_mock = mock_event_bus.publish
-    publish_mock.assert_awaited_once_with(
-        DISCORD_CHAT_REPLY_READY_TOPIC,
-        {
-            "chat_type": "DISCORD",
-            "contents": ["Generated Content"],
-            "guild_id": "DM",
-            "channel_id": "123",
-            "character_id": CHARACTER_ID,
-        },
-    )
+    mock_event_bus.publish.assert_not_awaited()
+    async with uow:
+        session = cast(Any, uow)._session
+        outbox_message = (await session.execute(select(OutboxMessageORM))).scalar_one()
+        assert outbox_message.topic == DISCORD_CHAT_REPLY_READY_TOPIC
+        assert outbox_message.payload["contents"] == ["Generated Content"]
 
 
 @pytest.mark.anyio
@@ -337,16 +378,6 @@ async def test_run_agent_turn_resolves_prompt_from_chat_id(
 ) -> None:
     """Test that the handler can recover the prompt from persisted chat data."""
 
-    async def send_async(request: Any) -> Any:
-        if isinstance(request, RetrieveMemoryContextQuery):
-            return Ok(_memory_context_pack())
-        raise AssertionError(f"Unexpected request: {type(request)!r}")
-
-    mocker.patch(
-        f"{RUN_AGENT_MODULE}.Mediator.send_async",
-        new=AsyncMock(side_effect=send_async),
-    )
-
     async with uow:
         chat_id = await _seed_raw_chat(
             uow,
@@ -359,16 +390,16 @@ async def test_run_agent_turn_resolves_prompt_from_chat_id(
         )
         await uow.commit()
 
-    handler = RunAgentTurnHandler(
+    handler = _handler(
         mock_ai_service,
         mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
-        agent_profile_service=mock_agent_profile_service,
+        mock_agent_profile_service,
     )
     result = await handler.handle(
-        RunAgentTurnQuery(
+        RunAgentTurnCommand(
             chat_id=chat_id,
             guild_id="DM",
             channel_id="123",
@@ -394,16 +425,6 @@ async def test_run_agent_turn_filters_previous_session_history(
     mocker: Any,
 ) -> None:
     """Test that the handler isolates the current session before prompting."""
-
-    async def send_async(request: Any) -> Any:
-        if isinstance(request, RetrieveMemoryContextQuery):
-            return Ok(_memory_context_pack())
-        raise AssertionError(f"Unexpected request: {type(request)!r}")
-
-    mocker.patch(
-        f"{RUN_AGENT_MODULE}.Mediator.send_async",
-        new=AsyncMock(side_effect=send_async),
-    )
 
     async with uow:
         previous_user_id = await _seed_raw_chat(
@@ -445,16 +466,16 @@ async def test_run_agent_turn_filters_previous_session_history(
         assert not is_err(mark_result)
         await uow.commit()
 
-    handler = RunAgentTurnHandler(
+    handler = _handler(
         mock_ai_service,
         mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
-        agent_profile_service=mock_agent_profile_service,
+        mock_agent_profile_service,
     )
     result = await handler.handle(
-        RunAgentTurnQuery(
+        RunAgentTurnCommand(
             prompt="today dinner",
             chat_id="chat-1",
             guild_id="DM",
@@ -490,16 +511,6 @@ async def test_run_agent_turn_limits_tools_for_line_chat(
 ) -> None:
     """Test that LINE chats only receive LINE reply tools."""
 
-    async def send_async(request: Any) -> Any:
-        if isinstance(request, RetrieveMemoryContextQuery):
-            return Ok(_memory_context_pack())
-        raise AssertionError(f"Unexpected request: {type(request)!r}")
-
-    mocker.patch(
-        f"{RUN_AGENT_MODULE}.Mediator.send_async",
-        new=AsyncMock(side_effect=send_async),
-    )
-
     async with uow:
         await _seed_raw_chat(
             uow,
@@ -511,16 +522,16 @@ async def test_run_agent_turn_limits_tools_for_line_chat(
         )
         await uow.commit()
 
-    handler = RunAgentTurnHandler(
+    handler = _handler(
         mock_ai_service,
         mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
-        agent_profile_service=mock_agent_profile_service,
+        mock_agent_profile_service,
     )
     result = await handler.handle(
-        RunAgentTurnQuery(
+        RunAgentTurnCommand(
             prompt="hello",
             chat_id="chat-1",
             guild_id="LINE",
@@ -554,26 +565,16 @@ async def test_run_agent_turn_includes_retrieved_context(
 ) -> None:
     """Test that retrieved context becomes the current tool-result input."""
 
-    async def send_async(request: Any) -> Any:
-        if isinstance(request, RetrieveMemoryContextQuery):
-            return Ok(_memory_context_pack())
-        raise AssertionError(f"Unexpected request: {type(request)!r}")
-
-    mocker.patch(
-        f"{RUN_AGENT_MODULE}.Mediator.send_async",
-        new=AsyncMock(side_effect=send_async),
-    )
-
-    handler = RunAgentTurnHandler(
+    handler = _handler(
         mock_ai_service,
         mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
-        agent_profile_service=mock_agent_profile_service,
+        mock_agent_profile_service,
     )
     result = await handler.handle(
-        RunAgentTurnQuery(
+        RunAgentTurnCommand(
             prompt="hello",
             chat_id="chat-1",
             guild_id="DM",
@@ -613,26 +614,16 @@ async def test_run_agent_turn_prefers_direct_answering_in_system_instruction(
 ) -> None:
     """Test that the agent persona context discourages self-disclosure."""
 
-    async def send_async(request: Any) -> Any:
-        if isinstance(request, RetrieveMemoryContextQuery):
-            return Ok(_memory_context_pack())
-        raise AssertionError(f"Unexpected request: {type(request)!r}")
-
-    mocker.patch(
-        f"{RUN_AGENT_MODULE}.Mediator.send_async",
-        new=AsyncMock(side_effect=send_async),
-    )
-
-    handler = RunAgentTurnHandler(
+    handler = _handler(
         mock_ai_service,
         mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
-        agent_profile_service=mock_agent_profile_service,
+        mock_agent_profile_service,
     )
     result = await handler.handle(
-        RunAgentTurnQuery(
+        RunAgentTurnCommand(
             prompt="What kind of food do you like?",
             chat_id="chat-1",
             guild_id="DM",
@@ -687,26 +678,16 @@ async def test_run_agent_turn_continues_when_search_context_is_missing(
         return_value=Err(ToolResultStoreError("Retrieved context not found"))
     )
 
-    async def send_async(request: Any) -> Any:
-        if isinstance(request, RetrieveMemoryContextQuery):
-            return Ok(_memory_context_pack())
-        raise AssertionError(f"Unexpected request: {type(request)!r}")
-
-    mocker.patch(
-        f"{RUN_AGENT_MODULE}.Mediator.send_async",
-        new=AsyncMock(side_effect=send_async),
-    )
-
-    handler = RunAgentTurnHandler(
+    handler = _handler(
         mock_ai_service,
         mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
-        agent_profile_service=mock_agent_profile_service,
+        mock_agent_profile_service,
     )
     result = await handler.handle(
-        RunAgentTurnQuery(
+        RunAgentTurnCommand(
             prompt="hello",
             chat_id="chat-1",
             guild_id="DM",
@@ -725,8 +706,7 @@ async def test_run_agent_turn_continues_when_search_context_is_missing(
         "tool-1",
         character_id=CHARACTER_ID,
     )
-    publish_mock = mock_event_bus.publish
-    publish_mock.assert_awaited_once()
+    mock_event_bus.publish.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -741,26 +721,16 @@ async def test_run_agent_turn_includes_tool_failure_context(
 ) -> None:
     """Test that tool failure notes become the current tool-result input."""
 
-    async def send_async(request: Any) -> Any:
-        if isinstance(request, RetrieveMemoryContextQuery):
-            return Ok(_memory_context_pack())
-        raise AssertionError(f"Unexpected request: {type(request)!r}")
-
-    mocker.patch(
-        f"{RUN_AGENT_MODULE}.Mediator.send_async",
-        new=AsyncMock(side_effect=send_async),
-    )
-
-    handler = RunAgentTurnHandler(
+    handler = _handler(
         mock_ai_service,
         mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
-        agent_profile_service=mock_agent_profile_service,
+        mock_agent_profile_service,
     )
     result = await handler.handle(
-        RunAgentTurnQuery(
+        RunAgentTurnCommand(
             prompt="hello",
             chat_id="chat-1",
             guild_id="DM",
@@ -801,26 +771,16 @@ async def test_run_agent_turn_preserves_ai_service_error_message(
         return_value=Err(AIServiceError("Gemini API Error: boom"))
     )
 
-    async def send_async(request: Any) -> Any:
-        if isinstance(request, RetrieveMemoryContextQuery):
-            return Ok(_memory_context_pack())
-        raise AssertionError(f"Unexpected request: {type(request)!r}")
-
-    mocker.patch(
-        f"{RUN_AGENT_MODULE}.Mediator.send_async",
-        new=AsyncMock(side_effect=send_async),
-    )
-
-    handler = RunAgentTurnHandler(
+    handler = _handler(
         ai_service,
         mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
-        agent_profile_service=mock_agent_profile_service,
+        mock_agent_profile_service,
     )
     result = await handler.handle(
-        RunAgentTurnQuery(
+        RunAgentTurnCommand(
             prompt="hello",
             chat_id="chat-1",
             guild_id="DM",
@@ -833,6 +793,135 @@ async def test_run_agent_turn_preserves_ai_service_error_message(
 
     assert is_err(result)
     assert "Gemini API Error: boom" in result.error.message
+
+
+@pytest.mark.anyio
+async def test_run_agent_turn_maps_memory_service_failure(
+    uow: IUnitOfWork,
+    mock_ai_service: IAIService,
+    mock_agent_profile_service: IAgentProfileService,
+    mock_event_bus: Any,
+    mock_tool_result_store: IToolResultStore,
+    mock_tool_catalog: StaticToolCatalog,
+    mocker: Any,
+) -> None:
+    memory_service = mocker.Mock(spec=IMemoryService)
+    memory_service.build_context = mocker.AsyncMock(
+        return_value=Err(MemoryServiceError("memory failed"))
+    )
+    handler = _handler(
+        mock_ai_service,
+        mock_tool_result_store,
+        mock_tool_catalog,
+        uow,
+        mock_event_bus,
+        mock_agent_profile_service,
+        memory_service=memory_service,
+    )
+
+    result = await handler.handle(
+        RunAgentTurnCommand(
+            prompt="hello",
+            chat_id="chat-1",
+            guild_id="DM",
+            channel_id="123",
+            user_id="u1",
+            chat_type=ChatType.DISCORD,
+            character_id=CHARACTER_ID,
+        )
+    )
+
+    assert is_err(result)
+    assert result.error.message == "Failed to retrieve memory context"
+    ai_stub: Any = mock_ai_service.generate_content
+    ai_stub.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_run_agent_turn_maps_reply_writer_failure(
+    uow: IUnitOfWork,
+    mock_ai_service: IAIService,
+    mock_agent_profile_service: IAgentProfileService,
+    mock_event_bus: Any,
+    mock_tool_result_store: IToolResultStore,
+    mock_tool_catalog: StaticToolCatalog,
+    mocker: Any,
+) -> None:
+    writer = mocker.Mock(spec=IAgentReplyWriter)
+    writer.write = mocker.AsyncMock(
+        return_value=Err(AgentReplyWriteError("reply failed"))
+    )
+    handler = _handler(
+        mock_ai_service,
+        mock_tool_result_store,
+        mock_tool_catalog,
+        uow,
+        mock_event_bus,
+        mock_agent_profile_service,
+        agent_reply_writer=writer,
+    )
+
+    result = await handler.handle(
+        RunAgentTurnCommand(
+            prompt="hello",
+            chat_id="chat-1",
+            guild_id="DM",
+            channel_id="123",
+            user_id="u1",
+            chat_type=ChatType.DISCORD,
+            character_id=CHARACTER_ID,
+        )
+    )
+
+    assert is_err(result)
+    assert result.error.message == "reply failed"
+
+
+@pytest.mark.anyio
+async def test_run_agent_turn_maps_tool_router_failure(
+    uow: IUnitOfWork,
+    mock_agent_profile_service: IAgentProfileService,
+    mock_event_bus: Any,
+    mock_tool_result_store: IToolResultStore,
+    mock_tool_catalog: StaticToolCatalog,
+    mocker: Any,
+) -> None:
+    ai_service = mocker.Mock(spec=IAIService)
+    ai_service.generate_content = mocker.AsyncMock(
+        return_value=Ok(
+            GeneratedContent(
+                tool_calls=[ToolCall(tool_name="web_search", arguments={})]
+            )
+        )
+    )
+    router = mocker.Mock(spec=IToolCallRouter)
+    router.route = mocker.AsyncMock(
+        return_value=Err(ToolCallRoutingError("route failed"))
+    )
+    handler = _handler(
+        ai_service,
+        mock_tool_result_store,
+        mock_tool_catalog,
+        uow,
+        mock_event_bus,
+        mock_agent_profile_service,
+        tool_call_router=router,
+    )
+
+    result = await handler.handle(
+        RunAgentTurnCommand(
+            prompt="hello",
+            chat_id="chat-1",
+            guild_id="DM",
+            channel_id="123",
+            user_id="u1",
+            chat_type=ChatType.DISCORD,
+            character_id=CHARACTER_ID,
+        )
+    )
+
+    assert is_err(result)
+    assert result.error.message == "Failed to route tool request"
 
 
 @pytest.mark.anyio
@@ -867,33 +956,17 @@ async def test_run_agent_turn_routes_generic_tool_calls(
         )
     )
 
-    async def send_async(request: Any) -> Any:
-        if isinstance(request, RetrieveMemoryContextQuery):
-            return Ok(_memory_context_pack())
-        if isinstance(request, RouteToolCallsCommand):
-            handler = RouteToolCallsHandler(
-                mock_event_bus,
-                mock_tool_catalog,
-                tool_call_store,
-            )
-            return await handler.handle(request)
-        raise AssertionError(f"Unexpected request: {type(request)!r}")
-
-    mocker.patch(
-        f"{RUN_AGENT_MODULE}.Mediator.send_async",
-        new=AsyncMock(side_effect=send_async),
-    )
-
-    handler = RunAgentTurnHandler(
+    handler = _handler(
         ai_service,
         mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
-        agent_profile_service=mock_agent_profile_service,
+        mock_agent_profile_service,
+        tool_call_store=tool_call_store,
     )
     result = await handler.handle(
-        RunAgentTurnQuery(
+        RunAgentTurnCommand(
             prompt="ollama web search",
             chat_id="chat-1",
             guild_id="DM",
@@ -907,13 +980,15 @@ async def test_run_agent_turn_routes_generic_tool_calls(
     assert not is_err(result)
     assert result.value.contents == ["Searching now."]
     publish_mock = mock_event_bus.publish
-    assert publish_mock.await_count == 2
-    reply_topic, reply_payload = publish_mock.await_args_list[0].args
-    assert reply_topic == DISCORD_CHAT_REPLY_READY_TOPIC
-    assert reply_payload["contents"] == ["Searching now."]
-    topic, payload = publish_mock.await_args_list[1].args
+    publish_mock.assert_awaited_once()
+    topic, payload = publish_mock.await_args.args
     assert topic == CHAT_TOOL_REQUESTED_TOPIC
     assert payload["tool_name"] == "web_search"
+    async with uow:
+        session = cast(Any, uow)._session
+        outbox_message = (await session.execute(select(OutboxMessageORM))).scalar_one()
+        assert outbox_message.topic == DISCORD_CHAT_REPLY_READY_TOPIC
+        assert outbox_message.payload["contents"] == ["Searching now."]
     assert payload["character_id"] == CHARACTER_ID
     assert "arguments" not in payload
     stored = await tool_call_store.get(
@@ -954,33 +1029,17 @@ async def test_run_agent_turn_routes_memory_read_tool_calls(
         )
     )
 
-    async def send_async(request: Any) -> Any:
-        if isinstance(request, RetrieveMemoryContextQuery):
-            return Ok(_memory_context_pack())
-        if isinstance(request, RouteToolCallsCommand):
-            handler = RouteToolCallsHandler(
-                mock_event_bus,
-                mock_tool_catalog,
-                tool_call_store,
-            )
-            return await handler.handle(request)
-        raise AssertionError(f"Unexpected request: {type(request)!r}")
-
-    mocker.patch(
-        f"{RUN_AGENT_MODULE}.Mediator.send_async",
-        new=AsyncMock(side_effect=send_async),
-    )
-
-    handler = RunAgentTurnHandler(
+    handler = _handler(
         ai_service,
         mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
-        agent_profile_service=mock_agent_profile_service,
+        mock_agent_profile_service,
+        tool_call_store=tool_call_store,
     )
     result = await handler.handle(
-        RunAgentTurnQuery(
+        RunAgentTurnCommand(
             prompt="read memory",
             chat_id="chat-1",
             guild_id="DM",
@@ -1046,33 +1105,17 @@ async def test_run_agent_turn_routes_all_tool_calls_per_turn(
         )
     )
 
-    async def send_async(request: Any) -> Any:
-        if isinstance(request, RetrieveMemoryContextQuery):
-            return Ok(_memory_context_pack())
-        if isinstance(request, RouteToolCallsCommand):
-            handler = RouteToolCallsHandler(
-                mock_event_bus,
-                mock_tool_catalog,
-                tool_call_store,
-            )
-            return await handler.handle(request)
-        raise AssertionError(f"Unexpected request: {type(request)!r}")
-
-    mocker.patch(
-        f"{RUN_AGENT_MODULE}.Mediator.send_async",
-        new=AsyncMock(side_effect=send_async),
-    )
-
-    handler = RunAgentTurnHandler(
+    handler = _handler(
         ai_service,
         mock_tool_result_store,
         mock_tool_catalog,
         uow,
         mock_event_bus,
-        agent_profile_service=mock_agent_profile_service,
+        mock_agent_profile_service,
+        tool_call_store=tool_call_store,
     )
     result = await handler.handle(
-        RunAgentTurnQuery(
+        RunAgentTurnCommand(
             prompt="mixed retrieval",
             chat_id="chat-1",
             guild_id="DM",

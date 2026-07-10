@@ -69,9 +69,7 @@ class SQLAlchemyChatHistoryQuery(IChatHistoryQuery):
             ]
             boundary_statement = select(func.max(table.c.created_at)).where(
                 *conditions,
-                exists().where(
-                    MemoryConsolidatedChatSourceORM.chat_id == table.c.id
-                ),
+                exists().where(MemoryConsolidatedChatSourceORM.chat_id == table.c.id),
             )
             boundary_result = await self._session.execute(boundary_statement)
             return Ok(

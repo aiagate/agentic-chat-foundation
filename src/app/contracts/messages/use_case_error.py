@@ -1,11 +1,11 @@
-"""Error types specific to the use case layer."""
+"""Errors returned across application use case boundaries."""
 
 from dataclasses import dataclass
 from enum import Enum, auto
 
 
 class ErrorType(Enum):
-    """Enum for use case error types."""
+    """Stable categories for application errors."""
 
     NOT_FOUND = auto()
     VALIDATION_ERROR = auto()
@@ -15,11 +15,10 @@ class ErrorType(Enum):
 
 @dataclass
 class UseCaseError(Exception):
-    """Represents a specific error from a use case."""
+    """Error returned by an application use case."""
 
     type: ErrorType
     message: str
 
     def __str__(self) -> str:
-        """Return message for exception representation."""
         return self.message

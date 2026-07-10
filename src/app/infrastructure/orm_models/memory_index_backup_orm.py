@@ -11,7 +11,7 @@ class MemoryIndexBackupORM(SQLModel, table=True):
 
     __tablename__ = "memory_index_document_backups"  # type: ignore[reportAssignmentType]
 
-    scope_user_id: str = Field(max_length=255, primary_key=True)
+    scope_user_id: str = Field(max_length=255, primary_key=True, index=True)
     source_path: str = Field(primary_key=True, max_length=512)
     backed_up_at: str = Field(max_length=64, index=True)
     user_id: str | None = Field(default=None, max_length=255, index=True)

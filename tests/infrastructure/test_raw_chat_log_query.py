@@ -6,7 +6,7 @@ import pytest
 from flow_res import is_ok
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.domain.repositories import IUnitOfWork
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.domain.value_objects.chat_type import ChatType
 from app.infrastructure.orm_models import ChatORM
 

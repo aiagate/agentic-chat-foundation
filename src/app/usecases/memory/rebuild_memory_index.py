@@ -8,8 +8,8 @@ from flow_med import Request, RequestHandler
 from flow_res import Err, Ok, Result, is_err
 from injector import inject
 
+from app.contracts.messages.use_case_error import ErrorType, UseCaseError
 from app.contracts.ports.memory_index_maintenance import IMemoryIndexMaintenance
-from app.usecases.result import ErrorType, UseCaseError
 
 
 @dataclass(frozen=True)

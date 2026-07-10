@@ -10,10 +10,6 @@ from app.usecases.memory.repair_memory_index import (
     RepairMemoryIndexHandler,
     RepairMemoryIndexResult,
 )
-from app.usecases.memory.retrieve_memory_context import (
-    RetrieveMemoryContextHandler,
-    RetrieveMemoryContextQuery,
-)
 from app.usecases.memory.run_memory_sleep import (
     RunMemorySleepCommand,
     RunMemorySleepHandler,
@@ -30,6 +26,4 @@ __all__ = [
     "RunMemorySleepCommand",
     "RunMemorySleepHandler",
     "RunMemorySleepResult",
-    "RetrieveMemoryContextHandler",
-    "RetrieveMemoryContextQuery",
 ]

@@ -94,6 +94,8 @@ def _normalize_legacy_tool_call(value: object) -> dict[str, object] | None:
             normalized[key] = raw_value.strip()
 
     return normalized
+
+
 def _normalize_contents_field(value: object) -> list[str] | None:
     """Normalize the contents field into a list of non-empty strings."""
 

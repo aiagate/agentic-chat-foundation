@@ -10,16 +10,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.contracts.messages.memory_index import MemoryIndexRecord
 from app.contracts.ports.embedding_service import IEmbeddingService
-from app.contracts.ports.memory_index import MemoryIndexError
-from app.contracts.ports.memory_index_maintenance import IMemoryIndexMaintenance
+from app.contracts.ports.memory_index_maintenance import (
+    IMemoryIndexMaintenance,
+    MemoryIndexError,
+)
+from app.infrastructure.memory.index_projection import (
+    collect_memory_index_documents,
+    embed_memory_index_records,
+    record_from_memory_index_document,
+)
 from app.infrastructure.memory.store import (
     FilesystemMemoryStore,
     default_memory_root,
-)
-from app.infrastructure.queries.memory_index_query_service import (
-    _stored_documents_for_scope,
-    embed_memory_index_records,
-    record_from_memory_index_document,
 )
 from app.infrastructure.repositories.memory_index_backup_repository import (
     MemoryIndexBackupRepository,
@@ -90,7 +92,10 @@ class MemoryIndexMaintenanceService(IMemoryIndexMaintenance):
         records = await self._build_records_for_scope(user_id=user_id)
         async with session_factory() as session:
             repository = MemoryIndexRepository(session)
-            await repository.delete_scope(user_id)
+            if user_id is None:
+                await repository.delete_all_records()
+            else:
+                await repository.delete_by_user_id(user_id)
             changed = await repository.upsert_records(records)
             await session.commit()
         return Ok(changed)
@@ -107,7 +112,10 @@ class MemoryIndexMaintenanceService(IMemoryIndexMaintenance):
         records = await self._build_records_for_scope(user_id=user_id)
         async with session_factory() as session:
             repository = MemoryIndexRepository(session)
-            await repository.delete_scope(user_id)
+            if user_id is None:
+                await repository.delete_all_records()
+            else:
+                await repository.delete_by_user_id(user_id)
             changed = await repository.upsert_records(records)
             await session.commit()
         return Ok(changed)
@@ -119,7 +127,11 @@ class MemoryIndexMaintenanceService(IMemoryIndexMaintenance):
         async with session_factory() as session:
             repository = MemoryIndexRepository(session)
             backup_repository = MemoryIndexBackupRepository(session)
-            records = await repository.list_records(user_id)
+            records = (
+                await repository.list_all_records()
+                if user_id is None
+                else await repository.list_by_user_id(user_id)
+            )
             backed_up_at = datetime.now(UTC).isoformat()
             changed = await backup_repository.replace_scope_snapshot(
                 records,
@@ -134,7 +146,7 @@ class MemoryIndexMaintenanceService(IMemoryIndexMaintenance):
         *,
         user_id: str | None,
     ) -> list[MemoryIndexRecord]:
-        documents = _stored_documents_for_scope(
+        documents = collect_memory_index_documents(
             self._store,
             user_id=user_id,
             character_id=self._character_id,

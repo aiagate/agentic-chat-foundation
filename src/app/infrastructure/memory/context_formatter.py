@@ -18,7 +18,9 @@ from app.infrastructure.memory.markdown import (
 )
 
 
-def manifest_item_from_document(index_document: MemoryIndexDocument) -> MemoryManifestItem:
+def manifest_item_from_document(
+    index_document: MemoryIndexDocument,
+) -> MemoryManifestItem:
     """Build the compact manifest entry used for agent prompt context."""
 
     front_matter = index_document.document.front_matter
@@ -44,7 +46,9 @@ def memory_read_result_from_document(
     return MemoryReadResult(
         memory_id=manifest_item.memory_id,
         source=MemorySource(
-            id=front_matter_string(front_matter.get("id"), default=manifest_item.memory_id),
+            id=front_matter_string(
+                front_matter.get("id"), default=manifest_item.memory_id
+            ),
             memory_type=front_matter_string(front_matter.get("memory_type")),  # type: ignore[arg-type]
             title=manifest_item.title,
             user_id=source_user_id(front_matter),
@@ -179,7 +183,9 @@ def manifest_summary(index_document: MemoryIndexDocument) -> str:
         label = front_matter_string(front_matter.get("label"))
         entity_type = front_matter_string(front_matter.get("entity_type"))
         status = front_matter_string(front_matter.get("status"), default="active")
-        missing_attributes = front_matter_string_list(front_matter.get("missing_attributes"))
+        missing_attributes = front_matter_string_list(
+            front_matter.get("missing_attributes")
+        )
         parts = [label, entity_type, status]
         if missing_attributes:
             parts.append(f"missing: {', '.join(missing_attributes)}")
@@ -257,7 +263,9 @@ def _entity_detail_lines(front_matter: dict[str, object]) -> list[str]:
         lines.append("- properties:")
         for key, value in sorted(properties.items()):
             lines.append(f"  - {key}: {_stringify_property_value(value)}")
-    missing_attributes = front_matter_string_list(front_matter.get("missing_attributes"))
+    missing_attributes = front_matter_string_list(
+        front_matter.get("missing_attributes")
+    )
     if missing_attributes:
         lines.append(f"- missing_attributes: {', '.join(missing_attributes)}")
     return lines
@@ -265,9 +273,7 @@ def _entity_detail_lines(front_matter: dict[str, object]) -> list[str]:
 
 def _one_line_excerpt(value: str, *, limit: int = 96) -> str:
     compact = " ".join(
-        line.strip("#*- ").strip()
-        for line in value.splitlines()
-        if line.strip()
+        line.strip("#*- ").strip() for line in value.splitlines() if line.strip()
     ).strip()
     if len(compact) <= limit:
         return compact

@@ -2,8 +2,8 @@
 
 import pytest
 
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.domain.aggregates.user import User
-from app.domain.repositories import IUnitOfWork
 from app.domain.value_objects import UserId
 
 

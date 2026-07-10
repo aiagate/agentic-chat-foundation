@@ -4,6 +4,7 @@ from app.contracts.messages.agent_profile import (
     AgentProfileBundle,
     render_agent_persona_context,
 )
+from app.contracts.messages.agent_turn_context import AgentTurnContext
 from app.contracts.messages.agentic import (
     AgentEnvelope,
 )
@@ -42,6 +43,8 @@ from app.contracts.messages.generated_content import GeneratedContent
 from app.contracts.messages.llm_request_context import (
     LLMCurrentInput,
     LLMRequestContext,
+    build_agent_current_input,
+    build_agent_system_prompt,
     compose_system_instruction,
 )
 from app.contracts.messages.memory_context import (
@@ -68,6 +71,7 @@ from app.contracts.messages.memory_semantic_extraction import (
     MemoryTimelinePatch,
     MemoryTimelineSectionPatch,
 )
+from app.contracts.messages.outbox_message import OutboxMessage
 from app.contracts.messages.relationship_growth import (
     MAX_DAILY_SCORE_INCREASE,
     RELATIONSHIP_ENTITY_TYPE,
@@ -89,10 +93,14 @@ from app.contracts.messages.tool_contracts import (
     normalize_reply_contents,
 )
 from app.contracts.messages.tool_result_context import ToolResultContext
-from app.contracts.messages.web_search_result import WebSearchResultItem
+from app.contracts.messages.web_search_result import (
+    WebSearchResult,
+    WebSearchResultItem,
+)
 
 __all__ = [
     "AgentEnvelope",
+    "AgentTurnContext",
     "AgentProfileBundle",
     "ConversationContext",
     "CharacterDefinition",
@@ -132,6 +140,7 @@ __all__ = [
     "MemorySleepChatLog",
     "MemoryTimelineSectionPatch",
     "MemoryTimelinePatch",
+    "OutboxMessage",
     "MAX_DAILY_SCORE_INCREASE",
     "RELATIONSHIP_ENTITY_TYPE",
     "RELATIONSHIP_STAGES",
@@ -146,8 +155,11 @@ __all__ = [
     "ToolSideEffect",
     "ToolResultContext",
     "WebSearchResultItem",
+    "WebSearchResult",
     "build_app_error_detected_payload",
     "build_agent_turn_requested_payload",
+    "build_agent_current_input",
+    "build_agent_system_prompt",
     "build_chat_tool_completed_payload",
     "build_chat_tool_requested_payload",
     "build_discord_chat_saved_payload",

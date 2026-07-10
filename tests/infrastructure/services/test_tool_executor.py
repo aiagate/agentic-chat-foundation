@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from typing import Any, cast
-from unittest.mock import AsyncMock
 
 import pytest
-from flow_res import Ok, is_err
+from flow_res import Err, Ok, is_err
 
 from app.contracts.messages.memory_context import (
     MemoryReadResult,
@@ -14,10 +13,19 @@ from app.contracts.messages.memory_context import (
 )
 from app.contracts.messages.tool_contracts import ToolCall
 from app.contracts.messages.tool_result_context import ToolResultContext
+from app.contracts.messages.web_search_result import (
+    WebSearchResult,
+    WebSearchResultItem,
+)
+from app.contracts.ports.agent_reply_writer import IAgentReplyWriter
 from app.contracts.ports.memory_service import IMemoryService
 from app.contracts.ports.memory_write_service import IMemoryWriteService
 from app.contracts.ports.tool_executor import ToolExecutionContext
 from app.contracts.ports.tool_result_store import IToolResultStore
+from app.contracts.ports.web_search_service import (
+    IWebSearchService,
+    WebSearchServiceError,
+)
 from app.domain.value_objects.chat_type import ChatType
 from app.infrastructure.services.tool_executor import GenericToolExecutor
 
@@ -46,28 +54,45 @@ def tool_result_store(mocker: Any) -> IToolResultStore:
     return store
 
 
+@pytest.fixture
+def web_search_service(mocker: Any) -> IWebSearchService:
+    service = mocker.Mock(spec=IWebSearchService)
+    service.search = mocker.AsyncMock(
+        return_value=Ok(
+            WebSearchResult(
+                items=[
+                    WebSearchResultItem(snippet=f"result {index}")
+                    for index in range(3)
+                ]
+            )
+        )
+    )
+    return service
+
+
+@pytest.fixture
+def agent_reply_writer(mocker: Any) -> IAgentReplyWriter:
+    writer = mocker.Mock(spec=IAgentReplyWriter)
+    writer.write = mocker.AsyncMock(return_value=Ok(None))
+    return writer
+
+
 @pytest.mark.anyio
 async def test_generic_tool_executor_web_search_runs_search(
     memory_service: IMemoryService,
     memory_write_service: IMemoryWriteService,
     tool_result_store: IToolResultStore,
-    mocker: Any,
+    web_search_service: IWebSearchService,
+    agent_reply_writer: IAgentReplyWriter,
 ) -> None:
-    """web_search should execute the search use case and persist context."""
-
-    mocker.patch(
-        "app.infrastructure.services.tool_executor.Mediator.send_async",
-        new=AsyncMock(
-            return_value=Ok(
-                type("R", (), {"result_count": 3, "rendered_text": "results"})()
-            )
-        ),
-    )
+    """web_search should call the search port and persist context."""
 
     executor = GenericToolExecutor(
         tool_result_store=tool_result_store,
         memory_service=memory_service,
         memory_write_service=memory_write_service,
+        web_search_service=web_search_service,
+        agent_reply_writer=agent_reply_writer,
     )
     context = ToolExecutionContext(
         chat_id="chat-1",
@@ -90,6 +115,8 @@ async def test_generic_tool_executor_web_search_runs_search(
     assert result.value.result["tool_call_id"] == "tool-1"
     assert result.value.result["retrieved_context"] is True
     assert result.value.result["query"] == "search query"
+    search_mock = cast(Any, web_search_service.search)
+    search_mock.assert_awaited_once()
 
 
 @pytest.mark.anyio
@@ -97,6 +124,8 @@ async def test_generic_tool_executor_memory_read_saves_context(
     memory_service: IMemoryService,
     memory_write_service: IMemoryWriteService,
     tool_result_store: IToolResultStore,
+    web_search_service: IWebSearchService,
+    agent_reply_writer: IAgentReplyWriter,
 ) -> None:
     """memory.read should persist a retrieved context for the tool call."""
 
@@ -104,6 +133,8 @@ async def test_generic_tool_executor_memory_read_saves_context(
         tool_result_store=tool_result_store,
         memory_service=memory_service,
         memory_write_service=memory_write_service,
+        web_search_service=web_search_service,
+        agent_reply_writer=agent_reply_writer,
     )
     context = ToolExecutionContext(
         chat_id="chat-1",
@@ -139,6 +170,8 @@ async def test_generic_tool_executor_memory_write_candidate_writes_log(
     memory_service: IMemoryService,
     memory_write_service: IMemoryWriteService,
     tool_result_store: IToolResultStore,
+    web_search_service: IWebSearchService,
+    agent_reply_writer: IAgentReplyWriter,
 ) -> None:
     """memory.write_candidate should flow through the write port."""
 
@@ -146,6 +179,8 @@ async def test_generic_tool_executor_memory_write_candidate_writes_log(
         tool_result_store=tool_result_store,
         memory_service=memory_service,
         memory_write_service=memory_write_service,
+        web_search_service=web_search_service,
+        agent_reply_writer=agent_reply_writer,
     )
     context = ToolExecutionContext(
         chat_id="chat-1",
@@ -180,6 +215,124 @@ async def test_generic_tool_executor_memory_write_candidate_writes_log(
     assert await_args.kwargs["metadata"]["chat_id"] == "chat-1"
     assert await_args.kwargs["metadata"]["tool_name"] == "memory.write_candidate"
     assert await_args.kwargs["metadata"]["source"] == "tool"
+
+
+@pytest.mark.anyio
+async def test_generic_tool_executor_line_send_writes_reply(
+    memory_service: IMemoryService,
+    memory_write_service: IMemoryWriteService,
+    tool_result_store: IToolResultStore,
+    web_search_service: IWebSearchService,
+    agent_reply_writer: IAgentReplyWriter,
+) -> None:
+    executor = GenericToolExecutor(
+        tool_result_store=tool_result_store,
+        memory_service=memory_service,
+        memory_write_service=memory_write_service,
+        web_search_service=web_search_service,
+        agent_reply_writer=agent_reply_writer,
+    )
+    context = ToolExecutionContext(
+        chat_id="chat-1",
+        character_id=CHARACTER_ID,
+        user_id="line-user",
+        chat_type=ChatType.LINE,
+        tool_call=ToolCall(
+            tool_name="line.send",
+            arguments={"contents": ["hello", "world"]},
+            tool_call_id="tool-1",
+            character_id=CHARACTER_ID,
+        ),
+    )
+
+    result = await executor.execute(context)
+
+    assert not is_err(result)
+    assert result.value.result == {"content_count": 2}
+    write_mock = cast(Any, agent_reply_writer.write)
+    write_mock.assert_awaited_once()
+    request = write_mock.await_args.args[0]
+    assert request.guild_id == "LINE"
+    assert request.channel_id == "line-user"
+    assert request.contents == ["hello", "world"]
+    save_mock = cast(Any, tool_result_store.save)
+    save_mock.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_generic_tool_executor_rejects_cross_platform_send(
+    memory_service: IMemoryService,
+    memory_write_service: IMemoryWriteService,
+    tool_result_store: IToolResultStore,
+    web_search_service: IWebSearchService,
+    agent_reply_writer: IAgentReplyWriter,
+) -> None:
+    executor = GenericToolExecutor(
+        tool_result_store=tool_result_store,
+        memory_service=memory_service,
+        memory_write_service=memory_write_service,
+        web_search_service=web_search_service,
+        agent_reply_writer=agent_reply_writer,
+    )
+    context = ToolExecutionContext(
+        chat_id="chat-1",
+        character_id=CHARACTER_ID,
+        user_id="line-user",
+        chat_type=ChatType.LINE,
+        tool_call=ToolCall(
+            tool_name="discord.send",
+            arguments={"contents": ["hello"]},
+            tool_call_id="tool-1",
+            character_id=CHARACTER_ID,
+        ),
+    )
+
+    result = await executor.execute(context)
+
+    assert is_err(result)
+    assert result.error.message == "discord.send is only available for Discord chats"
+    write_mock = cast(Any, agent_reply_writer.write)
+    write_mock.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_generic_tool_executor_stores_non_send_failure(
+    memory_service: IMemoryService,
+    memory_write_service: IMemoryWriteService,
+    tool_result_store: IToolResultStore,
+    web_search_service: IWebSearchService,
+    agent_reply_writer: IAgentReplyWriter,
+) -> None:
+    search_mock = cast(Any, web_search_service.search)
+    search_mock.return_value = Err(WebSearchServiceError("search failed"))
+    executor = GenericToolExecutor(
+        tool_result_store=tool_result_store,
+        memory_service=memory_service,
+        memory_write_service=memory_write_service,
+        web_search_service=web_search_service,
+        agent_reply_writer=agent_reply_writer,
+    )
+    context = ToolExecutionContext(
+        chat_id="chat-1",
+        character_id=CHARACTER_ID,
+        user_id="user-1",
+        chat_type=ChatType.DISCORD,
+        tool_call=ToolCall(
+            tool_name="web_search",
+            arguments={"query": "latest"},
+            tool_call_id="tool-1",
+            character_id=CHARACTER_ID,
+        ),
+    )
+
+    result = await executor.execute(context)
+
+    assert is_err(result)
+    save_mock = cast(Any, tool_result_store.save)
+    save_mock.assert_awaited_once()
+    saved_context = cast(ToolResultContext, save_mock.await_args.args[0])
+    assert saved_context.status == "error"
+    assert saved_context.error == "Failed to execute web search"
 
 
 def _memory_read_result() -> MemoryReadResult:

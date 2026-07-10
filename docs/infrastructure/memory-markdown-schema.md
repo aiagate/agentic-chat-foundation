@@ -95,7 +95,8 @@ Timeline は episodic memory である。
 - raw Timeline は `memory.write_candidate` 由来の transitional path として現行実装に残っている
 - daily summary は sleep/consolidation の結果として書く
 - raw / section summary ともに、write 時点で `memory_id` / `manifest_title` / `manifest_summary` を front matter に持たせる
-- `source_chat_ids` は SQL raw chat row の根拠
+- `source_chat_ids` は各 section に実際に含めた SQL raw chat row の根拠
+- 複数 section を生成する場合、同じ raw chat ID を複数 section に割り当てない
 - `summary_of` は Markdown Timeline summary 同士の関係
 
 raw Timeline Markdown は canonical raw log ではない。

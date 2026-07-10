@@ -6,7 +6,7 @@ from typing import Any
 
 from discord.ext import commands
 
-from app.usecases.result import UseCaseError
+from app.contracts.messages.use_case_error import UseCaseError
 
 logger = logging.getLogger(__name__)
 

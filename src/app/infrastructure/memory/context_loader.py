@@ -22,63 +22,6 @@ from app.infrastructure.memory.markdown import (
 from app.infrastructure.memory.store import FilesystemMemoryStore, StoredMemoryDocument
 
 
-def read_profile(store: FilesystemMemoryStore, user_id: str) -> MemoryProfile | None:
-    """Load the user profile document when it exists."""
-
-    user_profile_path = store.user_profile_path(user_id)
-    if not user_profile_path.exists():
-        return None
-    return profile_from_document(
-        store.read_document(
-            user_profile_path,
-            expected_memory_type="profile",
-            expected_user_id=user_id,
-        )
-    )
-
-
-def read_timelines(
-    store: FilesystemMemoryStore,
-    user_id: str,
-) -> list[MemoryTimelineEntry]:
-    """Load user-scoped timeline entries."""
-
-    return [
-        timeline_from_document(
-            store.read_document(
-                path,
-                expected_memory_type="timeline",
-                expected_user_id=user_id,
-            )
-        )
-        for path in store.iter_timeline_paths(user_id)
-    ]
-
-
-def read_entities(
-    store: FilesystemMemoryStore,
-    user_id: str,
-    *,
-    relationship_entity_id: str,
-) -> list[MemoryEntity]:
-    """Load user-scoped entities, keeping only the selected relationship entity."""
-
-    entities: list[MemoryEntity] = []
-    for path in store.iter_entity_paths(user_id):
-        document = store.read_document(
-            path,
-            expected_memory_type="entity",
-            expected_user_id=user_id,
-        )
-        if not entity_is_selected_relationship(
-            document,
-            relationship_entity_id=relationship_entity_id,
-        ):
-            continue
-        entities.append(entity_from_document(document))
-    return entities
-
-
 def read_index_documents(
     store: FilesystemMemoryStore,
     user_id: str,
@@ -177,9 +120,7 @@ def front_matter_property_dict(value: object) -> dict[str, MemoryPropertyValue]:
 
     if not isinstance(value, dict):
         return {}
-    return {
-        str(key): front_matter_property_value(item) for key, item in value.items()
-    }
+    return {str(key): front_matter_property_value(item) for key, item in value.items()}
 
 
 def front_matter_property_value(value: object) -> MemoryPropertyValue:

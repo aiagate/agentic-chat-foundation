@@ -7,11 +7,18 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
 
-from flow_med import Mediator
 from flow_res import Err, Ok, Result, is_err
 
-from app.contracts.messages.tool_contracts import ToolExecutionResult
+from app.contracts.messages.tool_contracts import (
+    SearchToolArguments,
+    ToolExecutionResult,
+    normalize_reply_contents,
+)
 from app.contracts.messages.tool_result_context import ToolResultContext
+from app.contracts.ports.agent_reply_writer import (
+    AgentReplyWriteRequest,
+    IAgentReplyWriter,
+)
 from app.contracts.ports.memory_service import IMemoryService
 from app.contracts.ports.memory_write_service import (
     IMemoryWriteService,
@@ -22,9 +29,8 @@ from app.contracts.ports.tool_executor import (
     ToolExecutorError,
 )
 from app.contracts.ports.tool_result_store import IToolResultStore
-from app.usecases.search.run_web_search import (
-    RunWebSearchCommand,
-)
+from app.contracts.ports.web_search_service import IWebSearchService
+from app.domain.value_objects.chat_type import ChatType
 
 
 class GenericToolExecutor(IToolExecutor):
@@ -36,10 +42,14 @@ class GenericToolExecutor(IToolExecutor):
         tool_result_store: IToolResultStore,
         memory_service: IMemoryService,
         memory_write_service: IMemoryWriteService,
+        web_search_service: IWebSearchService,
+        agent_reply_writer: IAgentReplyWriter,
     ) -> None:
         self._tool_result_store = tool_result_store
         self._memory_service = memory_service
         self._memory_write_service = memory_write_service
+        self._web_search_service = web_search_service
+        self._agent_reply_writer = agent_reply_writer
 
     async def execute(
         self,
@@ -49,17 +59,26 @@ class GenericToolExecutor(IToolExecutor):
 
         match context.tool_call.tool_name:
             case "web_search":
-                return await self._execute_web_search(context)
+                result = await self._execute_web_search(context)
             case "memory.read":
-                return await self._execute_memory_read(context)
+                result = await self._execute_memory_read(context)
             case "memory.write_candidate":
-                return await self._execute_memory_write_candidate(context)
+                result = await self._execute_memory_write_candidate(context)
+            case "line.send" | "discord.send":
+                result = await self._execute_send_message(context)
             case _:
-                return Err(
+                result = Err(
                     ToolExecutorError(
                         f"Unsupported tool: {context.tool_call.tool_name}"
                     )
                 )
+
+        if is_err(result) and context.tool_call.tool_name not in {
+            "line.send",
+            "discord.send",
+        }:
+            await self._store_failure(context, result.error.message)
+        return result
 
     async def _execute_web_search(
         self,
@@ -71,30 +90,66 @@ class GenericToolExecutor(IToolExecutor):
 
         arguments = arguments_result.value
         tool_call_id = context.tool_call.tool_call_id or str(uuid4())
-        run_result = await Mediator.send_async(
-            RunWebSearchCommand(
-                tool_call_id=tool_call_id,
+        search_result = await self._web_search_service.search(
+            SearchToolArguments(
                 query=arguments["query"],
                 source_request_id=(arguments["source_request_id"] or context.chat_id),
                 max_results=arguments["max_results"],
-                tool_name="web_search",
-                character_id=_context_character_id(context),
             )
         )
-        if is_err(run_result):
+        if is_err(search_result):
             return Err(ToolExecutorError("Failed to execute web search"))
 
+        search_results = search_result.value
         result = {
             "tool_call_id": tool_call_id,
             "retrieved_context": True,
-            "result_count": run_result.value.result_count,
+            "result_count": len(search_results.items),
             "query": arguments["query"],
         }
         return await self._store_success(
             context,
             result,
-            rendered_text=run_result.value.rendered_text,
+            rendered_text=search_results.render_retrieved_context(tool_call_id),
         )
+
+    async def _execute_send_message(
+        self,
+        context: ToolExecutionContext,
+    ) -> Result[ToolExecutionResult, ToolExecutorError]:
+        contents = normalize_reply_contents(context.tool_call.arguments)
+        if contents is None:
+            return Err(ToolExecutorError("Tool call content must not be empty"))
+
+        guild_id = context.guild_id or "DM"
+        channel_id = context.channel_id or ""
+        if context.tool_call.tool_name == "line.send":
+            if context.chat_type is not ChatType.LINE:
+                return Err(
+                    ToolExecutorError("line.send is only available for LINE chats")
+                )
+            guild_id = "LINE"
+            channel_id = context.user_id
+        elif context.chat_type is not ChatType.DISCORD:
+            return Err(
+                ToolExecutorError("discord.send is only available for Discord chats")
+            )
+        elif not context.channel_id:
+            return Err(ToolExecutorError("Discord send requires a channel_id"))
+
+        reply_result = await self._agent_reply_writer.write(
+            AgentReplyWriteRequest(
+                chat_type=context.chat_type,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                user_id=context.user_id,
+                contents=contents,
+                agent_context=context.tool_call,
+            )
+        )
+        if is_err(reply_result):
+            return Err(ToolExecutorError(reply_result.error.message))
+        return Ok(_build_result(context, {"content_count": len(contents)}))
 
     async def _execute_memory_read(
         self,
@@ -179,6 +234,26 @@ class GenericToolExecutor(IToolExecutor):
         if is_err(save_result):
             return Err(ToolExecutorError("Failed to store tool result"))
         return Ok(_build_result(context, result))
+
+    async def _store_failure(
+        self,
+        context: ToolExecutionContext,
+        error: str,
+    ) -> None:
+        tool_call_id = context.tool_call.tool_call_id
+        if tool_call_id is None:
+            return
+        await self._tool_result_store.save(
+            ToolResultContext(
+                tool_call_id=tool_call_id,
+                character_id=_context_character_id(context),
+                tool_name=context.tool_call.tool_name,
+                status="error",
+                error=error,
+                rendered_text=f"{context.tool_call.tool_name} failed: {error}",
+            )
+        )
+
 
 def _build_result(
     context: ToolExecutionContext,

@@ -19,18 +19,20 @@ from app.infrastructure.services.gpt_service import GptService
 
 
 @pytest.mark.anyio
-async def test_gemini_service_retries_three_times_then_succeeds(
+async def test_gemini_service_retries_with_exponential_backoff_then_succeeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that Gemini retries transient failures up to three times."""
+    """Test that Gemini retries transient failures with backoff."""
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     response = SimpleNamespace(parsed={"contents": ["retry ok"]}, text=None)
+    sleep_mock = AsyncMock(return_value=None)
     generate_mock = AsyncMock(
         side_effect=[
             RuntimeError("attempt-1"),
             RuntimeError("attempt-2"),
             RuntimeError("attempt-3"),
+            RuntimeError("attempt-4"),
             response,
         ]
     )
@@ -45,6 +47,10 @@ async def test_gemini_service_retries_three_times_then_succeeds(
         "app.infrastructure.services.gemini_service.genai.Client",
         FakeClient,
     )
+    monkeypatch.setattr(
+        "app.infrastructure.services.retry_support.asyncio.sleep",
+        sleep_mock,
+    )
 
     service = GeminiService()
     result = await service.generate_content(
@@ -54,7 +60,13 @@ async def test_gemini_service_retries_three_times_then_succeeds(
 
     assert not is_err(result)
     assert result.value.contents == ["retry ok"]
-    assert generate_mock.await_count == 4
+    assert generate_mock.await_count == 5
+    assert [record.args[0] for record in sleep_mock.await_args_list] == [
+        1.0,
+        2.0,
+        4.0,
+        8.0,
+    ]
 
 
 @pytest.mark.anyio
@@ -376,18 +388,20 @@ async def test_gemini_service_logs_full_request_context(
 
 
 @pytest.mark.anyio
-async def test_gpt_service_retries_three_times_then_succeeds(
+async def test_gpt_service_retries_with_exponential_backoff_then_succeeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that OpenAI retries transient failures up to three times."""
+    """Test that OpenAI retries transient failures with backoff."""
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     response = SimpleNamespace(output_text=json.dumps({"contents": ["retry ok"]}))
+    sleep_mock = AsyncMock(return_value=None)
     create_mock = AsyncMock(
         side_effect=[
             RuntimeError("attempt-1"),
             RuntimeError("attempt-2"),
             RuntimeError("attempt-3"),
+            RuntimeError("attempt-4"),
             response,
         ]
     )
@@ -400,6 +414,10 @@ async def test_gpt_service_retries_three_times_then_succeeds(
         "app.infrastructure.services.gpt_service.AsyncOpenAI",
         FakeClient,
     )
+    monkeypatch.setattr(
+        "app.infrastructure.services.retry_support.asyncio.sleep",
+        sleep_mock,
+    )
 
     service = GptService()
     result = await service.generate_content(
@@ -409,7 +427,13 @@ async def test_gpt_service_retries_three_times_then_succeeds(
 
     assert not is_err(result)
     assert result.value.contents == ["retry ok"]
-    assert create_mock.await_count == 4
+    assert create_mock.await_count == 5
+    assert [record.args[0] for record in sleep_mock.await_args_list] == [
+        1.0,
+        2.0,
+        4.0,
+        8.0,
+    ]
 
 
 @pytest.mark.anyio

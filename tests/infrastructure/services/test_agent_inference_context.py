@@ -1,0 +1,142 @@
+"""Tests for prompt-ready agent inference context assembly."""
+
+from datetime import UTC, datetime
+from typing import Any
+
+import pytest
+from flow_res import Err, Ok, is_err
+
+from app.contracts.messages.agent_profile import AgentProfileBundle
+from app.contracts.messages.agent_turn_context import AgentTurnContext
+from app.contracts.messages.character_definition import CharacterDefinition
+from app.contracts.messages.conversation_context import ConversationContext
+from app.contracts.messages.memory_context import MemoryContextPack, MemoryProfile
+from app.contracts.ports.agent_inference_context import AgentInferenceContextRequest
+from app.contracts.ports.agent_profile_service import IAgentProfileService
+from app.contracts.ports.memory_service import IMemoryService, MemoryServiceError
+from app.contracts.ports.tool_result_store import (
+    IToolResultStore,
+    ToolResultStoreError,
+)
+from app.domain.value_objects.chat_type import ChatType
+from app.infrastructure.services.agent_inference_context import (
+    AgentInferenceContextService,
+)
+from app.infrastructure.services.tool_catalog import StaticToolCatalog
+
+
+def _turn_context() -> AgentTurnContext:
+    return AgentTurnContext(
+        prompt="hello",
+        recent_history=[],
+        conversation=ConversationContext(
+            chat_scope="LINE user_id=user-1",
+            current_time=datetime(2026, 6, 29, tzinfo=UTC),
+            timezone="UTC",
+            observed_message_count=0,
+            has_session_boundary=False,
+        ),
+    )
+
+
+def _profile_bundle() -> AgentProfileBundle:
+    return AgentProfileBundle(
+        profile=MemoryProfile(user_id="ai"),
+        character=CharacterDefinition(
+            character_id="character-1",
+            relationship_entity_id="relationship:character-1",
+            relationship_entity_label="Relationship",
+        ),
+        persona_context="Persona contract",
+        relationship_entity_id="relationship:character-1",
+        relationship_entity_label="Relationship",
+        relationship_entity_type="relationship",
+        relationship_tag="agent-growth",
+    )
+
+
+def _service(mocker: Any, *, memory_result: Any) -> AgentInferenceContextService:
+    memory_service = mocker.Mock(spec=IMemoryService)
+    memory_service.build_context = mocker.AsyncMock(return_value=memory_result)
+    profile_service = mocker.Mock(spec=IAgentProfileService)
+    profile_service.load_agent_profile_bundle.return_value = _profile_bundle()
+    tool_result_store = mocker.Mock(spec=IToolResultStore)
+    tool_result_store.get = mocker.AsyncMock(
+        return_value=Err(ToolResultStoreError("not found"))
+    )
+    return AgentInferenceContextService(
+        memory_service,
+        profile_service,
+        tool_result_store,
+        StaticToolCatalog(),
+    )
+
+
+@pytest.mark.anyio
+async def test_context_service_assembles_line_tools_and_memory(mocker: Any) -> None:
+    service = _service(
+        mocker,
+        memory_result=Ok(
+            MemoryContextPack(user_id="user-1", assembled_context="Memory manifest")
+        ),
+    )
+
+    result = await service.assemble(
+        AgentInferenceContextRequest(
+            turn_context=_turn_context(),
+            user_id="user-1",
+            character_id="character-1",
+            chat_type=ChatType.LINE,
+        )
+    )
+
+    assert not is_err(result)
+    assert result.value.memory_context == "Memory manifest"
+    assert "Persona contract" in (result.value.system_prompt or "")
+    assert {tool.name for tool in result.value.tool_definitions} == {
+        "web_search",
+        "memory.read",
+        "memory.write_candidate",
+        "line.send",
+    }
+
+
+@pytest.mark.anyio
+async def test_context_service_tolerates_missing_tool_result(mocker: Any) -> None:
+    service = _service(
+        mocker,
+        memory_result=Ok(MemoryContextPack(user_id="user-1")),
+    )
+
+    result = await service.assemble(
+        AgentInferenceContextRequest(
+            turn_context=_turn_context(),
+            user_id="user-1",
+            character_id="character-1",
+            chat_type=ChatType.LINE,
+            tool_call_id="missing-tool",
+        )
+    )
+
+    assert not is_err(result)
+    assert result.value.current_input.content == "hello"
+
+
+@pytest.mark.anyio
+async def test_context_service_maps_memory_failure(mocker: Any) -> None:
+    service = _service(
+        mocker,
+        memory_result=Err(MemoryServiceError("memory failed")),
+    )
+
+    result = await service.assemble(
+        AgentInferenceContextRequest(
+            turn_context=_turn_context(),
+            user_id="user-1",
+            character_id="character-1",
+            chat_type=ChatType.DISCORD,
+        )
+    )
+
+    assert is_err(result)
+    assert result.error.message == "Failed to retrieve memory context"

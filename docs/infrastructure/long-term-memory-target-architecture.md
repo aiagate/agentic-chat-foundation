@@ -10,7 +10,7 @@
 - 生のチャットログは SQL データベースを正とする。
 - Markdown は Profile、Timeline 要約、Entity などの抽象化された長期記憶のみを保持する。
 - raw Timeline Markdown は legacy、手動投入、または移行中の暫定データとして扱い、chat raw の正本にしない。
-- 検索用インデックスは SQLite と `sqlite-vec` に置く。
+- 検索用インデックスは main SQL database の migration 管理された projection に置く。
 - 定期処理は worker の scheduled task で睡眠・統合ジョブとして実行する。
 - Chat 生成は `IMemoryService` 経由で組み立て済みの memory context を取得するだけにし、保存方式の詳細を知らない。
 
@@ -33,8 +33,8 @@
 
 - raw chat の正本は SQL に寄せる方針で、Markdown raw Timeline は最終保存先ではない。
 - 日次・睡眠後の要約は、まだ deterministic summary / deterministic consolidation の性格が残っている。LLM ベースの意味圧縮は目標状態である。
-- 検索は SQLite metadata と deterministic search を中心にした段階であり、`sqlite-vec` による semantic retrieval は目標状態である。
-- sleep 後に作成・更新された Markdown を index 更新と retrieval に完全接続する経路は未完了である。
+- 検索は main DB projection と deterministic/embedding score を組み合わせる。
+- sleep 後のMarkdown更新はprojection rebuildへ同期接続され、Worker起動時にも全体rebuildする。
 - `source_chat_ids` は SQL raw chat row の根拠を表し、現行の section summary writer は
   `summary_of` にも raw chat IDs を入れている。target-state では
   `summary_of` を Markdown Timeline summary 同士の再要約・継承関係のみに
@@ -105,12 +105,12 @@ Markdown に保存しないもの:
 - 記憶の必要がない会話（挨拶、お礼など）
 - chat raw の正本としての raw Timeline Markdown
 
-### SQLite Vector Index: 再構築可能な検索投影
+### Main DB Index Projection: 再構築可能な検索投影
 
-検索インデックスは SQLite に保存する。`sqlite-vec` は想定する vector extension であり、`vec0` virtual table によるベクトル検索と `MATCH` ベースの KNN 検索を提供する。
+検索インデックスはmain application databaseの`memory_index_documents`に保存する。SQLite/Postgresのどちらでも同じprojection契約を使い、専用index databaseは作らない。
 
 インデックスは Markdown 記憶と選択された SQL raw log の投影であり、正本から再構築可能である。
-現状の検索実装は SQLite metadata と deterministic search の段階にあり、`sqlite-vec` はこの目標状態へ移行するための検索投影である。
+vector backendを将来変更する場合も、main DB projectionを迂回するfallbackではなく`IMemoryIndexQuery`実装の置換として扱う。
 
 責務:
 
@@ -133,17 +133,17 @@ sequenceDiagram
     participant Worker
     participant GenerateContent
     participant MemoryService
-    participant VecIndex
+    participant Projection
     participant Markdown
     participant AI
 
     Presentation->>SaveChatUseCase: 入力メッセージを保存
     SaveChatUseCase->>SQL: raw Chat を永続化
     SaveChatUseCase-->>Worker: ChatSaved event を発行
-    Worker->>RunAgentTurn: RunAgentTurnQuery
+    Worker->>RunAgentTurn: RunAgentTurnCommand
     GenerateContent->>MemoryService: retrieve(prompt, user_id)
-    MemoryService->>VecIndex: semantic search
-    VecIndex->>MemoryService: 似たコンテキストについての会話のId等を返却
+    MemoryService->>Projection: user/character scopeを取得
+    Projection->>MemoryService: 選定済みsource_pathとembeddingを返却
     MemoryService->>Markdown: semantic searchの結果をもとに関連する抽象記憶を読み込む
     MemoryService-->>GenerateContent: 記憶+時系列+Entityを組み合わせた context frame
     GenerateContent->>AI: prompt + chat history + memory context
@@ -164,14 +164,14 @@ sequenceDiagram
     participant SQL
     participant LLM
     participant Markdown
-    participant VecIndex
+    participant Projection
 
     Worker->>SleepUseCase: 定期実行の memory sleep command
     SleepUseCase->>SQL: 未統合の前日の raw log を取得
     SleepUseCase->>LLM: 会話の内容に応じて分割+会話の意味圧縮/昇華/蒸留を要求
     LLM-->>SleepUseCase: profile/timeline/entity の更新案
     SleepUseCase->>Markdown: 抽象記憶を upsert
-    SleepUseCase->>VecIndex: embedding/index を更新
+    SleepUseCase->>Projection: embedding/index を再構築
 ```
 
 睡眠処理は冪等でなければならない。失敗時に Markdown を壊したり、会話に出た同じEntityに対して複数Entityの登録等をしてはならない。
@@ -256,7 +256,7 @@ Timeline は chat message ごとの raw ファイルを持たない。
 
 必要な参照:
 
-- `source_chat_ids`: 要約に含めた SQL chat ID
+- `source_chat_ids`: その section の要約に含めた SQL chat ID。日全体ではなく section ごとに保持する
 - `entity_ids`: 関連 Entity ID
 - `summary_of`: 再要約した Markdown Timeline summary ID。SQL chat ID は入れない
 
@@ -294,17 +294,17 @@ Entity が持つべきもの:
 - `maker`
 - etc...
 
-## SQLite Vector Search 設計
+## Main DB Vector Search 設計
 
 ### データベース所有
 
-memory indexing 用に local SQLite database を使う。ローカルでは app DB と同居してもよいし、運用分離したい場合は専用の index DB にしてもよい。
+memory indexing は main application database の `memory_index_documents` projection を使う。スキーマは Alembic migration で管理し、専用 sidecar database は持たない。
 
 推奨:
 
 - raw chat は main app SQL database に保持する
-- vector index は local deployment では同じ SQLite ファイルに置いてよい
-- Postgres production では、後続で別 vector backend を導入するまで sidecar の SQLite index を使う
+- local SQLite と production Postgres のどちらでも main DB projection を唯一の read path とする
+- 将来 vector backend を変更する場合も `IMemoryIndexQuery` の実装差し替えとして扱う
 
 ### テーブル
 
@@ -312,10 +312,9 @@ metadata table の論理例:
 
 ```sql
 create table memory_index_documents (
-  id text primary key,
+  source_path text primary key,
   user_id text,
   memory_type text not null,
-  source_path text not null,
   source_id text not null,
   title text,
   content_hash text not null,
@@ -327,19 +326,10 @@ create table memory_index_documents (
   updated_at text not null,
   importance real not null,
   confidence real not null,
-  decay_score real not null
+  decay_score real not null,
+  embedding json not null
 );
 ```
-
-vector table の例:
-
-```sql
-create virtual table memory_index_vectors using vec0(
-  embedding float[DIMENSION]
-);
-```
-
-vector table の rowid は metadata row の内部 integer key と一致させるか、明示的な mapping table で結ぶ。
 
 ### Retrieval
 
@@ -347,7 +337,7 @@ retrieval は次を組み合わせる:
 
 - user scope filter
 - memory type/status/tags/date filters
-- `sqlite-vec` による vector distance
+- projectionに保存されたembeddingによるsemantic score
 - lexical fallback score
 - importance/confidence/decay score
 - pinned / unresolved のブースト
@@ -394,7 +384,8 @@ class IEmbeddingService(ABC):
 
 - `IMemoryService`: 組み立て済み context を返す
 - `IMemoryStore`: 抽象 Markdown の read/write
-- `IMemoryIndex`: vector index row の upsert/delete/search
+- `IMemoryIndexQuery`: main DB projection から検索対象を取得する
+- `IMemoryIndexMaintenance`: projection の rebuild / repair
 - `IEmbeddingService`: embedding 生成
 - `IRawChatLogQuery`: 統合用の SQL raw log 取得
 - `IMemoryConsolidationService`: LLM ベースの意味圧縮
@@ -403,7 +394,6 @@ class IEmbeddingService(ABC):
 
 推奨 use case:
 
-- `RetrieveMemoryContextQuery`
 - `RunMemorySleepCommand`
 - `ConsolidateDailyMemoryCommand`
 - `UpsertEntityMemoryCommand`
@@ -441,7 +431,7 @@ sleep jobs は retry 可能でなければならない。
 - Markdown parser/store
 - user-scoped layout
 - context frame DTO
-- SQLite metadata を使う deterministic search / keyword index
+- main DB projection を使う deterministic search / keyword index
 - deterministic summary / deterministic consolidation helper
 - worker scheduled task registry
 - SQL raw log selection の入口
@@ -452,7 +442,7 @@ sleep jobs は retry 可能でなければならない。
 - sleep 入力を SQL raw chat log に寄せ切ること
 - sleep 後の Markdown 更新を index 更新と retrieval に接続すること
 - deterministic summary を LLM ベースの意味圧縮へ置き換えること
-- SQLite metadata + deterministic search から `sqlite-vec` semantic retrieval へ移行すること
+- main DB projection の embedding を利用したsemantic retrievalを強化すること
 
 目標への移行:
 
@@ -461,7 +451,7 @@ sleep jobs は retry 可能でなければならない。
 3. sleep の入力を raw Markdown ではなく SQL chat row に統一する
 4. 日次サマリーを deterministic 連結から LLM ベースの意味圧縮へ変える
 5. `IEmbeddingService` を追加する
-6. `sqlite-vec` を使った SQLite vector index を追加する
+6. main DB projection のembedding検索をprovider非依存にする
 7. retrieval は vector search を主、lexical scoring を補助にする
 8. `RunMemorySleepCommand` は worker scheduled task に接続済み。必要なら
    既存の `schedule_run_time` を含めて運用仕様を詰める
@@ -500,9 +490,7 @@ sleep jobs は retry 可能でなければならない。
     - 一旦以下を使用
     - `https://ai.google.dev/gemini-api/docs/embeddings?hl=ja`
     - `https://developers.openai.com/api/docs/guides/embeddings`
-- local development で main app SQLite DB を使うか、専用 `memory_index.db` を使うか
-    - 一旦はmain app SQLite DB を使う
-    - 不都合が生じた場合、専用のindex dbを検討
+- local development と production の双方で main app DB を使い、専用 index DB は作らない
 - production の Postgres では`pgvector`の使用もしくは別のベクトル検索に特化したDBの採用を検討
 - semantic compression が Profile を自動更新するか、レビュー用 proposal を先に書くか
     - YAGNI

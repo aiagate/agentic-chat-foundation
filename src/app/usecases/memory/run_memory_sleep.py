@@ -10,11 +10,11 @@ from flow_med import Request, RequestHandler
 from flow_res import Err, Ok, Result, is_err
 from injector import inject
 
+from app.contracts.messages.use_case_error import ErrorType, UseCaseError
 from app.contracts.ports.memory_consolidation import IMemoryConsolidationService
 from app.contracts.ports.memory_store import IMemoryStore
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.domain.queries.memory_sleep_query import IMemorySleepQuery
-from app.domain.repositories import IUnitOfWork
-from app.usecases.result import ErrorType, UseCaseError
 
 logger = logging.getLogger(__name__)
 

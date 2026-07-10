@@ -61,7 +61,7 @@
 - `src/app/infrastructure/services/search_context_store.py` は削除され、実装は `src/app/infrastructure/stores/tool_result_store.py` に移った。
 - `src/app/infrastructure/services/memory_store.py` は削除され、Markdown memory の低レベル I/O は `src/app/infrastructure/memory/store.py` に移った。
 - `src/app/infrastructure/services/memory_index.py` は削除され、検索は `src/app/infrastructure/queries/memory_index_query_service.py` と `src/app/infrastructure/repositories/memory_index_repository.py` に分離された。
-- `src/app/usecases/search/handle_search_request.py` は削除され、generic tool flow は `src/app/usecases/agent/route_tool_calls.py` と `src/app/usecases/agent/handle_tool_execution.py` に集約された。
+- `src/app/usecases/search/handle_search_request.py` は削除され、generic tool flow は `src/app/infrastructure/services/tool_call_router.py` と `src/app/usecases/agent/handle_tool_execution.py` に集約された。
 
 ## 例外
 

@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 from flow_res import Result
 
-from app.contracts.ports.memory_index import MemoryIndexError
+
+@dataclass
+class MemoryIndexError(Exception):
+    """Failure while rebuilding or repairing the memory index projection."""
+
+    message: str
+
+    def __str__(self) -> str:
+        return self.message
 
 
 class IMemoryIndexMaintenance(ABC):

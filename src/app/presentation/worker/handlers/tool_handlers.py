@@ -23,6 +23,7 @@ from app.usecases.agent.request_agent_turn import RequestAgentTurnCommand
 
 logger = logging.getLogger(__name__)
 
+
 def _require_character_id(
     character_id: str | None, payload: Mapping[str, object]
 ) -> str | None:

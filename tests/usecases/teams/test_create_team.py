@@ -5,8 +5,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from flow_res import Err, is_err, is_ok
 
-from app.domain.repositories import IUnitOfWork, RepositoryError, RepositoryErrorType
-from app.usecases.result import ErrorType
+from app.contracts.messages.use_case_error import ErrorType
+from app.contracts.ports.unit_of_work import IUnitOfWork
+from app.domain.repositories import RepositoryError, RepositoryErrorType
 from app.usecases.teams.create_team import CreateTeamCommand, CreateTeamHandler
 
 

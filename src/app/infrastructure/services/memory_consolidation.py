@@ -100,7 +100,11 @@ class MemoryConsolidationService:
         if (
             results or wrote_entity_patches
         ) and self.memory_index_maintenance is not None:
-            await self.memory_index_maintenance.rebuild_memory_index(user_id=user_id)
+            rebuild_result = await self.memory_index_maintenance.rebuild_memory_index(
+                user_id=user_id
+            )
+            if is_err(rebuild_result):
+                raise RuntimeError(str(rebuild_result.error))
         return len(results)
 
 
@@ -129,18 +133,23 @@ async def _consolidate_chat_logs_into_sections(
         raise RuntimeError(str(extraction_result.error))
 
     result = extraction_result.value
+    raw_log_ids = _unique_strings(raw_log.id for raw_log in request.raw_logs)
     section_patches = result.sections
     if not section_patches and result.timeline_patch is not None:
         section_patches = [
             _timeline_patch_to_section_patch(
                 result.timeline_patch,
                 fallback_slug="summary",
+                source_chat_ids=raw_log_ids,
             )
         ]
+    _validate_section_source_chat_ids(
+        section_patches,
+        available_source_chat_ids=raw_log_ids,
+    )
 
     results: list[SectionConsolidationResult] = []
     wrote_entity_patches = False
-    raw_log_ids = _unique_strings(raw_log.id for raw_log in request.raw_logs)
     for entity_patch in result.entity_patches:
         _write_entity_patch(
             store,
@@ -161,7 +170,6 @@ async def _consolidate_chat_logs_into_sections(
         section_result = _write_section_timeline(
             store,
             section_patch=section_patch,
-            raw_logs=request.raw_logs,
             reference_time=reference_time,
             existing_timeline_paths=existing_timeline_paths,
         )
@@ -384,12 +392,11 @@ def _write_section_timeline(
     store: IMemoryStore,
     *,
     section_patch: MemoryTimelineSectionPatch,
-    raw_logs: list[MemorySleepChatLog],
     reference_time: datetime,
     existing_timeline_paths: set[Path] | None = None,
 ) -> SectionConsolidationResult:
     day = datetime.fromisoformat(section_patch.day).date()
-    summary_of = _unique_strings(raw_log.id for raw_log in raw_logs)
+    summary_of = _unique_strings(section_patch.source_chat_ids)
     section_path = store.section_timeline_path(
         user_id=section_patch.user_id,
         day=day,
@@ -534,6 +541,7 @@ def _timeline_patch_to_section_patch(
     timeline_patch: MemoryTimelinePatch,
     *,
     fallback_slug: str,
+    source_chat_ids: list[str],
 ) -> MemoryTimelineSectionPatch:
     return MemoryTimelineSectionPatch(
         id=timeline_patch.id,
@@ -541,10 +549,39 @@ def _timeline_patch_to_section_patch(
         day=timeline_patch.day,
         section_slug=fallback_slug,
         title="要約",
+        source_chat_ids=source_chat_ids,
         summary=timeline_patch.summary,
         entity_ids=list(timeline_patch.entity_ids),
         confidence=float(timeline_patch.confidence),
     )
+
+
+def _validate_section_source_chat_ids(
+    section_patches: list[MemoryTimelineSectionPatch],
+    *,
+    available_source_chat_ids: list[str],
+) -> None:
+    available_ids = set(available_source_chat_ids)
+    assigned_ids: set[str] = set()
+    for section_patch in section_patches:
+        source_ids = section_patch.source_chat_ids
+        if len(source_ids) != len(set(source_ids)):
+            raise ValueError(
+                f"Section {section_patch.id!r} contains duplicate source_chat_ids"
+            )
+        unknown_ids = set(source_ids) - available_ids
+        if unknown_ids:
+            raise ValueError(
+                f"Section {section_patch.id!r} references unknown source_chat_ids: "
+                f"{sorted(unknown_ids)!r}"
+            )
+        overlapping_ids = assigned_ids.intersection(source_ids)
+        if overlapping_ids:
+            raise ValueError(
+                "source_chat_ids must belong to exactly one section; "
+                f"overlapping ids: {sorted(overlapping_ids)!r}"
+            )
+        assigned_ids.update(source_ids)
 
 
 def _build_semantic_section_body(
@@ -661,7 +698,11 @@ def _find_existing_section_by_source_ids(
     if not source_chat_ids:
         return None
     expected_source_ids = set(source_chat_ids)
-    paths = sorted(candidate_paths) if candidate_paths is not None else store.iter_timeline_paths(user_id)
+    paths = (
+        sorted(candidate_paths)
+        if candidate_paths is not None
+        else store.iter_timeline_paths(user_id)
+    )
     for path in paths:
         try:
             document = store.read_document(

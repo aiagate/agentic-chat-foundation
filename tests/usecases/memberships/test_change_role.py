@@ -4,12 +4,12 @@ import pytest
 from flow_res import is_err
 from ulid import ULID
 
-from app.domain.repositories import IUnitOfWork
+from app.contracts.messages.use_case_error import ErrorType
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.usecases.memberships.change_role import (
     ChangeRoleCommand,
     ChangeRoleHandler,
 )
-from app.usecases.result import ErrorType
 
 
 @pytest.mark.anyio

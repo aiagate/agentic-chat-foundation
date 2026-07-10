@@ -1,37 +1,37 @@
 """Tests for save line chat use case."""
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from flow_res import is_err
+from sqlalchemy import select
 
 from app.contracts.messages.chat_events import LINE_CHAT_SAVED_TOPIC
-from app.domain.repositories import IUnitOfWork
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.domain.value_objects.chat_type import ChatType
-from app.usecases.chat.save_line_chat import SaveChatHandler, SaveLineChatCommand
+from app.infrastructure.orm_models.outbox_message_orm import OutboxMessageORM
+from app.usecases.chat.save_line_chat import SaveLineChatCommand, SaveLineChatHandler
 
 
 @pytest.mark.anyio
 async def test_save_line_chat_persists_message(
     uow: IUnitOfWork,
-    event_bus: Any,
 ) -> None:
     """Test that LINE messages are persisted and published."""
-    handler = SaveChatHandler(uow, event_bus)
+    handler = SaveLineChatHandler(uow)
 
     result = await handler.handle(SaveLineChatCommand(user_id="u1", content="hello"))
 
     assert not is_err(result)
     assert result.value.id
-    event_bus.publish.assert_awaited_once_with(
-        LINE_CHAT_SAVED_TOPIC,
-        {
-            "chat_id": result.value.id,
-            "user_id": "u1",
-        },
-    )
-
     async with uow:
+        session = cast(Any, uow)._session
+        outbox_result = await session.execute(select(OutboxMessageORM))
+        outbox_message = outbox_result.scalar_one()
+        assert outbox_message.topic == LINE_CHAT_SAVED_TOPIC
+        assert outbox_message.payload["chat_id"] == result.value.id
+        assert outbox_message.payload["event_id"] == outbox_message.id
+
         raw_query = uow.GetRawChatLogQuery()
         raw_history = await raw_query.get_memory_sleep_source_items(
             "u1",

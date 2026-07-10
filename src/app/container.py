@@ -7,36 +7,50 @@ import injector
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.bootstrap.character_selection import resolve_active_character_id
+from app.contracts.ports.agent_inference_context import IAgentInferenceContextService
 from app.contracts.ports.agent_profile_service import IAgentProfileService
+from app.contracts.ports.agent_reply_writer import IAgentReplyWriter
+from app.contracts.ports.agent_turn_context_query import IAgentTurnContextQuery
 from app.contracts.ports.ai_service import IAIService
 from app.contracts.ports.event_bus import IEventBus
 from app.contracts.ports.memory_consolidation import IMemoryConsolidationService
 from app.contracts.ports.memory_index_maintenance import IMemoryIndexMaintenance
+from app.contracts.ports.memory_index_query import IMemoryIndexQuery
 from app.contracts.ports.memory_semantic_extraction import (
     IMemorySemanticExtractionService,
 )
 from app.contracts.ports.memory_service import IMemoryService
 from app.contracts.ports.memory_store import IMemoryStore
 from app.contracts.ports.memory_write_service import IMemoryWriteService
+from app.contracts.ports.outbox_store import IOutboxStore
+from app.contracts.ports.tool_call_router import IToolCallRouter
 from app.contracts.ports.tool_call_store import IToolCallStore
 from app.contracts.ports.tool_catalog import IToolCatalog
+from app.contracts.ports.tool_completion_notifier import IToolCompletionNotifier
 from app.contracts.ports.tool_execution_lock import IToolExecutionLock
 from app.contracts.ports.tool_executor import IToolExecutor
 from app.contracts.ports.tool_result_store import IToolResultStore
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.contracts.ports.web_search_service import IWebSearchService
 from app.domain.queries.memory_sleep_query import IMemorySleepQuery
-from app.domain.repositories import IUnitOfWork
 from app.infrastructure.memory.store import (
     FilesystemMemoryStore,
 )
 from app.infrastructure.messaging.in_memory_event_bus import InMemoryEventBus
-from app.infrastructure.messaging.postgres_event_bus import PostgresEventBus
 from app.infrastructure.messaging.redis_event_bus import RedisEventBus
 from app.infrastructure.orm_registry import init_orm_mappings
+from app.infrastructure.queries.agent_turn_context_query import (
+    SQLAlchemyAgentTurnContextQuery,
+)
+from app.infrastructure.queries.memory_index_projection_query import (
+    SQLAlchemyMemoryIndexQuery,
+)
 from app.infrastructure.queries.memory_sleep_query_service import (
     MemorySleepQueryService,
 )
 from app.infrastructure.services import (
+    AgentInferenceContextService,
+    EventBusToolCompletionNotifier,
     FilesystemAgentProfileService,
     FilesystemMemoryService,
     FilesystemMemoryWriteService,
@@ -49,7 +63,10 @@ from app.infrastructure.services import (
     MockAIService,
     OllamaWebSearchService,
     StaticToolCatalog,
+    ToolCallRoutingService,
+    TransactionalAgentReplyWriter,
 )
+from app.infrastructure.stores.outbox_store import SQLAlchemyOutboxStore
 from app.infrastructure.stores.tool_call_store import (
     InMemoryToolCallStore,
     RedisToolCallStore,
@@ -85,6 +102,30 @@ class DatabaseModule(injector.Module):
         """Provide Unit of Work implementation for transaction management."""
         return SQLAlchemyUnitOfWork(session_factory)
 
+    @injector.provider
+    def provide_agent_turn_context_query(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> IAgentTurnContextQuery:
+        """Provide the short-lived agent-turn read query."""
+        return SQLAlchemyAgentTurnContextQuery(session_factory)
+
+    @injector.provider
+    def provide_outbox_store(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> IOutboxStore:
+        """Provide the durable outbox delivery store."""
+        return SQLAlchemyOutboxStore(session_factory)
+
+    @injector.provider
+    def provide_agent_reply_writer(
+        self,
+        uow: IUnitOfWork,
+    ) -> IAgentReplyWriter:
+        """Provide the transactional generated-reply writer."""
+        return TransactionalAgentReplyWriter(uow)
+
 
 class MessagingModule(injector.Module):
     """Module for messaging-related dependencies."""
@@ -97,8 +138,6 @@ class MessagingModule(injector.Module):
         if provider is None:
             if os.getenv("REDIS_URL"):
                 provider = "redis"
-            elif os.getenv("DATABASE_URL", "").startswith("postgresql"):
-                provider = "postgres"
             else:
                 provider = "memory"
 
@@ -106,8 +145,6 @@ class MessagingModule(injector.Module):
         match provider:
             case "redis":
                 return RedisEventBus()
-            case "postgres":
-                return PostgresEventBus()
             case _:
                 return InMemoryEventBus()
 
@@ -155,6 +192,24 @@ class SearchModule(injector.Module):
         if os.getenv("REDIS_URL"):
             return RedisToolExecutionLock()
         return InMemoryToolExecutionLock()
+
+    @injector.provider
+    def provide_tool_call_router(
+        self,
+        event_bus: IEventBus,
+        tool_catalog: IToolCatalog,
+        tool_call_store: IToolCallStore,
+    ) -> IToolCallRouter:
+        """Provide tool-call validation and event routing."""
+        return ToolCallRoutingService(event_bus, tool_catalog, tool_call_store)
+
+    @injector.provider
+    def provide_tool_completion_notifier(
+        self,
+        event_bus: IEventBus,
+    ) -> IToolCompletionNotifier:
+        """Provide tool completion event publication."""
+        return EventBusToolCompletionNotifier(event_bus)
 
     @injector.provider
     @injector.singleton
@@ -210,6 +265,19 @@ class MemoryModule(injector.Module):
         )
 
     @injector.provider
+    def provide_memory_index_query(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        memory_store: IMemoryStore,
+    ) -> IMemoryIndexQuery:
+        """Provide the main-database-backed memory projection query."""
+
+        return SQLAlchemyMemoryIndexQuery(
+            session_factory,
+            cast(FilesystemMemoryStore, memory_store),
+        )
+
+    @injector.provider
     @injector.singleton
     def provide_memory_consolidation_service(
         self,
@@ -241,16 +309,31 @@ class MemoryModule(injector.Module):
     @injector.singleton
     def provide_memory_service(
         self,
-        memory_store: IMemoryStore,
+        memory_index_query: IMemoryIndexQuery,
         agent_profile_service: IAgentProfileService,
         character_id: str,
     ) -> IMemoryService:
-        """Provide the filesystem-backed memory service."""
-        filesystem_store = cast(FilesystemMemoryStore, memory_store)
+        """Provide memory retrieval through the persisted projection."""
         return FilesystemMemoryService(
-            store=filesystem_store,
+            index_query=memory_index_query,
             agent_profile_service=agent_profile_service,
             character_id=character_id,
+        )
+
+    @injector.provider
+    def provide_agent_inference_context_service(
+        self,
+        memory_service: IMemoryService,
+        agent_profile_service: IAgentProfileService,
+        tool_result_store: IToolResultStore,
+        tool_catalog: IToolCatalog,
+    ) -> IAgentInferenceContextService:
+        """Provide prompt-ready agent inference context assembly."""
+        return AgentInferenceContextService(
+            memory_service,
+            agent_profile_service,
+            tool_result_store,
+            tool_catalog,
         )
 
     @injector.provider
@@ -276,12 +359,16 @@ class MemoryModule(injector.Module):
         tool_result_store: IToolResultStore,
         memory_service: IMemoryService,
         memory_write_service: IMemoryWriteService,
+        web_search_service: IWebSearchService,
+        agent_reply_writer: IAgentReplyWriter,
     ) -> IToolExecutor:
         """Provide the generic tool executor adapter."""
         return GenericToolExecutor(
             tool_result_store=tool_result_store,
             memory_service=memory_service,
             memory_write_service=memory_write_service,
+            web_search_service=web_search_service,
+            agent_reply_writer=agent_reply_writer,
         )
 
     @injector.provider

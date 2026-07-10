@@ -21,8 +21,7 @@ logger = logging.getLogger(__name__)
 _INFERENCE_OPERATIONS = {
     "HandleToolExecutionCommand",
     "RequestAgentTurnCommand",
-    "RetrieveMemoryContextQuery",
-    "RunAgentTurnQuery",
+    "RunAgentTurnCommand",
 }
 
 

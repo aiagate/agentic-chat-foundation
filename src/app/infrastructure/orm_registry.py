@@ -16,6 +16,7 @@ from app.infrastructure.orm_models.memory_consolidated_chat_source_orm import (
 from app.infrastructure.orm_models.memory_index_backup_orm import (
     MemoryIndexBackupORM,
 )
+from app.infrastructure.orm_models.outbox_message_orm import OutboxMessageORM
 from app.infrastructure.orm_models.team_membership_orm import TeamMembershipORM
 from app.infrastructure.orm_models.team_orm import TeamORM
 from app.infrastructure.orm_models.user_orm import UserORM
@@ -36,4 +37,4 @@ def init_orm_mappings() -> None:
     register_orm_mapping(LineChat, LineChatORM)
 
     # Import-only projection models must remain registered in SQLModel metadata.
-    _ = (MemoryIndexBackupORM, MemoryConsolidatedChatSourceORM)
+    _ = (MemoryIndexBackupORM, MemoryConsolidatedChatSourceORM, OutboxMessageORM)

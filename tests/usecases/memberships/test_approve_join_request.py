@@ -6,13 +6,13 @@ import pytest
 from flow_res import is_err
 from ulid import ULID
 
-from app.domain.repositories import IUnitOfWork
+from app.contracts.messages.use_case_error import ErrorType
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.usecases.memberships.approve_join_request import (
     ApproveJoinRequestCommand,
     ApproveJoinRequestHandler,
 )
 from app.usecases.memberships.join_team import JoinTeamCommand, JoinTeamHandler
-from app.usecases.result import ErrorType
 from app.usecases.teams.create_team import CreateTeamCommand, CreateTeamHandler
 from app.usecases.users.create_user import CreateUserCommand, CreateUserHandler
 
@@ -52,7 +52,7 @@ async def test_approve_join_request_not_pending(
     team_handler = CreateTeamHandler(uow)
     team_id = (await team_handler.handle(CreateTeamCommand(name="Team A"))).unwrap().id
 
-    user_handler = CreateUserHandler(uow, event_bus)
+    user_handler = CreateUserHandler(uow)
     user_id = (
         (
             await user_handler.handle(

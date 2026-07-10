@@ -21,8 +21,8 @@ from app.contracts.ports.agent_profile_service import IAgentProfileService
 from app.contracts.ports.ai_service import AIServiceError, IAIService
 from app.contracts.ports.memory_consolidation import IMemoryConsolidationService
 from app.contracts.ports.memory_store import IMemoryStore
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.domain.queries.raw_chat_log_query import MemorySleepSourceItem
-from app.domain.repositories import IUnitOfWork
 from app.domain.value_objects.chat_type import ChatType
 from app.infrastructure.memory.store import FilesystemMemoryStore
 from app.infrastructure.orm_models import ChatORM
@@ -278,15 +278,15 @@ async def test_run_memory_sleep_handler_consolidates_sqlite_raw_logs(
         == "Started the day early | The early start was noted."
     )
     assert morning.front_matter["section_slug"] == "morning-routine"
-    assert morning.front_matter["summary_of"] == [
-        "raw-yesterday-discord",
-        "raw-yesterday-line",
-    ]
+    assert morning.front_matter["summary_of"] == ["raw-yesterday-discord"]
+    assert morning.front_matter["source_chat_ids"] == ["raw-yesterday-discord"]
     assert "Started the day early" in morning.body
     assert "Felt a little sleepy." in morning.body
     assert "Source Chat IDs" not in morning.body
     assert "Evidence" not in morning.body
     assert work.front_matter["section_slug"] == "work-progress"
+    assert work.front_matter["summary_of"] == ["raw-yesterday-line"]
+    assert work.front_matter["source_chat_ids"] == ["raw-yesterday-line"]
     assert work.front_matter["memory_id"] == "timeline:u1-2026-05-18-work-progress"
     assert work.front_matter["manifest_title"] == "Work progress"
     assert (
@@ -404,6 +404,7 @@ class _FakeAIService(IAIService):
                     "day": "2026-05-18",
                     "section_slug": "morning-routine",
                     "title": "Morning routine",
+                    "source_chat_ids": ["raw-yesterday-discord"],
                     "summary": {
                         "topic": "Started the day early",
                         "self_feeling": "Felt a little sleepy.",
@@ -419,6 +420,7 @@ class _FakeAIService(IAIService):
                     "day": "2026-05-18",
                     "section_slug": "work-progress",
                     "title": "Work progress",
+                    "source_chat_ids": ["raw-yesterday-line"],
                     "summary": {
                         "topic": "Reviewed implementation",
                         "self_feeling": "Focused.",

@@ -5,10 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from flow_res import Err, Ok, is_err, is_ok
 
+from app.contracts.messages.use_case_error import ErrorType
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.domain.aggregates.team import Team
-from app.domain.repositories import IUnitOfWork, RepositoryError, RepositoryErrorType
+from app.domain.repositories import RepositoryError, RepositoryErrorType
 from app.domain.value_objects import TeamId, TeamName
-from app.usecases.result import ErrorType
 from app.usecases.teams.update_team import UpdateTeamCommand, UpdateTeamHandler
 
 

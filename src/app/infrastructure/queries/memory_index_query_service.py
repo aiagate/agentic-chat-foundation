@@ -3,81 +3,43 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import math
 import re
-import sqlite3
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import unquote
 
 from flow_res import is_err
 
 from app.contracts.messages.memory_context import MemorySearchHit, MemorySource
 from app.contracts.messages.memory_index import (
     MemoryIndexDocument,
-    MemoryIndexRecord,
     MemorySearchFilters,
     MemorySearchResult,
 )
 from app.contracts.ports.embedding_service import IEmbeddingService
-from app.contracts.ports.memory_index import IMemoryIndex
-from app.infrastructure.memory.decay import calculate_decay_score
 from app.infrastructure.memory.embedding import (
     embed_text_deterministically,
 )
+from app.infrastructure.memory.index_projection import indexed_text
 from app.infrastructure.memory.markdown import (
-    MemoryMarkdownDocument,
     front_matter_string,
     front_matter_string_list,
     front_matter_string_or_none,
-    render_memory_markdown,
-)
-from app.infrastructure.memory.store import (
-    FilesystemMemoryStore,
-    StoredMemoryDocument,
-    default_memory_root,
 )
 
 _TERM_PATTERN = re.compile(r"[\w一-龯ぁ-んァ-ヶー]+", re.UNICODE)
 _SEMANTIC_FALLBACK_THRESHOLD = 0.55
 
 
-class FilesystemMemoryIndex(
-    IMemoryIndex[
-        StoredMemoryDocument,
-        MemoryIndexDocument,
-        MemorySearchResult,
-        MemorySearchFilters,
-    ]
-):
-    """Search memory index documents."""
+class MemoryIndexSearch:
+    """Rank memory documents already loaded from the main DB projection."""
 
     def __init__(
         self,
-        *,
-        root: Path | None = None,
         embedding_service: IEmbeddingService | None = None,
     ) -> None:
-        self._root = root or default_memory_root()
-        self._store = FilesystemMemoryStore(self._root)
         self._embedding_service = embedding_service
-
-    def index_document_from_stored(
-        self,
-        stored: StoredMemoryDocument,
-        *,
-        root: Path,
-    ) -> MemoryIndexDocument:
-        """Build a searchable document with a stable reference."""
-
-        return MemoryIndexDocument(
-            path=stored.path,
-            reference=_relative_reference(stored.path, root),
-            document=stored.document,
-        )
 
     def search_memory_index(
         self,
@@ -85,31 +47,16 @@ class FilesystemMemoryIndex(
         documents: Sequence[MemoryIndexDocument],
         filters: MemorySearchFilters,
         *,
-        character_id: str,
         root: Path | None = None,
-        index_db_path: Path | None = None,
         embedding_service: object | None = None,
         query_embedding: list[float] | None = None,
         limit: int = 20,
     ) -> list[MemorySearchResult]:
-        """Search supplied documents and optionally fall back to the DB."""
+        """Search documents loaded through ``IMemoryIndexQuery``."""
 
-        _ = index_db_path
-        root = root or self._root
-        resolved_documents = list(documents)
-        if not resolved_documents:
-            resolved_documents = self._load_documents_from_index(
-                filters.user_id,
-                relationship_entity_id=filters.relationship_entity_id,
-                character_id=character_id,
-            )
-        if not resolved_documents:
+        root = root or Path(".")
+        if not documents:
             return []
-        index_embeddings = _load_embeddings_from_index_db(
-            index_db_path,
-            filters.user_id,
-            character_id=character_id,
-        )
 
         query_terms = _query_terms(query)
         resolved_embedding_service = (
@@ -123,38 +70,14 @@ class FilesystemMemoryIndex(
             embedding_service=resolved_embedding_service,
         )
         results = _search_documents(
-            resolved_documents,
+            documents,
             filters=filters,
             query_terms=query_terms,
             query_embedding=query_embedding,
-            index_embeddings=index_embeddings,
             limit=limit,
             root=root,
         )
         return results
-
-    def _load_documents_from_index(
-        self,
-        user_id: str,
-        *,
-        relationship_entity_id: str | None,
-        character_id: str,
-    ) -> list[MemoryIndexDocument]:
-        documents = _stored_documents_for_scope(
-            self._store,
-            user_id=user_id,
-            relationship_entity_id=relationship_entity_id,
-            character_id=character_id,
-        )
-        return [
-            MemoryIndexDocument(
-                path=stored.path,
-                reference=_relative_reference(stored.path, self._root),
-                document=stored.document,
-                embedding=[],
-            )
-            for stored in documents
-        ]
 
 
 def _search_documents(
@@ -163,7 +86,6 @@ def _search_documents(
     filters: MemorySearchFilters,
     query_terms: list[str],
     query_embedding: list[float],
-    index_embeddings: Mapping[str, list[float]],
     limit: int,
     root: Path,
 ) -> list[MemorySearchResult]:
@@ -172,19 +94,16 @@ def _search_documents(
         front_matter = index_document.document.front_matter
         if not _passes_filters(front_matter, filters):
             continue
-        document_embedding = index_document.embedding or index_embeddings.get(
-            index_document.reference,
-            [],
-        )
-        indexed_text = _indexed_text(front_matter, index_document.document.body)
+        document_embedding = index_document.embedding
+        searchable_text = indexed_text(front_matter, index_document.document.body)
         tags_text = " ".join(front_matter_string_list(front_matter.get("tags")))
-        matched_terms = _matched_terms(query_terms, [indexed_text, tags_text])
+        matched_terms = _matched_terms(query_terms, [searchable_text, tags_text])
 
         score = _score_document(
             front_matter,
             terms=query_terms,
             matched_terms=matched_terms,
-            indexed_text=indexed_text,
+            indexed_text=searchable_text,
             query_embedding=query_embedding,
             document_embedding=document_embedding,
         )
@@ -237,246 +156,6 @@ def _resolve_query_embedding(
                 pass
     terms = _query_terms(query)
     return embed_text_deterministically(" ".join(terms) if terms else query)
-
-
-async def embed_memory_index_records(
-    documents: Sequence[MemoryMarkdownDocument],
-    *,
-    embedding_service: IEmbeddingService | None,
-) -> list[list[float]]:
-    # Imported by memory index maintenance; kept here with index text rendering.
-    texts = [
-        _indexed_text(document.front_matter, document.body) for document in documents
-    ]
-    if embedding_service is None:
-        return [embed_text_deterministically(text) for text in texts]
-    result = await embedding_service.embed_texts(texts)
-    if is_err(result) or not result.value:
-        return [embed_text_deterministically(text) for text in texts]
-    return [list(embedding) for embedding in result.value]
-
-
-def record_from_memory_index_document(
-    index_document: MemoryIndexDocument,
-    *,
-    embedding: list[float],
-) -> MemoryIndexRecord:
-    # Imported by memory index maintenance; kept here with index text rendering.
-    front_matter = index_document.document.front_matter
-    source_path = index_document.reference
-    body = index_document.document.body
-    rendered = render_memory_markdown(
-        front_matter,
-        body,
-        location=index_document.reference,
-    )
-    content_hash = hashlib.sha256(rendered.encode("utf-8")).hexdigest()
-    user_id = front_matter.get("user_id")
-    if not isinstance(user_id, str):
-        user_id = None
-    return MemoryIndexRecord(
-        source_path=source_path,
-        source_id=front_matter_string(front_matter.get("id")),
-        user_id=user_id,
-        memory_type=front_matter_string(front_matter.get("memory_type")),
-        title=_title(front_matter, reference=index_document.reference),
-        content_hash=content_hash,
-        indexed_text=_indexed_text(front_matter, body),
-        tags_json=json.dumps(
-            front_matter_string_list(front_matter.get("tags")),
-            ensure_ascii=False,
-            sort_keys=True,
-        ),
-        status=front_matter_string_or_none(front_matter.get("status")),
-        timeline_type=front_matter_string_or_none(front_matter.get("timeline_type")),
-        occurred_at=front_matter_string_or_none(front_matter.get("occurred_at")),
-        updated_at=front_matter_string(front_matter.get("updated_at")),
-        importance=_float_value(front_matter.get("importance"), default=0.5),
-        confidence=_float_value(front_matter.get("confidence"), default=1.0),
-        decay_score=calculate_decay_score(
-            front_matter, reference_time=datetime.now(UTC)
-        ),
-        embedding=embedding,
-    )
-
-
-def _load_embeddings_from_index_db(
-    index_db_path: Path | None,
-    user_id: str,
-    *,
-    character_id: str,
-) -> dict[str, list[float]]:
-    if index_db_path is None or not index_db_path.exists():
-        return {}
-    try:
-        connection = sqlite3.connect(str(index_db_path))
-    except sqlite3.Error:
-        return {}
-    try:
-        connection.row_factory = sqlite3.Row
-        agent_profile_prefix = f"profiles/agent/{character_id}/"
-        cursor = connection.execute(
-            """
-            select source_path, embedding
-            from memory_index_documents
-            where user_id = ?
-               or (
-                   user_id is null
-                   and source_path like ?
-               )
-            """,
-            (user_id, f"{agent_profile_prefix}%"),
-        )
-        embeddings: dict[str, list[float]] = {}
-        for row in cursor.fetchall():
-            source_path = str(row["source_path"])
-            embeddings[source_path] = _coerce_embedding(row["embedding"])
-        return embeddings
-    except sqlite3.Error:
-        return {}
-    finally:
-        connection.close()
-
-
-def _stored_documents_for_scope(
-    store: FilesystemMemoryStore,
-    *,
-    user_id: str | None,
-    relationship_entity_id: str | None = None,
-    character_id: str,
-) -> list[MemoryIndexDocument]:
-    documents: list[MemoryIndexDocument] = []
-    if user_id is None:
-        for agent_profile_path in _agent_profile_paths(
-            store,
-            character_id=character_id,
-        ):
-            if agent_profile_path.exists():
-                documents.append(
-                    MemoryIndexDocument(
-                        path=agent_profile_path,
-                        reference=_relative_reference(agent_profile_path, store.root),
-                        document=store.read_document(
-                            agent_profile_path,
-                            expected_memory_type="profile",
-                        ),
-                    )
-                )
-        profiles_root = store.root / "profiles" / "users"
-        if profiles_root.exists():
-            for path in sorted(profiles_root.glob("*.md")):
-                user_scope = unquote(path.stem)
-                loaded = store.read_document(
-                    path,
-                    expected_memory_type="profile",
-                    expected_user_id=user_scope,
-                )
-                documents.append(
-                    MemoryIndexDocument(
-                        path=path,
-                        reference=_relative_reference(path, store.root),
-                        document=loaded,
-                    )
-                )
-        for timeline_path in sorted((store.root / "timeline").rglob("*.md")):
-            user_scope = _path_segment_after_root(
-                store.root / "timeline", timeline_path
-            )
-            loaded = store.read_document(
-                timeline_path,
-                expected_memory_type="timeline",
-                expected_user_id=user_scope,
-            )
-            documents.append(
-                MemoryIndexDocument(
-                    path=timeline_path,
-                    reference=_relative_reference(timeline_path, store.root),
-                    document=loaded,
-                )
-            )
-        for entity_path in sorted((store.root / "entities").rglob("*.md")):
-            user_scope = _path_segment_after_root(store.root / "entities", entity_path)
-            loaded = store.read_document(
-                entity_path,
-                expected_memory_type="entity",
-                expected_user_id=user_scope,
-            )
-            if not _entity_is_selected_relationship(
-                loaded.front_matter,
-                relationship_entity_id=relationship_entity_id,
-            ):
-                continue
-            documents.append(
-                MemoryIndexDocument(
-                    path=entity_path,
-                    reference=_relative_reference(entity_path, store.root),
-                    document=loaded,
-                )
-            )
-        return documents
-
-    for agent_profile_path in _agent_profile_paths(
-        store,
-        character_id=character_id,
-    ):
-        if agent_profile_path.exists():
-            documents.append(
-                MemoryIndexDocument(
-                    path=agent_profile_path,
-                    reference=_relative_reference(agent_profile_path, store.root),
-                    document=store.read_document(
-                        agent_profile_path,
-                        expected_memory_type="profile",
-                    ),
-                )
-            )
-
-    user_profile_path = store.user_profile_path(user_id)
-    if user_profile_path.exists():
-        documents.append(
-            MemoryIndexDocument(
-                path=user_profile_path,
-                reference=_relative_reference(user_profile_path, store.root),
-                document=store.read_document(
-                    user_profile_path,
-                    expected_memory_type="profile",
-                    expected_user_id=user_id,
-                ),
-            )
-        )
-
-    for path in store.iter_timeline_paths(user_id):
-        documents.append(
-            MemoryIndexDocument(
-                path=path,
-                reference=_relative_reference(path, store.root),
-                document=store.read_document(
-                    path,
-                    expected_memory_type="timeline",
-                    expected_user_id=user_id,
-                ),
-            )
-        )
-
-    for path in store.iter_entity_paths(user_id):
-        loaded = store.read_document(
-            path,
-            expected_memory_type="entity",
-            expected_user_id=user_id,
-        )
-        if not _entity_is_selected_relationship(
-            loaded.front_matter,
-            relationship_entity_id=relationship_entity_id,
-        ):
-            continue
-        documents.append(
-            MemoryIndexDocument(
-                path=path,
-                reference=_relative_reference(path, store.root),
-                document=loaded,
-            )
-        )
-    return documents
 
 
 def _passes_filters(
@@ -532,18 +211,6 @@ def _passes_filters(
     return retention_state == filters.retention_state
 
 
-def _entity_is_selected_relationship(
-    front_matter: Mapping[str, object],
-    *,
-    relationship_entity_id: str | None,
-) -> bool:
-    if front_matter.get("entity_type") != "relationship":
-        return True
-    if relationship_entity_id is None:
-        return True
-    return front_matter_string(front_matter.get("id")) == relationship_entity_id
-
-
 def _passes_user_scope(front_matter: Mapping[str, object], user_id: str) -> bool:
     memory_type = front_matter.get("memory_type")
     if memory_type == "profile" and front_matter.get("profile_scope") == "agent":
@@ -581,33 +248,6 @@ def _passes_date_range(
     if parsed_to is not None and value > parsed_to:
         return False
     return True
-
-
-def _indexed_text(front_matter: Mapping[str, object], body: str) -> str:
-    memory_type = front_matter.get("memory_type")
-    if memory_type == "profile":
-        fields = ["tags"]
-    elif memory_type == "timeline":
-        fields = ["content", "kind", "source", "entity_ids", "tags", "metadata"]
-    else:
-        fields = [
-            "label",
-            "entity_type",
-            "status",
-            "aliases",
-            "properties",
-            "attributes",
-            "missing_attributes",
-            "referenced_in",
-            "tags",
-        ]
-    indexed = [_stringify(front_matter.get(field_name)) for field_name in fields]
-    metadata = _stringify(front_matter.get("metadata"))
-    if metadata:
-        indexed.append(metadata)
-    if body:
-        indexed.append(body)
-    return "\n".join(part for part in indexed if part).strip()
 
 
 def _score_document(
@@ -790,23 +430,6 @@ def _always_include(front_matter: Mapping[str, object]) -> bool:
     )
 
 
-def _agent_profile_paths(
-    store: FilesystemMemoryStore,
-    *,
-    character_id: str,
-) -> list[Path]:
-    bundle_paths = [
-        store.agent_profile_part_path("AGENTS", character_id=character_id),
-        store.agent_profile_part_path("SOUL", character_id=character_id),
-        store.agent_profile_part_path("PERSONAL", character_id=character_id),
-        store.agent_profile_part_path("MEMORY", character_id=character_id),
-    ]
-    if any(path.exists() for path in bundle_paths):
-        return bundle_paths
-
-    return []
-
-
 def _is_unresolved(front_matter: Mapping[str, object]) -> bool:
     return front_matter.get("status") == "unresolved" or bool(
         front_matter_string_list(front_matter.get("missing_attributes"))
@@ -827,20 +450,6 @@ def _memory_type_priority(front_matter: Mapping[str, object]) -> int:
     if memory_type == "timeline":
         return 1
     return 0
-
-
-def _stringify(value: object) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, dict):
-        parts: list[str] = []
-        for key, item in value.items():
-            parts.append(str(key))
-            parts.append(_stringify(item))
-        return " ".join(parts)
-    if isinstance(value, list):
-        return " ".join(_stringify(item) for item in value)
-    return str(value)
 
 
 def _float_value(value: object, *, default: float) -> float:
@@ -876,23 +485,3 @@ def _relative_reference(path: Path, root: Path) -> str:
         return path.relative_to(root).as_posix()
     except ValueError:
         return path.as_posix()
-
-
-def _path_segment_after_root(root: Path, path: Path) -> str:
-    return unquote(path.relative_to(root).parts[0])
-
-
-def _coerce_embedding(value: object) -> list[float]:
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            return []
-        value = parsed
-    if not isinstance(value, list):
-        return []
-    embedding: list[float] = []
-    for item in value:
-        if isinstance(item, (int, float)):
-            embedding.append(float(item))
-    return embedding

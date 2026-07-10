@@ -7,10 +7,10 @@ from flow_med import Request, RequestHandler
 from flow_res import Err, Ok, Result, is_err
 from injector import inject
 
+from app.contracts.messages.use_case_error import ErrorType, UseCaseError
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.domain.aggregates.team_membership import TeamMembership
-from app.domain.repositories import IUnitOfWork
 from app.domain.value_objects import MembershipId, MembershipRole
-from app.usecases.result import ErrorType, UseCaseError
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,14 @@ class ChangeRoleHandler(
 
             membership = membership_result.unwrap()
 
-            membership.change_role(new_role)
+            change_role_result = membership.change_role(new_role)
+            if is_err(change_role_result):
+                return Err(
+                    UseCaseError(
+                        type=ErrorType.UNEXPECTED,
+                        message=change_role_result.error.message,
+                    )
+                )
 
             update_result = await membership_repo.update(membership)
             if is_err(update_result):

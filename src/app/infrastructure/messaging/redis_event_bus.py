@@ -1,172 +1,205 @@
+"""Durable Redis Streams event bus."""
+
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import os
+import socket
 from collections.abc import Mapping
+from uuid import uuid4
 
 import redis.asyncio as redis
-from redis.asyncio.client import PubSub
+from redis.exceptions import ResponseError
 
 from app.contracts.ports.event_bus import EventHandler, IEventBus
 
 logger = logging.getLogger(__name__)
 
+_BLOCK_MILLISECONDS = 1_000
+_STALE_MESSAGE_MILLISECONDS = 60_000
+
 
 class RedisEventBus(IEventBus):
-    """Redis Pub/Subを用いたイベントバスの実装。
-
-    複数プロセス間での高速なリアルタイム・メッセージングに適しています。    Fire-and-Forgetのため、購読者がいない状態で送信されたメッセージは消えます。
-    """
+    """Publish and consume application events through Redis Streams."""
 
     def __init__(self) -> None:
         self._handlers: dict[str, list[EventHandler]] = {}
         self._redis: redis.Redis | None = None
-        self._pubsub: PubSub | None = None
         self._running = False
-        self._listening_task: asyncio.Task[None] | None = None
-
+        self._consumer_tasks: dict[str, asyncio.Task[None]] = {}
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-
-    def _is_pattern(self, topic: str) -> bool:
-        return "*" in topic or "?" in topic
-
-    async def _subscribe_topic(self, topic: str) -> None:
-        if not self._pubsub:
-            return
-        try:
-            if self._is_pattern(topic):
-                await self._pubsub.psubscribe(topic)
-                logger.info(f"Redis PubSub psubscribed to: {topic}")
-            else:
-                await self._pubsub.subscribe(topic)
-                logger.info(f"Redis PubSub subscribed to: {topic}")
-        except Exception as e:
-            logger.error(f"Failed to subscribe to {topic}: {e}")
-
-    async def subscribe(self, topic: str, handler: EventHandler) -> None:
-        is_new_topic = topic not in self._handlers
-        if is_new_topic:
-            self._handlers[topic] = []
-
-        self._handlers[topic].append(handler)
-        logger.debug(f"Subscribed to topic: {topic}")
-
-        if is_new_topic and self._running and self._pubsub:
-            asyncio.create_task(self._subscribe_topic(topic))
+        self.consumer_group = os.getenv("EVENT_CONSUMER_GROUP", "default")
+        self.consumer_name = f"{socket.gethostname()}-{uuid4()}"
 
     async def publish(self, topic: str, payload: Mapping[str, object]) -> None:
-        if not self._redis:
-            msg = f"Redis EventBus not started (redis_url={self.redis_url}), cannot publish event: {topic}"
-            logger.warning(msg)
-            raise RuntimeError(msg)
+        """Append an event to its durable topic stream."""
+        if self._redis is None:
+            raise RuntimeError(
+                f"Redis EventBus not started (redis_url={self.redis_url})"
+            )
+        await self._redis.xadd(
+            self._stream_name(topic),
+            {
+                "topic": topic,
+                "payload": json.dumps(dict(payload), ensure_ascii=False),
+            },
+        )
 
-        try:
-            message = {"topic": topic, "payload": payload}
-            await self._redis.publish(topic, json.dumps(message))
-            logger.debug(f"Published event to Redis: {topic}")
-        except Exception as e:
-            logger.error(f"Failed to publish event {topic}: {e}")
-            raise e
+    async def subscribe(self, topic: str, handler: EventHandler) -> None:
+        """Register an exact-topic handler in this consumer group."""
+        if "*" in topic or "?" in topic:
+            raise ValueError("Redis Streams subscriptions require an exact topic")
+        self._handlers.setdefault(topic, []).append(handler)
+        if self._running:
+            await self._ensure_group(topic)
+            self._start_consumer(topic)
 
     async def start(self) -> None:
-        if not self.redis_url:
-            logger.error("REDIS_URL not set, cannot start EventBus.")
-            raise RuntimeError("REDIS_URL not set")
-
-        self._running = True
-        try:
-            self._redis = redis.from_url(self.redis_url, decode_responses=True)
-            logger.info(f"Connected to Redis at {self.redis_url}")
-
-            self._listening_task = asyncio.create_task(self._listener())
-        except Exception as e:
-            logger.error(f"Error starting Redis EventBus: {e}")
-            raise e
-
-    async def _listener(self) -> None:
-        if not self._redis:
+        """Connect and start one consumer loop per subscribed topic."""
+        if self._running:
             return
-
-        self._pubsub = self._redis.pubsub()
-
+        self._redis = redis.from_url(self.redis_url, decode_responses=True)
+        self._running = True
         for topic in self._handlers:
-            await self._subscribe_topic(topic)
-
-        async for message in self._pubsub.listen():
-            if not self._running:
-                break
-
-            if message["type"] in ("message", "pmessage"):
-                await self._process_message(message)
-
-    async def _process_message(self, message: dict[str, object]) -> None:
-        try:
-            data = message["data"]
-            if not isinstance(data, (str, bytes, bytearray)):
-                logger.error("Unexpected Redis message payload type: %r", type(data))
-                return
-            parsed_data = json.loads(data)
-            topic_in_msg = parsed_data.get("topic")
-            payload = parsed_data.get("payload", {})
-            if not isinstance(payload, dict):
-                payload = {}
-
-            if isinstance(topic_in_msg, str):
-                await self._dispatch(topic_in_msg, payload)
-
-            if message["type"] == "pmessage":
-                matched_pattern = message["pattern"]
-                if isinstance(matched_pattern, str) and matched_pattern != topic_in_msg:
-                    await self._dispatch(matched_pattern, payload)
-
-        except json.JSONDecodeError:
-            logger.error(f"Failed to decode Redis message: {message.get('data')}")
-        except Exception as e:
-            logger.error(f"Error processing Redis message: {e}")
+            await self._ensure_group(topic)
+            self._start_consumer(topic)
 
     async def stop(self) -> None:
+        """Stop consumers and close the Redis connection."""
         self._running = False
-        if self._pubsub:
-            await self._pubsub.close()
-        if self._redis:
-            await self._redis.close()
-        if self._listening_task:
-            self._listening_task.cancel()
+        for task in self._consumer_tasks.values():
+            task.cancel()
+        if self._consumer_tasks:
+            await asyncio.gather(
+                *self._consumer_tasks.values(),
+                return_exceptions=True,
+            )
+        self._consumer_tasks.clear()
+        if self._redis is not None:
+            await self._redis.aclose()
+            self._redis = None
+
+    async def _ensure_group(self, topic: str) -> None:
+        if self._redis is None:
+            return
+        try:
+            await self._redis.xgroup_create(
+                self._stream_name(topic),
+                self.consumer_group,
+                id="0-0",
+                mkstream=True,
+            )
+        except ResponseError as exc:
+            if "BUSYGROUP" not in str(exc):
+                raise
+
+    def _start_consumer(self, topic: str) -> None:
+        if topic in self._consumer_tasks:
+            return
+        self._consumer_tasks[topic] = asyncio.create_task(self._consume(topic))
+
+    async def _consume(self, topic: str) -> None:
+        stream = self._stream_name(topic)
+        while self._running and self._redis is not None:
             try:
-                await self._listening_task
+                await self._claim_stale(topic)
+                response = await self._redis.xreadgroup(
+                    self.consumer_group,
+                    self.consumer_name,
+                    {stream: ">"},
+                    count=10,
+                    block=_BLOCK_MILLISECONDS,
+                )
+                await self._process_stream_response(topic, response)
             except asyncio.CancelledError:
-                pass
+                raise
+            except Exception:
+                logger.exception("Redis stream consumer failed for %s", topic)
+                await asyncio.sleep(1)
+
+    async def _claim_stale(self, topic: str) -> None:
+        if self._redis is None:
+            return
+        response = await self._redis.xautoclaim(
+            self._stream_name(topic),
+            self.consumer_group,
+            self.consumer_name,
+            min_idle_time=_STALE_MESSAGE_MILLISECONDS,
+            start_id="0-0",
+            count=10,
+        )
+        entries: object = response[1] if isinstance(response, (list, tuple)) else None
+        if isinstance(entries, list):
+            await self._process_entries(topic, entries)
+
+    async def _process_stream_response(
+        self,
+        topic: str,
+        response: object,
+    ) -> None:
+        if not isinstance(response, list):
+            return
+        for stream_entry in response:
+            if not isinstance(stream_entry, (list, tuple)) or len(stream_entry) != 2:
+                continue
+            entries = stream_entry[1]
+            if isinstance(entries, list):
+                await self._process_entries(topic, entries)
+
+    async def _process_entries(self, topic: str, entries: list[object]) -> None:
+        if self._redis is None:
+            return
+        for entry in entries:
+            if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+                continue
+            message_id, fields = entry
+            if not isinstance(message_id, str) or not isinstance(fields, dict):
+                continue
+            payload = self._decode_payload(fields.get("payload"))
+            if payload is None:
+                continue
+            if await self._dispatch(topic, payload):
+                await self._redis.xack(
+                    self._stream_name(topic),
+                    self.consumer_group,
+                    message_id,
+                )
 
     async def _dispatch(
         self,
-        handler_key: str,
+        topic: str,
         payload: Mapping[str, object],
-    ) -> None:
-        if handlers := self._handlers.get(handler_key):
-            # 複数ハンドラがある場合は並行実行する
-            logger.debug(
-                "Dispatching event to %d handler(s): %s",
-                len(handlers),
-                handler_key,
+    ) -> bool:
+        handlers = self._handlers.get(topic, [])
+        if not handlers:
+            return False
+        results = await asyncio.gather(
+            *(handler(payload) for handler in handlers),
+            return_exceptions=True,
+        )
+        failures = [result for result in results if isinstance(result, Exception)]
+        for failure in failures:
+            logger.error(
+                "Event handler failed for topic %s: %s",
+                topic,
+                failure,
+                exc_info=(type(failure), failure, failure.__traceback__),
             )
-            results = await asyncio.gather(
-                *[handler(payload) for handler in handlers], return_exceptions=True
-            )
-            for handler, result in zip(handlers, results, strict=False):
-                if isinstance(result, Exception):
-                    logger.error(
-                        "Handler failed for topic %s (%s) with payload %s: %s",
-                        handler_key,
-                        getattr(handler, "__name__", repr(handler)),
-                        payload,
-                        result,
-                        exc_info=(type(result), result, result.__traceback__),
-                    )
-                else:
-                    logger.debug(
-                        "Handler completed for topic %s: %s",
-                        handler_key,
-                        getattr(handler, "__name__", repr(handler)),
-                    )
-        else:
-            logger.debug("No handlers registered for topic: %s", handler_key)
+        return not failures
+
+    @staticmethod
+    def _decode_payload(raw_payload: object) -> dict[str, object] | None:
+        if not isinstance(raw_payload, (str, bytes, bytearray)):
+            return None
+        try:
+            payload = json.loads(raw_payload)
+        except json.JSONDecodeError:
+            logger.exception("Invalid Redis stream event payload")
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    @staticmethod
+    def _stream_name(topic: str) -> str:
+        return f"events:{topic}"

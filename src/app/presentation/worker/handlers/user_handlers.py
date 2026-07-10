@@ -4,6 +4,7 @@ from collections.abc import Mapping
 
 from flow_med import Mediator
 
+from app.contracts.messages.user_events import USER_CREATED_TOPIC
 from app.presentation.worker.event_payloads import (
     UserCreatedPayload,
     parse_worker_event_payload,
@@ -12,7 +13,7 @@ from app.presentation.worker.registry import event_handler
 from app.usecases.users.welcome_user import WelcomeUserCommand
 
 
-@event_handler("user.created")
+@event_handler(USER_CREATED_TOPIC)
 async def on_user_created(payload: Mapping[str, object]) -> None:
     """Handle user.created event."""
 

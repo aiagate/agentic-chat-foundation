@@ -59,7 +59,7 @@ class MemoryIndexBackupRepository:
                     decay_score=record.decay_score,
                     embedding=list(record.embedding),
                 )
-        )
+            )
         await self._session.flush()
         return len(records)
 

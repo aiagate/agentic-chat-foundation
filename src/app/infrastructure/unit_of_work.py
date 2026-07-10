@@ -1,20 +1,23 @@
 """SQLAlchemy Unit of Work implementation."""
 
+from collections.abc import Mapping
 from typing import Any, overload
+from uuid import uuid4
 
 from flow_res import Err, Ok, Result
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.domain.repositories import (
     IChatRecordRepository,
     IMemoryConsolidatedChatSourceRepository,
     IRepository,
     IRepositoryWithId,
-    IUnitOfWork,
     RepositoryError,
     RepositoryErrorType,
 )
+from app.infrastructure.orm_models.outbox_message_orm import OutboxMessageORM
 from app.infrastructure.queries.chat_history_query import (
     SQLAlchemyChatHistoryQuery,
 )
@@ -127,6 +130,30 @@ class SQLAlchemyUnitOfWork(IUnitOfWork):
                 MemoryConsolidatedChatSourceRepository(self._session)
             )
         return self._memory_consolidated_chat_source_repository
+
+    def enqueue_event(
+        self,
+        topic: str,
+        payload: Mapping[str, object],
+        *,
+        event_id: str | None = None,
+    ) -> str:
+        """Persist an application event in the active transaction."""
+        if self._session is None:
+            raise RuntimeError(
+                "UnitOfWork session not initialized. Use 'async with' context."
+            )
+        resolved_event_id = event_id or str(uuid4())
+        normalized_payload = dict(payload)
+        normalized_payload.setdefault("event_id", resolved_event_id)
+        self._session.add(
+            OutboxMessageORM(
+                id=resolved_event_id,
+                topic=topic,
+                payload=normalized_payload,
+            )
+        )
+        return resolved_event_id
 
     async def commit(self) -> Result[None, RepositoryError]:
         """Commit the transaction."""

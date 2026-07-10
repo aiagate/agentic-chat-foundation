@@ -5,7 +5,7 @@
 
 - LINE FastAPI process は webhook を受け取り、LINE 返信イベントも購読する。
 - Worker process は保存済み LINE メッセージイベントを共通の `chat.agent_turn.requested` に変換する。
-- 生成処理は `RetrieveMemoryContextQuery` 経由で compact な memory manifest を取得し、
+- 生成処理は `IMemoryService` から compact な memory manifest を取得し、
   `system prompt` / `tool definitions` / `memory` / `recent history` / `current input`
   に分けて LLM request context を組み立てる。
 - 検索が必要な場合も `chat.tool.requested` / `chat.tool.completed` を介する。
@@ -28,10 +28,9 @@ sequenceDiagram
     participant Bus as EventBus
     participant Worker as Worker process
     participant Agent as RunAgentTurnHandler
-    participant RouteTool as RouteToolCallsHandler
+    participant RouteTool as IToolCallRouter
     participant ToolExec as HandleToolExecutionHandler
-    participant WebSearch as RunWebSearchHandler
-    participant RetrieveMemory as RetrieveMemoryContextQuery
+    participant WebSearch as IWebSearchService
     participant Memory as IMemoryService
     participant AI as IAIService
     participant Sender as send_line_reply
@@ -48,11 +47,10 @@ sequenceDiagram
     Bus->>Worker: on_line_chat_saved(payload)
     Worker->>Bus: publish chat.agent_turn.requested
     Bus->>Worker: on_agent_turn_requested(payload)
-    Worker->>Mediator: RunAgentTurnQuery(chat_type=LINE)
+    Worker->>Mediator: RunAgentTurnCommand(chat_type=LINE)
     Mediator->>Agent: handle(query)
-    Agent->>RetrieveMemory: RetrieveMemoryContextQuery
-    RetrieveMemory->>Memory: build_context(user_id)
-    Memory-->>RetrieveMemory: MemoryContextPack
+    Agent->>Memory: build_context(user_id)
+    Memory-->>Agent: MemoryContextPack
     Agent->>AI: generate_content(current_input, recent_history, system_prompt + memory, tool_definitions)
 
     alt contents あり
@@ -62,7 +60,7 @@ sequenceDiagram
     end
     alt line.send tool call あり
         AI-->>Agent: GeneratedContent(tool_calls)
-        Agent->>RouteTool: RouteToolCallsCommand
+        Agent->>RouteTool: route(ToolCallRoutingRequest)
         RouteTool->>Bus: publish chat.tool.requested
         Bus->>Worker: on_chat_tool_requested(payload)
         Worker->>Mediator: HandleToolExecutionCommand
@@ -71,19 +69,19 @@ sequenceDiagram
         Mediator->>Bus: publish chat.tool.completed(status)
     else non-send tool call あり
         AI-->>Agent: GeneratedContent(tool_calls)
-        Agent->>RouteTool: RouteToolCallsCommand
+        Agent->>RouteTool: route(ToolCallRoutingRequest)
         RouteTool->>Bus: publish chat.tool.requested
         Bus->>Worker: on_chat_tool_requested(payload)
         Worker->>Mediator: HandleToolExecutionCommand
         Mediator->>ToolExec: handle(command)
-        ToolExec->>WebSearch: RunWebSearchCommand(tool_call_id)
+        ToolExec->>WebSearch: search(SearchToolArguments)
         WebSearch->>WebSearch: execute search
         ToolExec->>ToolExec: save ToolResultContext
         ToolExec->>Bus: publish chat.tool.completed(tool_call_id, status)
         Bus->>Worker: on_chat_tool_completed(payload)
         Worker->>Bus: publish chat.agent_turn.requested(tool_call_id)
         Bus->>Worker: on_agent_turn_requested(payload)
-        Worker->>Mediator: RunAgentTurnQuery(tool_call_id)
+        Worker->>Mediator: RunAgentTurnCommand(tool_call_id)
         Mediator->>Agent: handle(query)
         Agent->>Agent: load tool result by tool_call_id
         Agent->>AI: generate_content(tool_result, recent_history, system_prompt + memory, tool_definitions)
@@ -104,6 +102,6 @@ LINE flow は少なくとも LINE FastAPI process と Worker process に分か�
 は LINE process から publish され、Worker process が購読する。`chat.line.reply_ready`
 は Worker process から publish され、LINE process が購読して `send_line_reply` を実行する。
 
-複数 process で動かす環境では `EVENT_BUS_PROVIDER=redis` または
-`EVENT_BUS_PROVIDER=postgres` のように process 間で共有できる provider を設定する。
+複数 process で動かす環境では `EVENT_BUS_PROVIDER=redis` を設定し、processごとに
+`EVENT_CONSUMER_GROUP` を指定する。Redis StreamsはHandler成功後にACKされる。
 `memory` provider は同一 process 内でしかイベントを配送できない。
