@@ -14,11 +14,10 @@ from app.contracts.messages.chat_type import ChatType
 from app.presentation.worker.event_payloads import (
     DiscordChatSavedPayload,
     LineChatSavedPayload,
-    extract_agent_envelope,
     parse_worker_event_payload,
 )
 from app.presentation.worker.registry import event_handler
-from app.usecases.agent.request_agent_turn import RequestAgentTurnCommand
+from app.usecases.agent.start_agent_run import StartAgentRunCommand
 
 logger = logging.getLogger(__name__)
 
@@ -60,14 +59,13 @@ async def on_discord_chat_saved(payload: Mapping[str, object]) -> None:
     character_id = _resolve_character_id(event.character_id, payload)
 
     await Mediator.send_async(
-        RequestAgentTurnCommand(
+        StartAgentRunCommand(
             chat_id=event.chat_id,
             guild_id=event.guild_id,
             channel_id=event.channel_id,
             user_id=event.user_id,
             chat_type=ChatType.DISCORD,
             character_id=character_id,
-            agent_context=extract_agent_envelope(event),
         )
     )
 
@@ -86,13 +84,12 @@ async def on_line_chat_saved(payload: Mapping[str, object]) -> None:
     character_id = _resolve_character_id(event.character_id, payload)
 
     await Mediator.send_async(
-        RequestAgentTurnCommand(
+        StartAgentRunCommand(
             chat_id=event.chat_id,
             guild_id="LINE",
-            channel_id=event.chat_id,
+            channel_id=event.user_id,
             user_id=event.user_id,
             chat_type=ChatType.LINE,
             character_id=character_id,
-            agent_context=extract_agent_envelope(event),
         )
     )

@@ -6,11 +6,7 @@ from typing import NotRequired, Required, TypedDict, cast
 
 from app.contracts.messages.agentic import AgentEnvelope
 from app.contracts.messages.chat_type import ChatType
-from app.contracts.messages.tool_contracts import ToolContinuation
 
-CHAT_TOOL_REQUESTED_TOPIC = "chat.tool.requested"
-CHAT_TOOL_COMPLETED_TOPIC = "chat.tool.completed"
-CHAT_AGENT_TURN_REQUESTED_TOPIC = "chat.agent_turn.requested"
 DISCORD_CHAT_SAVED_TOPIC = "chat.discord.saved"
 LINE_CHAT_SAVED_TOPIC = "chat.line.saved"
 DISCORD_CHAT_REPLY_READY_TOPIC = "chat.discord.reply_ready"
@@ -43,33 +39,6 @@ class AgentEventPayload(TypedDict, total=False):
     decision_summary: str
 
 
-class ChatToolRequestedPayload(AgentEventPayload):
-    """Payload for a generic tool request event."""
-
-    chat_id: Required[str]
-    user_id: Required[str]
-    chat_type: Required[str]
-    tool_name: Required[str]
-    guild_id: NotRequired[str]
-    channel_id: NotRequired[str]
-
-
-class ChatToolCompletedPayload(AgentEventPayload):
-    """Payload for a generic tool completion event."""
-
-    chat_id: Required[str]
-    chat_type: Required[str]
-    user_id: Required[str | None]
-    status: Required[str]
-    tool_name: Required[str]
-    continuation: Required[ToolContinuation]
-    result: NotRequired[dict[str, object]]
-    error: NotRequired[str]
-    error_code: NotRequired[str]
-    guild_id: NotRequired[str]
-    channel_id: NotRequired[str]
-
-
 class DiscordChatSavedPayload(AgentEventPayload):
     """Payload for a saved Discord chat event."""
 
@@ -84,18 +53,6 @@ class LineChatSavedPayload(AgentEventPayload):
 
     chat_id: Required[str]
     user_id: Required[str]
-
-
-class AgentTurnRequestedPayload(AgentEventPayload):
-    """Payload for one requested agent inference turn."""
-
-    chat_id: Required[str]
-    user_id: Required[str]
-    chat_type: Required[str]
-    guild_id: Required[str]
-    channel_id: Required[str]
-    source_request_id: NotRequired[str]
-    tool_failure_context: NotRequired[str]
 
 
 class ReplyReadyPayload(AgentEventPayload):
@@ -141,98 +98,6 @@ def build_discord_chat_saved_payload(
     }
     _apply_agent_envelope(payload, agent_envelope)
     return cast(DiscordChatSavedPayload, payload)
-
-
-def build_chat_tool_requested_payload(
-    *,
-    chat_id: str,
-    user_id: str,
-    chat_type: str,
-    tool_call_id: str,
-    tool_name: str,
-    guild_id: str | None = None,
-    channel_id: str | None = None,
-    agent_envelope: AgentEnvelope | None = None,
-) -> ChatToolRequestedPayload:
-    """Build a payload for a generic tool request event."""
-    payload: dict[str, object] = {
-        "chat_id": chat_id,
-        "user_id": user_id,
-        "chat_type": chat_type,
-        "tool_call_id": tool_call_id,
-        "tool_name": tool_name,
-    }
-    if guild_id is not None:
-        payload["guild_id"] = guild_id
-    if channel_id is not None:
-        payload["channel_id"] = channel_id
-    _apply_agent_envelope(payload, agent_envelope)
-    return cast(ChatToolRequestedPayload, payload)
-
-
-def build_chat_tool_completed_payload(
-    *,
-    chat_id: str,
-    chat_type: str,
-    user_id: str | None,
-    status: str,
-    tool_name: str,
-    continuation: ToolContinuation,
-    result: dict[str, object] | None = None,
-    error: str | None = None,
-    error_code: str | None = None,
-    guild_id: str | None = None,
-    channel_id: str | None = None,
-    agent_envelope: AgentEnvelope | None = None,
-) -> ChatToolCompletedPayload:
-    """Build a payload for a generic tool completion event."""
-    payload: dict[str, object] = {
-        "chat_id": chat_id,
-        "chat_type": chat_type,
-        "user_id": user_id,
-        "status": status,
-        "tool_name": tool_name,
-        "continuation": continuation,
-    }
-    if result is not None:
-        payload["result"] = result
-    if guild_id is not None:
-        payload["guild_id"] = guild_id
-    if channel_id is not None:
-        payload["channel_id"] = channel_id
-    if error is not None:
-        payload["error"] = error
-    if error_code is not None:
-        payload["error_code"] = error_code
-    _apply_agent_envelope(payload, agent_envelope)
-    return cast(ChatToolCompletedPayload, payload)
-
-
-def build_agent_turn_requested_payload(
-    *,
-    chat_id: str,
-    user_id: str,
-    chat_type: str,
-    guild_id: str,
-    channel_id: str,
-    source_request_id: str | None = None,
-    tool_failure_context: str | None = None,
-    agent_envelope: AgentEnvelope | None = None,
-) -> AgentTurnRequestedPayload:
-    """Build the canonical request for one agent inference turn."""
-    payload: dict[str, object] = {
-        "chat_id": chat_id,
-        "user_id": user_id,
-        "chat_type": chat_type,
-        "guild_id": guild_id,
-        "channel_id": channel_id,
-    }
-    if source_request_id is not None:
-        payload["source_request_id"] = source_request_id
-    if tool_failure_context is not None:
-        payload["tool_failure_context"] = tool_failure_context
-    _apply_agent_envelope(payload, agent_envelope)
-    return cast(AgentTurnRequestedPayload, payload)
 
 
 def build_line_chat_saved_payload(

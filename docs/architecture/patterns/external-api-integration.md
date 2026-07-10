@@ -52,8 +52,8 @@ raw Timeline Markdown を書く candidate path として残っている。
 - tool router: `src/app/infrastructure/services/tool_call_router.py`
 - tool execution: `src/app/usecases/agent/handle_tool_execution.py`
 
-`ToolCallRoutingService` で検証した tool call を `chat.tool.requested` に変換し、
-`GenericToolExecutor` で実行して `chat.tool.completed` に戻す。
+`AgentRunCoordinator`で検証したtool callを永続化して`agent.tool.requested`へ変換し、
+`GenericToolExecutor`の結果を`AgentToolCall`へ保存する。全call完了後だけrunを再開する。
 
 ## 置き場の判断
 

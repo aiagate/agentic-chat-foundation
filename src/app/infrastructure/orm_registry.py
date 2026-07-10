@@ -9,6 +9,11 @@ from app.domain.aggregates.team import Team
 from app.domain.aggregates.team_membership import TeamMembership
 from app.domain.aggregates.user import User
 from app.infrastructure.orm_mapping import register_orm_mapping
+from app.infrastructure.orm_models.agent_run_orm import (
+    AgentRunORM,
+    AgentToolCallORM,
+    ConversationCoordinatorORM,
+)
 from app.infrastructure.orm_models.chat_orm import ChatORM, DiscordChatORM, LineChatORM
 from app.infrastructure.orm_models.memory_consolidated_chat_source_orm import (
     MemoryConsolidatedChatSourceORM,
@@ -37,4 +42,11 @@ def init_orm_mappings() -> None:
     register_orm_mapping(LineChat, LineChatORM)
 
     # Import-only projection models must remain registered in SQLModel metadata.
-    _ = (MemoryIndexBackupORM, MemoryConsolidatedChatSourceORM, OutboxMessageORM)
+    _ = (
+        AgentRunORM,
+        AgentToolCallORM,
+        ConversationCoordinatorORM,
+        MemoryIndexBackupORM,
+        MemoryConsolidatedChatSourceORM,
+        OutboxMessageORM,
+    )

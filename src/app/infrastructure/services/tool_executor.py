@@ -12,12 +12,6 @@ from flow_res import Err, Ok, Result, is_err
 from app.contracts.messages.tool_contracts import (
     SearchToolArguments,
     ToolExecutionResult,
-    normalize_reply_contents,
-)
-from app.contracts.messages.tool_result_context import ToolResultContext
-from app.contracts.ports.agent_reply_writer import (
-    AgentReplyWriteRequest,
-    IAgentReplyWriter,
 )
 from app.contracts.ports.memory_service import IMemoryService
 from app.contracts.ports.memory_write_service import (
@@ -28,9 +22,7 @@ from app.contracts.ports.tool_executor import (
     ToolExecutionContext,
     ToolExecutorError,
 )
-from app.contracts.ports.tool_result_store import IToolResultStore
 from app.contracts.ports.web_search_service import IWebSearchService
-from app.domain.value_objects.chat_type import ChatType
 
 
 class GenericToolExecutor(IToolExecutor):
@@ -39,17 +31,13 @@ class GenericToolExecutor(IToolExecutor):
     def __init__(
         self,
         *,
-        tool_result_store: IToolResultStore,
         memory_service: IMemoryService,
         memory_write_service: IMemoryWriteService,
         web_search_service: IWebSearchService,
-        agent_reply_writer: IAgentReplyWriter,
     ) -> None:
-        self._tool_result_store = tool_result_store
         self._memory_service = memory_service
         self._memory_write_service = memory_write_service
         self._web_search_service = web_search_service
-        self._agent_reply_writer = agent_reply_writer
 
     async def execute(
         self,
@@ -64,8 +52,6 @@ class GenericToolExecutor(IToolExecutor):
                 result = await self._execute_memory_read(context)
             case "memory.write_candidate":
                 result = await self._execute_memory_write_candidate(context)
-            case "line.send" | "discord.send":
-                result = await self._execute_send_message(context)
             case _:
                 result = Err(
                     ToolExecutorError(
@@ -73,11 +59,6 @@ class GenericToolExecutor(IToolExecutor):
                     )
                 )
 
-        if is_err(result) and context.tool_call.tool_name not in {
-            "line.send",
-            "discord.send",
-        }:
-            await self._store_failure(context, result.error.message)
         return result
 
     async def _execute_web_search(
@@ -107,49 +88,13 @@ class GenericToolExecutor(IToolExecutor):
             "result_count": len(search_results.items),
             "query": arguments["query"],
         }
-        return await self._store_success(
-            context,
-            result,
-            rendered_text=search_results.render_retrieved_context(tool_call_id),
-        )
-
-    async def _execute_send_message(
-        self,
-        context: ToolExecutionContext,
-    ) -> Result[ToolExecutionResult, ToolExecutorError]:
-        contents = normalize_reply_contents(context.tool_call.arguments)
-        if contents is None:
-            return Err(ToolExecutorError("Tool call content must not be empty"))
-
-        guild_id = context.guild_id or "DM"
-        channel_id = context.channel_id or ""
-        if context.tool_call.tool_name == "line.send":
-            if context.chat_type is not ChatType.LINE:
-                return Err(
-                    ToolExecutorError("line.send is only available for LINE chats")
-                )
-            guild_id = "LINE"
-            channel_id = context.user_id
-        elif context.chat_type is not ChatType.DISCORD:
-            return Err(
-                ToolExecutorError("discord.send is only available for Discord chats")
-            )
-        elif not context.channel_id:
-            return Err(ToolExecutorError("Discord send requires a channel_id"))
-
-        reply_result = await self._agent_reply_writer.write(
-            AgentReplyWriteRequest(
-                chat_type=context.chat_type,
-                guild_id=guild_id,
-                channel_id=channel_id,
-                user_id=context.user_id,
-                contents=contents,
-                agent_context=context.tool_call,
+        return Ok(
+            _build_result(
+                context,
+                result,
+                rendered_text=search_results.render_retrieved_context(tool_call_id),
             )
         )
-        if is_err(reply_result):
-            return Err(ToolExecutorError(reply_result.error.message))
-        return Ok(_build_result(context, {"content_count": len(contents)}))
 
     async def _execute_memory_read(
         self,
@@ -174,10 +119,8 @@ class GenericToolExecutor(IToolExecutor):
             "result_count": 1,
             "memory_id": memory_id,
         }
-        return await self._store_success(
-            context,
-            result,
-            rendered_text=memory_result.rendered_text,
+        return Ok(
+            _build_result(context, result, rendered_text=memory_result.rendered_text)
         )
 
     async def _execute_memory_write_candidate(
@@ -205,52 +148,11 @@ class GenericToolExecutor(IToolExecutor):
             "role": role,
             "content_length": len(content),
         }
-        return await self._store_success(
-            context,
-            result,
-            rendered_text=json.dumps(result, ensure_ascii=False),
-        )
-
-    async def _store_success(
-        self,
-        context: ToolExecutionContext,
-        result: Mapping[str, object],
-        *,
-        rendered_text: str,
-    ) -> Result[ToolExecutionResult, ToolExecutorError]:
-        tool_call_id = context.tool_call.tool_call_id
-        if tool_call_id is None:
-            return Err(ToolExecutorError("Tool call ID is required"))
-        save_result = await self._tool_result_store.save(
-            ToolResultContext(
-                tool_call_id=tool_call_id,
-                character_id=_context_character_id(context),
-                tool_name=context.tool_call.tool_name,
-                status="ok",
-                result=dict(result),
-                rendered_text=rendered_text,
-            )
-        )
-        if is_err(save_result):
-            return Err(ToolExecutorError("Failed to store tool result"))
-        return Ok(_build_result(context, result))
-
-    async def _store_failure(
-        self,
-        context: ToolExecutionContext,
-        error: str,
-    ) -> None:
-        tool_call_id = context.tool_call.tool_call_id
-        if tool_call_id is None:
-            return
-        await self._tool_result_store.save(
-            ToolResultContext(
-                tool_call_id=tool_call_id,
-                character_id=_context_character_id(context),
-                tool_name=context.tool_call.tool_name,
-                status="error",
-                error=error,
-                rendered_text=f"{context.tool_call.tool_name} failed: {error}",
+        return Ok(
+            _build_result(
+                context,
+                result,
+                rendered_text=json.dumps(result, ensure_ascii=False),
             )
         )
 
@@ -258,6 +160,8 @@ class GenericToolExecutor(IToolExecutor):
 def _build_result(
     context: ToolExecutionContext,
     result: Mapping[str, Any],
+    *,
+    rendered_text: str | None = None,
 ) -> ToolExecutionResult:
     return ToolExecutionResult(
         event_id=context.tool_call.event_id,
@@ -272,6 +176,7 @@ def _build_result(
         tool_name=context.tool_call.tool_name,
         status="ok",
         result=dict(result),
+        rendered_text=rendered_text,
     )
 
 

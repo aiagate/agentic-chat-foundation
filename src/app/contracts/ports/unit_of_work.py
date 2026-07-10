@@ -8,6 +8,7 @@ from typing import Any, overload
 
 from flow_res import Result
 
+from app.contracts.ports.agent_run_repository import IAgentRunRepository
 from app.domain.queries.chat_history_query import IChatHistoryQuery
 from app.domain.queries.raw_chat_log_query import IRawChatLogQuery
 from app.domain.repositories.interfaces import (
@@ -61,6 +62,11 @@ class IUnitOfWork(ABC):
         self,
     ) -> IMemoryConsolidatedChatSourceRepository:
         """Return the memory projection writer for the transaction."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def GetAgentRunRepository(self) -> IAgentRunRepository:
+        """Return the durable agent workflow repository for the transaction."""
         raise NotImplementedError
 
     @abstractmethod

@@ -27,7 +27,7 @@ Docker Compose では、主に次の process / service を起動します。
 - `worker`: chat event、tool event、scheduled memory sleep を処理する Worker process
 - `migrate`: Alembic migration runner
 - `postgres`: application database
-- `redis`: cross-process EventBus と短期 store
+- `redis`: cross-process EventBus transport
 
 チャットの返信は 1 つの process で完結させず、保存イベント、agent turn、tool execution、
 reply-ready event を経由して送信側 process に戻します。
@@ -41,6 +41,7 @@ reply-ready event を経由して送信側 process に戻します。
 
 - `src/app/presentation`: Discord、LINE、API、Worker の入口と送信処理
 - `src/app/usecases`: Command / Query / Handler による application flow
+- `src/app/application`: UseCaseから再利用するdurable workflowの状態遷移
 - `src/app/domain`: aggregate、value object、repository / query 契約
 - `src/app/contracts/ports`: AI、EventBus、memory、tool などの application boundary
 - `src/app/contracts/messages`: DTO、event topic、payload builder
@@ -53,13 +54,14 @@ reply-ready event を経由して送信側 process に戻します。
 
 LLM は外部機能を直接実行しません。
 
-`IAIService` は `GeneratedContent` と `ToolCall` を返し、`RouteToolCallsHandler` が
-tool call を検証して `chat.tool.requested` を発行します。
-Worker は `HandleToolExecutionHandler` を通じて `GenericToolExecutor` を呼び、
-実行結果を `chat.tool.completed` として戻します。
+会話単位の`ConversationCoordinator`と要求単位の`AgentRun`をPostgreSQLへ保存し、
+`agent.run.wakeup`で状態機械を進めます。`IAIService`が返した`ToolCall`も
+`AgentToolCall`として永続化し、`agent.tool.requested`で実行します。複数toolの結果は
+すべて完了してからjoinされ、次turnへまとめて投入されます。
 
-`web_search` と `memory.read` の結果は `tool_call_id` をキーに短期 store へ保存され、
-次の `RunAgentTurnQuery` で再推論へ投入されます。
+Redisはイベント配送だけを担い、run、tool result、lease、retry状態の正本にはしません。
+外部I/O中はDB transactionを保持せず、前後の短いclaim/apply transactionをlease tokenで
+保護します。詳細は[Durable Agent Run](docs/architecture/durable-agent-run.md)を参照してください。
 
 ## Memory
 
@@ -68,7 +70,7 @@ Memory は raw chat log と long-term memory を分けて扱います。
 - SQL database: raw chat log の source of truth
 - Markdown memory: Profile、Timeline summary、Entity などの抽象 memory
 - Main SQL database: migration 管理された再構築可能な search projection
-- Redis short-term store: tool call と tool result の一時状態
+- PostgreSQL: AgentRun、tool call/result、lease、retryのdurable application state
 
 現行の read path は skills-like な manifest 方式です。Agent turn では compact な
 `memory_id + 1行概要` を system context に注入し、詳細が必要になったときだけ
@@ -99,6 +101,7 @@ Memory は raw chat log と long-term memory を分けて扱います。
 
 - [アーキテクチャ概要](docs/architecture/architecture-overview.md)
 - [イベント呼び出しグラフ](docs/architecture/event-call-graph.md)
+- [Durable Agent Run](docs/architecture/durable-agent-run.md)
 - [Agentic Chat Orchestration](docs/architecture/patterns/agentic-chat-orchestration.md)
 - [LLM Web Search Orchestration](docs/architecture/patterns/llm-web-search-orchestration.md)
 - [Domain 実装ガイド](docs/domain/domain-implementation-guide.md)

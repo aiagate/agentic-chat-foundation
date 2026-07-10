@@ -86,6 +86,15 @@ def test_usecases_keep_legacy_infrastructure_imports_bounded() -> None:
     assert not violations, _render_violation_message("usecases", violations)
 
 
+def test_application_layer_depends_only_on_core_boundaries() -> None:
+    """Application coordinators must not depend on adapters or entrypoints."""
+    violations = _find_forbidden_imports(
+        _iter_python_files("application"),
+        ("app.bootstrap", "app.infrastructure", "app.presentation", "app.usecases"),
+    )
+    assert not violations, _render_violation_message("application", violations)
+
+
 def _render_violation_message(
     layer_name: str,
     violations: list[tuple[Path, str]],

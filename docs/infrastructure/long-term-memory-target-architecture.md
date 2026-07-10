@@ -140,7 +140,7 @@ sequenceDiagram
     Presentation->>SaveChatUseCase: 入力メッセージを保存
     SaveChatUseCase->>SQL: raw Chat を永続化
     SaveChatUseCase-->>Worker: ChatSaved event を発行
-    Worker->>RunAgentTurn: RunAgentTurnCommand
+    Worker->>GenerateContent: AdvanceAgentRunCommand
     GenerateContent->>MemoryService: retrieve(prompt, user_id)
     MemoryService->>Projection: user/character scopeを取得
     Projection->>MemoryService: 選定済みsource_pathとembeddingを返却
@@ -401,7 +401,7 @@ class IEmbeddingService(ABC):
 - `RebuildMemoryIndexCommand`
 - `RepairMemoryIndexCommand`
 
-`RunAgentTurnHandler` は単一の retrieval boundary を通すだけにし、SQLite、Markdown、embedding の詳細を知らないようにする。
+`AgentTurnRunner` は単一の retrieval boundary を通すだけにし、SQLite、Markdown、embedding の詳細を知らないようにする。
 
 ## 冪等性と一貫性
 

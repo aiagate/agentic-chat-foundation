@@ -234,16 +234,26 @@ class FilesystemMemoryStore:
         front_matter: dict[str, object],
         body: str,
     ) -> None:
-        """Render and write a Markdown memory document."""
+        """Atomically replace a Markdown memory document after flushing it."""
 
+        temporary_path: Path | None = None
         try:
             text = render_memory_markdown(front_matter, body, location=str(path))
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text, encoding="utf-8")
+            temporary_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+            with temporary_path.open("w", encoding="utf-8") as stream:
+                stream.write(text)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary_path, path)
+            temporary_path = None
         except MemoryMarkdownError:
             raise
         except OSError as exc:
             raise MemoryStoreError(f"{path}: failed to write memory document") from exc
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
     def iter_timeline_paths(self, user_id: str) -> list[Path]:
         """Return user-scoped Timeline document paths."""

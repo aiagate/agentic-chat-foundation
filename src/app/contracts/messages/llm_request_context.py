@@ -79,11 +79,13 @@ def build_agent_system_prompt(
 def build_agent_current_input(
     *,
     prompt: str,
-    tool_result: ToolResultContext | None,
-    tool_failure_context: str | None,
+    tool_results: list[ToolResultContext] | tuple[ToolResultContext, ...],
 ) -> LLMCurrentInput:
-    """Build the current LLM input with tool outcomes taking precedence."""
-    if tool_result is not None:
+    """Build the current LLM input with all joined tool outcomes."""
+    if tool_results:
+        rendered_results = "\n\n".join(
+            f"[{result.tool_name}]\n{result.rendered_text}" for result in tool_results
+        )
         return LLMCurrentInput(
             kind="tool_result",
             content="\n".join(
@@ -94,19 +96,7 @@ def build_agent_current_input(
                         "user's latest request directly."
                     ),
                     "",
-                    tool_result.rendered_text,
-                ]
-            ),
-        )
-    if tool_failure_context is not None:
-        return LLMCurrentInput(
-            kind="tool_result",
-            content="\n".join(
-                [
-                    "Tool result received with an error.",
-                    "Use the available context to provide the next useful response.",
-                    "",
-                    tool_failure_context,
+                    rendered_results,
                 ]
             ),
         )

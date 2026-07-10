@@ -13,9 +13,6 @@ from app.infrastructure.services.agent_inference_context import (
 from app.infrastructure.services.agent_profile_service import (
     FilesystemAgentProfileService,
 )
-from app.infrastructure.services.agent_reply_writer import (
-    TransactionalAgentReplyWriter,
-)
 from app.infrastructure.services.gemini_service import GeminiService
 from app.infrastructure.services.gpt_service import GptService
 from app.infrastructure.services.memory_consolidation import (
@@ -35,11 +32,7 @@ from app.infrastructure.services.mock_ai_service import MockAIService
 from app.infrastructure.services.ollama_web_search_service import (
     OllamaWebSearchService,
 )
-from app.infrastructure.services.tool_call_router import ToolCallRoutingService
 from app.infrastructure.services.tool_catalog import StaticToolCatalog
-from app.infrastructure.services.tool_completion_notifier import (
-    EventBusToolCompletionNotifier,
-)
 from app.infrastructure.services.tool_executor import GenericToolExecutor
 
 __all__ = [
@@ -49,7 +42,6 @@ __all__ = [
     "DeterministicEmbeddingService",
     "GeminiEmbeddingService",
     "FilesystemAgentProfileService",
-    "TransactionalAgentReplyWriter",
     "FilesystemMemoryService",
     "FilesystemMemoryWriteService",
     "MemoryIndexSearch",
@@ -60,6 +52,4 @@ __all__ = [
     "OllamaWebSearchService",
     "StaticToolCatalog",
     "GenericToolExecutor",
-    "ToolCallRoutingService",
-    "EventBusToolCompletionNotifier",
 ]

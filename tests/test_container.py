@@ -1,4 +1,4 @@
-"""Tests for the dependency injection container."""
+"""Tests for dependency injection bindings."""
 
 from pathlib import Path
 
@@ -6,15 +6,16 @@ import pytest
 from injector import Injector
 
 from app import container
+from app.application.agent import (
+    AgentReplyPersistence,
+    AgentRunCoordinator,
+    AgentToolCoordinator,
+)
 from app.contracts.ports.agent_inference_context import IAgentInferenceContextService
-from app.contracts.ports.agent_reply_writer import IAgentReplyWriter
 from app.contracts.ports.event_bus import IEventBus
 from app.contracts.ports.memory_consolidation import IMemoryConsolidationService
 from app.contracts.ports.memory_service import IMemoryService
 from app.contracts.ports.memory_store import IMemoryStore
-from app.contracts.ports.tool_call_router import IToolCallRouter
-from app.contracts.ports.tool_completion_notifier import IToolCompletionNotifier
-from app.contracts.ports.tool_execution_lock import IToolExecutionLock
 from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.infrastructure.memory.store import FilesystemMemoryStore
 from app.infrastructure.messaging.in_memory_event_bus import InMemoryEventBus
@@ -22,94 +23,51 @@ from app.infrastructure.messaging.redis_event_bus import RedisEventBus
 from app.infrastructure.services.agent_inference_context import (
     AgentInferenceContextService,
 )
-from app.infrastructure.services.agent_reply_writer import (
-    TransactionalAgentReplyWriter,
-)
-from app.infrastructure.services.memory_consolidation import (
-    MemoryConsolidationService,
-)
+from app.infrastructure.services.memory_consolidation import MemoryConsolidationService
 from app.infrastructure.services.memory_service import FilesystemMemoryService
-from app.infrastructure.services.tool_call_router import ToolCallRoutingService
-from app.infrastructure.services.tool_completion_notifier import (
-    EventBusToolCompletionNotifier,
-)
-from app.infrastructure.stores.tool_execution_lock import RedisToolExecutionLock
 from app.infrastructure.unit_of_work import SQLAlchemyUnitOfWork
 from tests._agent_profile_fixture import copy_agent_profile_bundle
 
 
 @pytest.mark.anyio
-async def test_di_container_bindings(
+async def test_di_container_binds_durable_agent_components(
     test_db_engine: None,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Test that the DI container is configured correctly."""
     memory_root = tmp_path / "memory"
     monkeypatch.setenv("MEMORY_ROOT", str(memory_root))
     copy_agent_profile_bundle(memory_root)
-
     injector = Injector([container.configure])
 
-    # Test that requesting the IUnitOfWork interface returns the correct implementation
-    uow_instance = injector.get(IUnitOfWork)
-    memory_store = injector.get(IMemoryStore)
-    memory_consolidation_service = injector.get(IMemoryConsolidationService)
-    memory_service = injector.get(IMemoryService)
-    agent_reply_writer = injector.get(IAgentReplyWriter)
-    tool_call_router = injector.get(IToolCallRouter)
-    inference_context_service = injector.get(IAgentInferenceContextService)
-    tool_completion_notifier = injector.get(IToolCompletionNotifier)
-
-    assert isinstance(uow_instance, SQLAlchemyUnitOfWork)
-    assert isinstance(memory_store, FilesystemMemoryStore)
+    assert isinstance(injector.get(IUnitOfWork), SQLAlchemyUnitOfWork)
+    assert isinstance(injector.get(IMemoryStore), FilesystemMemoryStore)
+    assert isinstance(injector.get(IMemoryService), FilesystemMemoryService)
     assert isinstance(
-        memory_consolidation_service,
-        MemoryConsolidationService,
+        injector.get(IMemoryConsolidationService), MemoryConsolidationService
     )
-    assert isinstance(memory_service, FilesystemMemoryService)
-    assert isinstance(agent_reply_writer, TransactionalAgentReplyWriter)
-    assert isinstance(tool_call_router, ToolCallRoutingService)
-    assert isinstance(inference_context_service, AgentInferenceContextService)
-    assert isinstance(tool_completion_notifier, EventBusToolCompletionNotifier)
+    assert isinstance(
+        injector.get(IAgentInferenceContextService), AgentInferenceContextService
+    )
+    assert isinstance(injector.get(AgentReplyPersistence), AgentReplyPersistence)
+    assert isinstance(injector.get(AgentRunCoordinator), AgentRunCoordinator)
+    assert isinstance(injector.get(AgentToolCoordinator), AgentToolCoordinator)
 
 
 @pytest.mark.anyio
-async def test_di_container_event_bus_defaults_to_memory(test_db_engine: None) -> None:
-    """Test that the container defaults to the in-memory event bus."""
+async def test_event_bus_defaults_to_memory(test_db_engine: None) -> None:
     import os
 
     os.environ.pop("EVENT_BUS_PROVIDER", None)
     os.environ.pop("REDIS_URL", None)
-    os.environ.pop("DATABASE_URL", None)
     injector = Injector([container.configure])
-    event_bus = injector.get(IEventBus)
-
-    assert isinstance(event_bus, InMemoryEventBus)
+    assert isinstance(injector.get(IEventBus), InMemoryEventBus)
 
 
 @pytest.mark.anyio
-async def test_di_container_event_bus_selects_redis(
-    test_db_engine: None,
-    monkeypatch: pytest.MonkeyPatch,
+async def test_event_bus_selects_redis(
+    test_db_engine: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test that the container selects Redis when configured."""
     monkeypatch.setenv("EVENT_BUS_PROVIDER", "redis")
     injector = Injector([container.configure])
-    event_bus = injector.get(IEventBus)
-
-    assert isinstance(event_bus, RedisEventBus)
-
-
-@pytest.mark.anyio
-async def test_di_container_selects_redis_tool_execution_lock(
-    test_db_engine: None,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test that Redis-backed runs use a cross-process execution lock."""
-
-    monkeypatch.setenv("REDIS_URL", "redis://test")
-    injector = Injector([container.configure])
-    lock = injector.get(IToolExecutionLock)
-
-    assert isinstance(lock, RedisToolExecutionLock)
+    assert isinstance(injector.get(IEventBus), RedisEventBus)

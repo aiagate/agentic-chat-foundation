@@ -8,6 +8,7 @@ from flow_res import Err, Ok, Result
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.contracts.ports.agent_run_repository import IAgentRunRepository
 from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.domain.repositories import (
     IChatRecordRepository,
@@ -24,6 +25,7 @@ from app.infrastructure.queries.chat_history_query import (
 from app.infrastructure.queries.raw_chat_log_query import (
     SQLAlchemyRawChatLogQuery,
 )
+from app.infrastructure.repositories.agent_run_repository import AgentRunRepository
 from app.infrastructure.repositories.chat_record_repository import (
     ChatRecordRepository,
 )
@@ -46,6 +48,7 @@ class SQLAlchemyUnitOfWork(IUnitOfWork):
         self._memory_consolidated_chat_source_repository: (
             MemoryConsolidatedChatSourceRepository | None
         ) = None
+        self._agent_run_repository: AgentRunRepository | None = None
 
     @overload
     def GetRepository[T](self, entity_type: type[T]) -> IRepository[T]: ...
@@ -131,6 +134,16 @@ class SQLAlchemyUnitOfWork(IUnitOfWork):
             )
         return self._memory_consolidated_chat_source_repository
 
+    def GetAgentRunRepository(self) -> IAgentRunRepository:
+        """Get the durable agent workflow repository."""
+        if self._session is None:
+            raise RuntimeError(
+                "UnitOfWork session not initialized. Use 'async with' context."
+            )
+        if self._agent_run_repository is None:
+            self._agent_run_repository = AgentRunRepository(self._session)
+        return self._agent_run_repository
+
     def enqueue_event(
         self,
         topic: str,
@@ -201,3 +214,4 @@ class SQLAlchemyUnitOfWork(IUnitOfWork):
             self._raw_chat_log_query = None
             self._chat_record_repository = None
             self._memory_consolidated_chat_source_repository = None
+            self._agent_run_repository = None

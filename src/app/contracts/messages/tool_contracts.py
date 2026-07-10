@@ -95,6 +95,10 @@ class ToolExecutionResult(AgentEnvelope):
         default=None,
         description="Stable machine-readable error code.",
     )
+    rendered_text: str | None = Field(
+        default=None,
+        description="Prompt-ready representation of the structured result.",
+    )
 
 
 def render_tool_definitions(tool_definitions: list[ToolDefinition]) -> str:

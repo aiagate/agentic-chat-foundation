@@ -9,7 +9,7 @@
 1. `memory.sleep` による sleep / consolidation
 2. `memory.write_candidate` による raw Timeline 書き込み
 
-`RunAgentTurnHandler` は memory を読むだけで、長期記憶の書き込みはしない。
+`AgentTurnRunner` は memory を読むだけで、長期記憶の書き込みはしない。
 
 ## sleep / consolidation
 
@@ -55,7 +55,7 @@ raw Timeline Markdown を書く。
 
 ## 読み取りとの分離
 
-- read: `RunAgentTurnHandler` -> `IMemoryService.build_context(...)`
+- read: `AgentTurnRunner` -> `IMemoryService.build_context(...)`
 - detailed read: `memory.read` -> `IMemoryService.read_memory(...)`
 - write: `memory.sleep` -> `RunMemorySleepHandler` -> `IMemoryConsolidationService.consolidate_chat_logs(...)`
 - candidate write: `GenericToolExecutor` -> `IMemoryWriteService.add_log(...)`

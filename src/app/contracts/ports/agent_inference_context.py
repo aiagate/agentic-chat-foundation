@@ -10,6 +10,7 @@ from flow_res import Result
 from app.contracts.messages.agent_turn_context import AgentTurnContext
 from app.contracts.messages.chat_type import ChatType
 from app.contracts.messages.llm_request_context import LLMRequestContext
+from app.contracts.messages.tool_result_context import ToolResultContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,8 +21,7 @@ class AgentInferenceContextRequest:
     user_id: str
     character_id: str
     chat_type: ChatType
-    tool_call_id: str | None = None
-    tool_failure_context: str | None = None
+    tool_results: tuple[ToolResultContext, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

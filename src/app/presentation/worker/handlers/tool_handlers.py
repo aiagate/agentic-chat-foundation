@@ -1,112 +1,34 @@
-"""Worker handlers for generic tool events."""
+"""Worker handler for durable AgentToolCall requests."""
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping
 
 from flow_med import Mediator
 
-from app.contracts.messages.chat_events import (
-    CHAT_TOOL_COMPLETED_TOPIC,
-    CHAT_TOOL_REQUESTED_TOPIC,
-)
+from app.contracts.messages.agent_run_events import AGENT_TOOL_REQUESTED_TOPIC
 from app.presentation.worker.event_payloads import (
-    ChatToolCompletedPayload,
-    ChatToolRequestedPayload,
-    extract_agent_envelope,
+    AgentToolRequestedPayload,
     parse_worker_event_payload,
 )
 from app.presentation.worker.registry import event_handler
-from app.usecases.agent.handle_tool_execution import HandleToolExecutionCommand
-from app.usecases.agent.request_agent_turn import RequestAgentTurnCommand
-
-logger = logging.getLogger(__name__)
+from app.usecases.agent.execute_agent_tool import ExecuteAgentToolCommand
 
 
-def _require_character_id(
-    character_id: str | None, payload: Mapping[str, object]
-) -> str | None:
-    if character_id is not None:
-        return character_id
-    logger.warning("Tool payload missing character_id: %s", payload)
-    return None
-
-
-@event_handler(CHAT_TOOL_REQUESTED_TOPIC)
-async def on_chat_tool_requested(payload: Mapping[str, object]) -> None:
-    """Execute a requested generic tool."""
-
+@event_handler(AGENT_TOOL_REQUESTED_TOPIC)
+async def on_agent_tool_requested(payload: Mapping[str, object]) -> None:
+    """Execute a durable tool request."""
     event = parse_worker_event_payload(
-        ChatToolRequestedPayload,
+        AgentToolRequestedPayload,
         payload,
-        event_name="Tool requested",
+        event_name="Agent tool requested",
     )
     if event is None:
         return
-
-    if event.tool_call_id is None:
-        logger.warning("Tool requested payload missing tool_call_id: %s", payload)
-        return
-    character_id = _require_character_id(event.character_id, payload)
-    if character_id is None:
-        return
-
     await Mediator.send_async(
-        HandleToolExecutionCommand(
-            chat_id=event.chat_id,
+        ExecuteAgentToolCommand(
+            agent_run_id=event.agent_run_id,
             tool_call_id=event.tool_call_id,
-            user_id=event.user_id,
-            chat_type=event.chat_type,
-            tool_name=event.tool_name,
-            character_id=character_id,
-            guild_id=event.guild_id,
-            channel_id=event.channel_id,
-            agent_context=extract_agent_envelope(event),
+            attempt_count=event.attempt_count,
         )
-    )
-
-
-@event_handler(CHAT_TOOL_COMPLETED_TOPIC)
-async def on_chat_tool_completed(payload: Mapping[str, object]) -> None:
-    """Re-enter the agent runtime after a generic tool completes."""
-
-    event = parse_worker_event_payload(
-        ChatToolCompletedPayload,
-        payload,
-        event_name="Tool completed",
-    )
-    if event is None:
-        return
-    character_id = _require_character_id(event.character_id, payload)
-    if character_id is None:
-        return
-
-    if event.continuation != "reenter":
-        return
-
-    await Mediator.send_async(
-        RequestAgentTurnCommand(
-            chat_id=event.chat_id,
-            source_request_id=event.chat_id,
-            guild_id=event.guild_id or "LINE",
-            channel_id=event.channel_id or event.chat_id,
-            user_id=event.user_id or event.chat_id,
-            chat_type=event.chat_type,
-            character_id=character_id,
-            tool_failure_context=(
-                _tool_failure_context(tool_name=event.tool_name, error=event.error)
-                if event.status != "ok"
-                else None
-            ),
-            agent_context=extract_agent_envelope(event),
-        )
-    )
-
-
-def _tool_failure_context(*, tool_name: str, error: str | None) -> str:
-    rendered_error = error or "unknown error"
-    return (
-        f"Tool failure context: {tool_name} failed with error: {rendered_error}. "
-        "Provide the next useful response from the available context."
     )

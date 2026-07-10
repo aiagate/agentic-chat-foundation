@@ -11,13 +11,10 @@ from app.contracts.messages.agent_turn_context import AgentTurnContext
 from app.contracts.messages.character_definition import CharacterDefinition
 from app.contracts.messages.conversation_context import ConversationContext
 from app.contracts.messages.memory_context import MemoryContextPack, MemoryProfile
+from app.contracts.messages.tool_result_context import ToolResultContext
 from app.contracts.ports.agent_inference_context import AgentInferenceContextRequest
 from app.contracts.ports.agent_profile_service import IAgentProfileService
 from app.contracts.ports.memory_service import IMemoryService, MemoryServiceError
-from app.contracts.ports.tool_result_store import (
-    IToolResultStore,
-    ToolResultStoreError,
-)
 from app.domain.value_objects.chat_type import ChatType
 from app.infrastructure.services.agent_inference_context import (
     AgentInferenceContextService,
@@ -60,14 +57,9 @@ def _service(mocker: Any, *, memory_result: Any) -> AgentInferenceContextService
     memory_service.build_context = mocker.AsyncMock(return_value=memory_result)
     profile_service = mocker.Mock(spec=IAgentProfileService)
     profile_service.load_agent_profile_bundle.return_value = _profile_bundle()
-    tool_result_store = mocker.Mock(spec=IToolResultStore)
-    tool_result_store.get = mocker.AsyncMock(
-        return_value=Err(ToolResultStoreError("not found"))
-    )
     return AgentInferenceContextService(
         memory_service,
         profile_service,
-        tool_result_store,
         StaticToolCatalog(),
     )
 
@@ -102,7 +94,7 @@ async def test_context_service_assembles_line_tools_and_memory(mocker: Any) -> N
 
 
 @pytest.mark.anyio
-async def test_context_service_tolerates_missing_tool_result(mocker: Any) -> None:
+async def test_context_service_uses_durable_tool_results(mocker: Any) -> None:
     service = _service(
         mocker,
         memory_result=Ok(MemoryContextPack(user_id="user-1")),
@@ -114,12 +106,20 @@ async def test_context_service_tolerates_missing_tool_result(mocker: Any) -> Non
             user_id="user-1",
             character_id="character-1",
             chat_type=ChatType.LINE,
-            tool_call_id="missing-tool",
+            tool_results=(
+                ToolResultContext(
+                    tool_call_id="tool-1",
+                    character_id="character-1",
+                    tool_name="web_search",
+                    status="ok",
+                    rendered_text="durable search result",
+                ),
+            ),
         )
     )
 
     assert not is_err(result)
-    assert result.value.current_input.content == "hello"
+    assert "durable search result" in result.value.current_input.content
 
 
 @pytest.mark.anyio

@@ -1,15 +1,10 @@
 from __future__ import annotations
 
 from app.contracts.messages import (
-    CHAT_TOOL_COMPLETED_TOPIC,
-    CHAT_TOOL_REQUESTED_TOPIC,
-    AgentEnvelope,
     GeneratedContent,
     SearchToolArguments,
     ToolCall,
     ToolResultContext,
-    build_chat_tool_completed_payload,
-    build_chat_tool_requested_payload,
     normalize_reply_contents,
 )
 
@@ -140,53 +135,3 @@ def test_generated_content_normalizes_scalar_contents_into_a_list() -> None:
         "ええ、よくわかります。夕暮れ時は一日の疲れが出始める頃です。"
     ]
     assert content.tool_calls == []
-
-
-def test_generic_tool_payload_builders_merge_agent_metadata() -> None:
-    agent_envelope = AgentEnvelope(
-        event_id="event-3",
-        correlation_id="corr-3",
-        causation_id="caus-3",
-        agent_run_id="run-3",
-        agent_turn_id="turn-3",
-        character_id="reina",
-        tool_call_id="tool-3",
-        source_message_id="msg-3",
-        decision_summary="Tool loop bridge",
-    )
-
-    requested_payload = build_chat_tool_requested_payload(
-        chat_id="chat-1",
-        user_id="user-1",
-        chat_type="discord",
-        tool_call_id="tool-3",
-        tool_name="web_search",
-        guild_id="DM",
-        channel_id="123",
-        agent_envelope=agent_envelope,
-    )
-    completed_payload = build_chat_tool_completed_payload(
-        chat_id="chat-1",
-        chat_type="discord",
-        user_id="user-1",
-        status="ok",
-        tool_name="web_search",
-        continuation="reenter",
-        result={"tool_call_id": "tool-3", "retrieved_context": True},
-        guild_id="DM",
-        channel_id="123",
-        agent_envelope=agent_envelope,
-    )
-
-    assert requested_payload.get("agent_run_id") == "run-3"
-    assert requested_payload.get("character_id") == "reina"
-    assert requested_payload.get("tool_call_id") == "tool-3"
-    assert "arguments" not in requested_payload
-    assert completed_payload["status"] == "ok"
-    result = completed_payload.get("result")
-    assert result is not None
-    assert result["retrieved_context"] is True
-    assert completed_payload.get("decision_summary") == "Tool loop bridge"
-    assert completed_payload.get("character_id") == "reina"
-    assert CHAT_TOOL_REQUESTED_TOPIC == "chat.tool.requested"
-    assert CHAT_TOOL_COMPLETED_TOPIC == "chat.tool.completed"

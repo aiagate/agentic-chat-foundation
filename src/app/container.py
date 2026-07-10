@@ -6,10 +6,15 @@ from typing import cast
 import injector
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.application.agent import (
+    AgentReplyPersistence,
+    AgentRunCoordinator,
+    AgentToolCoordinator,
+    AgentTurnRunner,
+)
 from app.bootstrap.character_selection import resolve_active_character_id
 from app.contracts.ports.agent_inference_context import IAgentInferenceContextService
 from app.contracts.ports.agent_profile_service import IAgentProfileService
-from app.contracts.ports.agent_reply_writer import IAgentReplyWriter
 from app.contracts.ports.agent_turn_context_query import IAgentTurnContextQuery
 from app.contracts.ports.ai_service import IAIService
 from app.contracts.ports.event_bus import IEventBus
@@ -23,13 +28,8 @@ from app.contracts.ports.memory_service import IMemoryService
 from app.contracts.ports.memory_store import IMemoryStore
 from app.contracts.ports.memory_write_service import IMemoryWriteService
 from app.contracts.ports.outbox_store import IOutboxStore
-from app.contracts.ports.tool_call_router import IToolCallRouter
-from app.contracts.ports.tool_call_store import IToolCallStore
 from app.contracts.ports.tool_catalog import IToolCatalog
-from app.contracts.ports.tool_completion_notifier import IToolCompletionNotifier
-from app.contracts.ports.tool_execution_lock import IToolExecutionLock
 from app.contracts.ports.tool_executor import IToolExecutor
-from app.contracts.ports.tool_result_store import IToolResultStore
 from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.contracts.ports.web_search_service import IWebSearchService
 from app.domain.queries.memory_sleep_query import IMemorySleepQuery
@@ -50,7 +50,6 @@ from app.infrastructure.queries.memory_sleep_query_service import (
 )
 from app.infrastructure.services import (
     AgentInferenceContextService,
-    EventBusToolCompletionNotifier,
     FilesystemAgentProfileService,
     FilesystemMemoryService,
     FilesystemMemoryWriteService,
@@ -63,22 +62,8 @@ from app.infrastructure.services import (
     MockAIService,
     OllamaWebSearchService,
     StaticToolCatalog,
-    ToolCallRoutingService,
-    TransactionalAgentReplyWriter,
 )
 from app.infrastructure.stores.outbox_store import SQLAlchemyOutboxStore
-from app.infrastructure.stores.tool_call_store import (
-    InMemoryToolCallStore,
-    RedisToolCallStore,
-)
-from app.infrastructure.stores.tool_execution_lock import (
-    InMemoryToolExecutionLock,
-    RedisToolExecutionLock,
-)
-from app.infrastructure.stores.tool_result_store import (
-    InMemoryToolResultStore,
-    RedisToolResultStore,
-)
 from app.infrastructure.unit_of_work import SQLAlchemyUnitOfWork
 
 
@@ -117,14 +102,6 @@ class DatabaseModule(injector.Module):
     ) -> IOutboxStore:
         """Provide the durable outbox delivery store."""
         return SQLAlchemyOutboxStore(session_factory)
-
-    @injector.provider
-    def provide_agent_reply_writer(
-        self,
-        uow: IUnitOfWork,
-    ) -> IAgentReplyWriter:
-        """Provide the transactional generated-reply writer."""
-        return TransactionalAgentReplyWriter(uow)
 
 
 class MessagingModule(injector.Module):
@@ -168,48 +145,6 @@ class AIModule(injector.Module):
 
 class SearchModule(injector.Module):
     """Module for search workflow dependencies."""
-
-    @injector.provider
-    @injector.singleton
-    def provide_tool_result_store(self) -> IToolResultStore:
-        """Provide the short-lived tool result store."""
-        if os.getenv("REDIS_URL"):
-            return RedisToolResultStore()
-        return InMemoryToolResultStore()
-
-    @injector.provider
-    @injector.singleton
-    def provide_tool_call_store(self) -> IToolCallStore:
-        """Provide the short-lived tool call store."""
-        if os.getenv("REDIS_URL"):
-            return RedisToolCallStore()
-        return InMemoryToolCallStore()
-
-    @injector.provider
-    @injector.singleton
-    def provide_tool_execution_lock(self) -> IToolExecutionLock:
-        """Provide the short-lived tool execution idempotency lock."""
-        if os.getenv("REDIS_URL"):
-            return RedisToolExecutionLock()
-        return InMemoryToolExecutionLock()
-
-    @injector.provider
-    def provide_tool_call_router(
-        self,
-        event_bus: IEventBus,
-        tool_catalog: IToolCatalog,
-        tool_call_store: IToolCallStore,
-    ) -> IToolCallRouter:
-        """Provide tool-call validation and event routing."""
-        return ToolCallRoutingService(event_bus, tool_catalog, tool_call_store)
-
-    @injector.provider
-    def provide_tool_completion_notifier(
-        self,
-        event_bus: IEventBus,
-    ) -> IToolCompletionNotifier:
-        """Provide tool completion event publication."""
-        return EventBusToolCompletionNotifier(event_bus)
 
     @injector.provider
     @injector.singleton
@@ -325,14 +260,12 @@ class MemoryModule(injector.Module):
         self,
         memory_service: IMemoryService,
         agent_profile_service: IAgentProfileService,
-        tool_result_store: IToolResultStore,
         tool_catalog: IToolCatalog,
     ) -> IAgentInferenceContextService:
         """Provide prompt-ready agent inference context assembly."""
         return AgentInferenceContextService(
             memory_service,
             agent_profile_service,
-            tool_result_store,
             tool_catalog,
         )
 
@@ -356,19 +289,15 @@ class MemoryModule(injector.Module):
     @injector.singleton
     def provide_tool_executor(
         self,
-        tool_result_store: IToolResultStore,
         memory_service: IMemoryService,
         memory_write_service: IMemoryWriteService,
         web_search_service: IWebSearchService,
-        agent_reply_writer: IAgentReplyWriter,
     ) -> IToolExecutor:
         """Provide the generic tool executor adapter."""
         return GenericToolExecutor(
-            tool_result_store=tool_result_store,
             memory_service=memory_service,
             memory_write_service=memory_write_service,
             web_search_service=web_search_service,
-            agent_reply_writer=agent_reply_writer,
         )
 
     @injector.provider
@@ -376,6 +305,44 @@ class MemoryModule(injector.Module):
     def provide_memory_sleep_query_service(self) -> IMemorySleepQuery:
         """Provide the query service for pending memory sleep targets."""
         return MemorySleepQueryService()
+
+
+class ApplicationModule(injector.Module):
+    """Wire durable application orchestration components."""
+
+    @injector.provider
+    def provide_agent_turn_runner(
+        self,
+        ai_service: IAIService,
+        context_query: IAgentTurnContextQuery,
+        inference_context: IAgentInferenceContextService,
+    ) -> AgentTurnRunner:
+        return AgentTurnRunner(ai_service, context_query, inference_context)
+
+    @injector.provider
+    def provide_agent_run_coordinator(
+        self,
+        uow: IUnitOfWork,
+        turn_runner: AgentTurnRunner,
+        tool_catalog: IToolCatalog,
+        reply_persistence: AgentReplyPersistence,
+    ) -> AgentRunCoordinator:
+        return AgentRunCoordinator(uow, turn_runner, tool_catalog, reply_persistence)
+
+    @injector.provider
+    def provide_agent_tool_coordinator(
+        self,
+        uow: IUnitOfWork,
+        tool_executor: IToolExecutor,
+        reply_persistence: AgentReplyPersistence,
+    ) -> AgentToolCoordinator:
+        return AgentToolCoordinator(uow, tool_executor, reply_persistence)
+
+    @injector.provider
+    def provide_agent_reply_persistence(
+        self, uow: IUnitOfWork
+    ) -> AgentReplyPersistence:
+        return AgentReplyPersistence(uow)
 
 
 def configure(binder: injector.Binder) -> None:
@@ -388,3 +355,4 @@ def configure(binder: injector.Binder) -> None:
     binder.install(AIModule())
     binder.install(SearchModule())
     binder.install(MemoryModule())
+    binder.install(ApplicationModule())

@@ -30,7 +30,7 @@ async def test_redis_event_bus_publish_requires_start() -> None:
     bus = RedisEventBus()
 
     with pytest.raises(RuntimeError):
-        await bus.publish("chat.tool.requested", {"tool_call_id": "tool-1"})
+        await bus.publish("agent.tool.requested", {"tool_call_id": "tool-1"})
 
 
 @pytest.mark.anyio
@@ -39,13 +39,13 @@ async def test_redis_event_bus_publish_appends_to_topic_stream() -> None:
     redis_stub = _RedisStreamsStub()
     cast(Any, bus)._redis = redis_stub
 
-    await bus.publish("chat.tool.requested", {"tool_call_id": "tool-1"})
+    await bus.publish("agent.tool.requested", {"tool_call_id": "tool-1"})
 
     assert redis_stub.added == [
         (
-            "events:chat.tool.requested",
+            "events:agent.tool.requested",
             {
-                "topic": "chat.tool.requested",
+                "topic": "agent.tool.requested",
                 "payload": json.dumps(
                     {"tool_call_id": "tool-1"},
                     ensure_ascii=False,
@@ -65,15 +65,15 @@ async def test_redis_event_bus_acks_after_handler_success() -> None:
     async def handler(payload: Mapping[str, object]) -> None:
         received.append(dict(payload))
 
-    await bus.subscribe("chat.tool.requested", handler)
+    await bus.subscribe("agent.tool.requested", handler)
     await cast(Any, bus)._process_entries(
-        "chat.tool.requested",
+        "agent.tool.requested",
         [("1-0", {"payload": json.dumps({"tool_call_id": "tool-1"})})],
     )
 
     assert received == [{"tool_call_id": "tool-1"}]
     assert redis_stub.acked == [
-        ("events:chat.tool.requested", bus.consumer_group, "1-0")
+        ("events:agent.tool.requested", bus.consumer_group, "1-0")
     ]
 
 
@@ -87,9 +87,9 @@ async def test_redis_event_bus_does_not_ack_handler_failure() -> None:
         del payload
         raise RuntimeError("boom")
 
-    await bus.subscribe("chat.tool.completed", failing_handler)
+    await bus.subscribe("agent.run.wakeup", failing_handler)
     await cast(Any, bus)._process_entries(
-        "chat.tool.completed",
+        "agent.run.wakeup",
         [("1-0", {"payload": json.dumps({"status": "ok"})})],
     )
 
