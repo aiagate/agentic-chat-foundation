@@ -17,16 +17,17 @@ from app.contracts.messages.chat_history import ChatHistoryItem
 from app.contracts.messages.generated_content import GeneratedContent
 from app.contracts.messages.memory_context import MemoryProfile
 from app.contracts.messages.memory_semantic_extraction import (
+    LongTermMemoryChatLog,
     MemorySectionSummary,
     MemorySemanticExtractionRequest,
-    MemorySleepChatLog,
     MemoryTimelineSectionPatch,
 )
 from app.contracts.messages.relationship_growth import MAX_DAILY_SCORE_INCREASE
 from app.contracts.messages.tool_contracts import ToolDefinition
+from app.contracts.messages.tool_result_context import ToolResultContext
 from app.contracts.ports.agent_profile_service import IAgentProfileService
 from app.contracts.ports.ai_service import AIServiceError, IAIService
-from app.domain.queries.raw_chat_log_query import MemorySleepSourceItem
+from app.domain.queries.raw_chat_log_query import LongTermMemorySourceItem
 from app.domain.value_objects.chat_type import ChatType
 from app.infrastructure.memory.store import FilesystemMemoryStore
 from app.infrastructure.services.memory_consolidation import (
@@ -45,8 +46,9 @@ class _FakeAIService(IAIService):
         history: list[ChatHistoryItem],
         system_instruction: str | None = None,
         tool_definitions: list[ToolDefinition] | None = None,
+        tool_results: list[ToolResultContext] | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
-        del prompt, history, system_instruction, tool_definitions
+        del prompt, history, system_instruction, tool_definitions, tool_results
         payload = {
             "sections": [
                 {
@@ -87,6 +89,7 @@ class _RecordingAIService(_FakeAIService):
         history: list[ChatHistoryItem],
         system_instruction: str | None = None,
         tool_definitions: list[ToolDefinition] | None = None,
+        tool_results: list[ToolResultContext] | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
         self.last_prompt = prompt
         self.last_system_instruction = system_instruction
@@ -95,6 +98,7 @@ class _RecordingAIService(_FakeAIService):
             history,
             system_instruction,
             tool_definitions,
+            tool_results,
         )
 
 
@@ -109,8 +113,9 @@ class _RetryingAIService(IAIService):
         history: list[ChatHistoryItem],
         system_instruction: str | None = None,
         tool_definitions: list[ToolDefinition] | None = None,
+        tool_results: list[ToolResultContext] | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
-        del history, tool_definitions
+        del history, tool_definitions, tool_results
         self.prompts.append(prompt)
         self.system_instructions.append(system_instruction)
 
@@ -163,8 +168,9 @@ class _AlwaysInvalidAIService(IAIService):
         history: list[ChatHistoryItem],
         system_instruction: str | None = None,
         tool_definitions: list[ToolDefinition] | None = None,
+        tool_results: list[ToolResultContext] | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
-        del history, tool_definitions
+        del history, tool_definitions, tool_results
         self.prompts.append(prompt)
         self.system_instructions.append(system_instruction)
         return Ok(
@@ -252,8 +258,9 @@ class _RelationshipAIService(IAIService):
         history: list[ChatHistoryItem],
         system_instruction: str | None = None,
         tool_definitions: list[ToolDefinition] | None = None,
+        tool_results: list[ToolResultContext] | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
-        del prompt, history, system_instruction, tool_definitions
+        del prompt, history, system_instruction, tool_definitions, tool_results
         payload = {
             "sections": [],
             "timeline_patch": None,
@@ -308,7 +315,9 @@ async def test_memory_semantic_extraction_service_parses_structured_json() -> No
 
 
 @pytest.mark.anyio
-async def test_memory_semantic_extraction_service_system_instruction_is_json_only() -> None:
+async def test_memory_semantic_extraction_service_system_instruction_is_json_only() -> (
+    None
+):
     """The system instruction should not ask for prose outside the JSON payload."""
 
     recording_ai = _RecordingAIService()
@@ -325,8 +334,14 @@ async def test_memory_semantic_extraction_service_system_instruction_is_json_onl
     await service.extract_memory_updates(request)
 
     assert recording_ai.last_system_instruction is not None
-    assert "JSON の文字列値は自然な日本語にしてください" in recording_ai.last_system_instruction
-    assert "出力文体は自然な日本語にしてください" not in recording_ai.last_system_instruction
+    assert (
+        "JSON の文字列値は自然な日本語にしてください"
+        in recording_ai.last_system_instruction
+    )
+    assert (
+        "出力文体は自然な日本語にしてください"
+        not in recording_ai.last_system_instruction
+    )
 
 
 @pytest.mark.anyio
@@ -344,7 +359,7 @@ async def test_memory_semantic_extraction_service_logs_references_and_result(
         user_id="u1",
         day="2026-05-18",
         raw_logs=[
-            MemorySleepChatLog(
+            LongTermMemoryChatLog(
                 id="raw-1",
                 user_id="u1",
                 role="user",
@@ -366,17 +381,37 @@ async def test_memory_semantic_extraction_service_logs_references_and_result(
 
     assert is_ok(result)
     assert any(
-        "Memory semantic extraction context:" in record.message for record in caplog.records
+        "Memory semantic extraction context:" in record.message
+        for record in caplog.records
     )
-    assert any("raw_logs=id=raw-1,role=user,type=DISCORD" in record.message for record in caplog.records)
-    assert any("existing_profile_summary=Profile summary for context" in record.message for record in caplog.records)
-    assert any("existing_entity_labels=project-x | relationship:jondue" in record.message for record in caplog.records)
-    assert any("existing_timeline_summaries=Timeline summary one" in record.message for record in caplog.records)
     assert any(
-        "Memory semantic extraction result:" in record.message for record in caplog.records
+        "raw_logs=id=raw-1,role=user,type=DISCORD" in record.message
+        for record in caplog.records
     )
-    assert any("sections=work-progress:Work progress" in record.message for record in caplog.records)
-    assert any("evidence_notes=User mentioned project-x" in record.message for record in caplog.records)
+    assert any(
+        "existing_profile_summary=Profile summary for context" in record.message
+        for record in caplog.records
+    )
+    assert any(
+        "existing_entity_labels=project-x | relationship:jondue" in record.message
+        for record in caplog.records
+    )
+    assert any(
+        "existing_timeline_summaries=Timeline summary one" in record.message
+        for record in caplog.records
+    )
+    assert any(
+        "Memory semantic extraction result:" in record.message
+        for record in caplog.records
+    )
+    assert any(
+        "sections=work-progress:Work progress" in record.message
+        for record in caplog.records
+    )
+    assert any(
+        "evidence_notes=User mentioned project-x" in record.message
+        for record in caplog.records
+    )
 
 
 @pytest.mark.anyio
@@ -396,7 +431,9 @@ async def test_memory_semantic_extraction_service_retries_until_json(
         raw_logs=[],
     )
 
-    with caplog.at_level(logging.INFO, logger="app.infrastructure.services.memory_semantic_extraction"):
+    with caplog.at_level(
+        logging.INFO, logger="app.infrastructure.services.memory_semantic_extraction"
+    ):
         result = await service.extract_memory_updates(request)
 
     assert is_ok(result)
@@ -405,9 +442,7 @@ async def test_memory_semantic_extraction_service_retries_until_json(
     assert ai_service.system_instructions[0] is not None
     assert ai_service.system_instructions[1] is not None
     assert "JSON" in ai_service.system_instructions[1]
-    assert any(
-        "non-JSON output" in record.message for record in caplog.records
-    )
+    assert any("non-JSON output" in record.message for record in caplog.records)
     assert any(
         "succeeded after 2 attempt" in record.message for record in caplog.records
     )
@@ -430,24 +465,22 @@ async def test_memory_semantic_extraction_service_reports_failure_after_retry_ex
         raw_logs=[],
     )
 
-    with caplog.at_level(logging.WARNING, logger="app.infrastructure.services.memory_semantic_extraction"):
+    with caplog.at_level(
+        logging.WARNING, logger="app.infrastructure.services.memory_semantic_extraction"
+    ):
         result = await service.extract_memory_updates(request)
 
     assert not is_ok(result)
     assert len(ai_service.prompts) == 2
-    assert any(
-        "non-JSON output" in record.message for record in caplog.records
-    )
-    assert any(
-        "failed after 2 attempts" in record.message for record in caplog.records
-    )
+    assert any("non-JSON output" in record.message for record in caplog.records)
+    assert any("failed after 2 attempts" in record.message for record in caplog.records)
 
 
 @pytest.mark.anyio
 async def test_memory_consolidation_includes_recent_timeline_summaries_in_prompt(
     tmp_path: Path,
 ) -> None:
-    """Sleep orchestration should include recent timeline summaries as context."""
+    """Memory organization should include recent timeline summaries as context."""
 
     store = FilesystemMemoryStore(tmp_path / "memory")
     _write_timeline_summary(
@@ -464,7 +497,7 @@ async def test_memory_consolidation_includes_recent_timeline_summaries_in_prompt
         ],
     )
     raw_logs = [
-        MemorySleepSourceItem(
+        LongTermMemorySourceItem(
             id="raw-1",
             user_id="u1",
             role="user",
@@ -472,7 +505,7 @@ async def test_memory_consolidation_includes_recent_timeline_summaries_in_prompt
             message_content={"payload": {"text": "Planning project-x."}},
             created_at=datetime(2026, 5, 18, 10, 0, tzinfo=UTC),
         ),
-        MemorySleepSourceItem(
+        LongTermMemorySourceItem(
             id="raw-2",
             user_id="u1",
             role="assistant",
@@ -513,15 +546,15 @@ async def test_memory_consolidation_includes_recent_timeline_summaries_in_prompt
 
 
 @pytest.mark.anyio
-async def test_run_memory_sleep_uses_semantic_extraction_service(
+async def test_organize_long_term_memory_uses_semantic_extraction_service(
     tmp_path: Path,
 ) -> None:
-    """Sleep orchestration should write memory from semantic extraction output."""
+    """Memory organization should write from semantic extraction output."""
 
     store = FilesystemMemoryStore(tmp_path / "memory")
     _write_entity(store, user_id="u1", entity_id="project-x")
     raw_logs = [
-        MemorySleepSourceItem(
+        LongTermMemorySourceItem(
             id="raw-1",
             user_id="u1",
             role="user",
@@ -529,7 +562,7 @@ async def test_run_memory_sleep_uses_semantic_extraction_service(
             message_content={"payload": {"text": "Planning project-x."}},
             created_at=datetime(2026, 5, 18, 10, 0, tzinfo=UTC),
         ),
-        MemorySleepSourceItem(
+        LongTermMemorySourceItem(
             id="raw-2",
             user_id="u1",
             role="assistant",
@@ -577,7 +610,7 @@ async def test_run_memory_sleep_uses_semantic_extraction_service(
 async def test_memory_consolidation_reuses_existing_section_for_same_raw_logs(
     tmp_path: Path,
 ) -> None:
-    """A repeat sleep run should not create a second section for the same raws."""
+    """A repeat organization run should not create a second section for the same raws."""
 
     store = FilesystemMemoryStore(tmp_path / "memory")
     day = datetime(2026, 5, 18).date()
@@ -591,7 +624,7 @@ async def test_memory_consolidation_reuses_existing_section_for_same_raw_logs(
         source_chat_ids=["raw-1", "raw-2"],
     )
     raw_logs = [
-        MemorySleepSourceItem(
+        LongTermMemorySourceItem(
             id="raw-1",
             user_id="u1",
             role="user",
@@ -599,7 +632,7 @@ async def test_memory_consolidation_reuses_existing_section_for_same_raw_logs(
             message_content={"payload": {"text": "Discussed project progress."}},
             created_at=datetime(2026, 5, 18, 10, 0, tzinfo=UTC),
         ),
-        MemorySleepSourceItem(
+        LongTermMemorySourceItem(
             id="raw-2",
             user_id="u1",
             role="assistant",
@@ -657,7 +690,7 @@ async def test_memory_consolidation_upserts_relationship_entity_with_clamped_gro
     store = FilesystemMemoryStore(tmp_path / "memory")
     _write_relationship_entity(store, user_id="u1", trust_score=8, warmth_score=4)
     raw_logs = [
-        MemorySleepSourceItem(
+        LongTermMemorySourceItem(
             id="raw-1",
             user_id="u1",
             role="user",

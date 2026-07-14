@@ -1,29 +1,13 @@
 """Memory use cases."""
 
-from app.usecases.memory.rebuild_memory_index import (
-    RebuildMemoryIndexCommand,
-    RebuildMemoryIndexHandler,
-    RebuildMemoryIndexResult,
-)
-from app.usecases.memory.repair_memory_index import (
-    RepairMemoryIndexCommand,
-    RepairMemoryIndexHandler,
-    RepairMemoryIndexResult,
-)
-from app.usecases.memory.run_memory_sleep import (
-    RunMemorySleepCommand,
-    RunMemorySleepHandler,
-    RunMemorySleepResult,
+from app.usecases.memory.organize_long_term_memory import (
+    OrganizeLongTermMemoryCommand,
+    OrganizeLongTermMemoryHandler,
+    OrganizeLongTermMemoryResult,
 )
 
 __all__ = [
-    "RebuildMemoryIndexCommand",
-    "RebuildMemoryIndexHandler",
-    "RebuildMemoryIndexResult",
-    "RepairMemoryIndexCommand",
-    "RepairMemoryIndexHandler",
-    "RepairMemoryIndexResult",
-    "RunMemorySleepCommand",
-    "RunMemorySleepHandler",
-    "RunMemorySleepResult",
+    "OrganizeLongTermMemoryCommand",
+    "OrganizeLongTermMemoryHandler",
+    "OrganizeLongTermMemoryResult",
 ]

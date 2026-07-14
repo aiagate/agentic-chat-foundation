@@ -8,6 +8,7 @@ from flow_res import Result
 from app.contracts.messages.chat_history import ChatHistoryItem
 from app.contracts.messages.generated_content import GeneratedContent
 from app.contracts.messages.tool_contracts import ToolDefinition
+from app.contracts.messages.tool_result_context import ToolResultContext
 
 
 @dataclass
@@ -15,6 +16,8 @@ class AIServiceError(Exception):
     """Represents an error from an AI service."""
 
     message: str
+    code: str = "ai_service_error"
+    retryable: bool = True
 
     def __str__(self) -> str:
         return self.message
@@ -30,6 +33,7 @@ class IAIService(ABC):
         history: list[ChatHistoryItem],
         system_instruction: str | None = None,
         tool_definitions: list[ToolDefinition] | None = None,
+        tool_results: list[ToolResultContext] | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
         """Generate structured content from prompt and history."""
         pass

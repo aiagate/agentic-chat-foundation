@@ -16,6 +16,7 @@ async def call_with_exponential_backoff[T](
     initial_delay_seconds: float = 1.0,
     max_delay_seconds: float = 8.0,
     backoff_multiplier: float = 2.0,
+    should_retry: Callable[[Exception], bool] | None = None,
 ) -> T:
     """Run an external call with exponential backoff between retries."""
 
@@ -25,7 +26,9 @@ async def call_with_exponential_backoff[T](
             return await operation()
         except Exception as error:
             last_error = error
-            if attempt >= max_attempts:
+            if attempt >= max_attempts or (
+                should_retry is not None and not should_retry(error)
+            ):
                 raise
 
             delay_seconds = min(

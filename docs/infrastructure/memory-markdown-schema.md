@@ -47,7 +47,7 @@ memory/
 - parser と renderer は [src/app/infrastructure/memory/markdown.py](../../src/app/infrastructure/memory/markdown.py)
 - path 解決と read/write は [src/app/infrastructure/memory/store.py](../../src/app/infrastructure/memory/store.py)
 - memory context の組み立ては [src/app/infrastructure/services/memory_service.py](../../src/app/infrastructure/services/memory_service.py)
-- raw Timeline の書き込みは [src/app/infrastructure/services/memory_write_service.py](../../src/app/infrastructure/services/memory_write_service.py)
+- profile、episode、entity/relationshipの書き込みはUC-04からmemory storeへ委譲する
 
 現行 parser は、`schema_version`、`memory_type`、required field、timestamp の妥当性を検証する。
 top-level unknown field の厳密な warning / error 分岐はまだ実装されていない。
@@ -59,7 +59,7 @@ top-level unknown field の厳密な warning / error 分岐はまだ実装され
 - `schema_version`: `1`
 - `memory_type`: `profile` / `timeline` / `entity`
 - `id`
-- `memory_id`: agent runtime が `memory.read` に渡す stable key
+- `memory_id`: 応答作成中のmemory詳細読み取りに使う stable key
 - `created_at`
 - `updated_at`
 - `user_id`: user-scoped document では必須
@@ -92,8 +92,8 @@ Profile は event log ではなく、安定属性のみを持つ。
 
 Timeline は episodic memory である。
 
-- raw Timeline は `memory.write_candidate` 由来の transitional path として現行実装に残っている
-- daily summary は sleep/consolidation の結果として書く
+- raw Timelineはcanonical raw logではなく、周期整理が生成するepisodeの補助表現である
+- daily summaryはUC-04のconsolidation結果として書く
 - raw / section summary ともに、write 時点で `memory_id` / `manifest_title` / `manifest_summary` を front matter に持たせる
 - `source_chat_ids` は各 section に実際に含めた SQL raw chat row の根拠
 - 複数 section を生成する場合、同じ raw chat ID を複数 section に割り当てない
@@ -136,6 +136,6 @@ Entity は normalized memory を表す。
 ## レビュー基準
 
 - path が現行コードと一致しているか
-- `domain/interfaces` を境界契約置き場にしていないか
+- 境界契約を`contracts/ports`、共有DTOを`contracts/messages`に置いているか
 - raw Timeline を canonical source と誤認していないか
 - current behavior と target behavior を区別しているか

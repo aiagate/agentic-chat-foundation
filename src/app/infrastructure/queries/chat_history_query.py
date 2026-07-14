@@ -38,17 +38,13 @@ class SQLAlchemyChatHistoryQuery(IChatHistoryQuery):
         """Get recent chat history for the given platform."""
         try:
             table = cast(Any, ChatORM).__table__
-            conditions: list[Any] = [table.c.type == chat_type.to_primitive()]
+            conditions: list[Any] = [
+                table.c.channel == chat_type.to_primitive().lower()
+            ]
             if user_id is not None:
-                conditions.append(table.c.user_id == user_id)
-            if chat_type is ChatType.DISCORD:
-                if guild_id is not None:
-                    conditions.append(table.c.discord_guild_id == guild_id)
-                if channel_id is not None:
-                    conditions.append(table.c.discord_channel_id == channel_id)
-            elif chat_type is ChatType.LINE:
-                if user_id is not None:
-                    conditions.append(table.c.line_user_id == user_id)
+                conditions.append(table.c.external_participant_id == user_id)
+            if channel_id is not None:
+                conditions.append(table.c.external_conversation_id == channel_id)
 
             statement = (
                 select(ChatORM)
@@ -109,8 +105,8 @@ def _to_history_item(item: ChatORM) -> ChatHistoryItem:
             content = text
     return ChatHistoryItem(
         id=item.id or "",
-        user_id=item.user_id,
-        chat_type=ChatType.from_primitive(item.type).unwrap(),
+        user_id=item.external_participant_id,
+        chat_type=ChatType.from_primitive(item.channel).unwrap(),
         role=_normalize_role(item.role),
         content=content,
         occurred_at=item.created_at,

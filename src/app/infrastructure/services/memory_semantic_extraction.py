@@ -12,10 +12,10 @@ from app.contracts.messages.agent_profile import AgentProfileBundle
 from app.contracts.messages.chat_history import ChatHistoryItem
 from app.contracts.messages.generated_content import GeneratedContent
 from app.contracts.messages.memory_semantic_extraction import (
+    LongTermMemoryChatLog,
     MemoryEntityPatch,
     MemorySemanticExtractionRequest,
     MemorySemanticExtractionResult,
-    MemorySleepChatLog,
     MemoryTimelineSectionPatch,
 )
 from app.contracts.messages.relationship_growth import MAX_DAILY_SCORE_INCREASE
@@ -32,7 +32,7 @@ _MAX_JSON_EXTRACTION_ATTEMPTS = 2
 
 @dataclass(slots=True)
 class MemorySemanticExtractionService(IMemorySemanticExtractionService):
-    """LLM-backed semantic extraction service for memory sleep."""
+    """LLM-backed semantic extraction service for long-term memory."""
 
     ai_service: IAIService
     agent_profile_service: IAgentProfileService
@@ -250,7 +250,7 @@ def _build_prompt(
 
 
 def _summarize_raw_logs(
-    raw_logs: list[MemorySleepChatLog],
+    raw_logs: list[LongTermMemoryChatLog],
     *,
     max_items: int = 5,
     max_content_length: int = 80,
@@ -268,7 +268,7 @@ def _summarize_raw_logs(
 
 
 def _summarize_raw_log(
-    raw_log: MemorySleepChatLog,
+    raw_log: LongTermMemoryChatLog,
     *,
     max_content_length: int = 80,
 ) -> str:

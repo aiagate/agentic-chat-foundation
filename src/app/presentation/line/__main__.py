@@ -22,12 +22,13 @@ from linebot.v3.messaging import (
 from linebot.v3.webhook import WebhookParser
 
 from app import container
-from app.contracts.messages.chat_events import LINE_CHAT_REPLY_READY_TOPIC
-from app.contracts.ports.event_bus import IEventBus
+from app.contracts.messages.conversation import IncomingMessage
 from app.infrastructure.database import init_db
-from app.infrastructure.mediator_observer import install as install_mediator_observer
-from app.presentation.line.line_reply_sender import send_line_reply
-from app.usecases.chat.save_line_chat import SaveLineChatCommand
+from app.presentation.conversation_flow import ConversationFlow
+from app.presentation.line.line_conversation_sender import LineConversationResultSender
+from app.usecases.conversation.accept_incoming_message import (
+    AcceptIncomingMessageCommand,
+)
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -80,18 +81,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     init_db(db_url, echo=True)
 
     injector = Injector([container.configure])
-    Mediator.initialize(injector)
-
-    event_bus = injector.get(IEventBus)
-    install_mediator_observer(event_bus)
-    await event_bus.subscribe(
-        LINE_CHAT_REPLY_READY_TOPIC,
-        lambda payload: send_line_reply(app.state.line_bot_api, payload),
-    )
-    await event_bus.start()
-    app.state.event_bus = event_bus
+    app.state.conversation_flow = injector.get(ConversationFlow)
     yield
-    await event_bus.stop()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -146,25 +137,28 @@ async def handle_callback(request: Request):
             continue
 
         read_token = message.get("markAsReadToken")
-        if not isinstance(read_token, str) or not read_token:
-            logger.info("Skipping LINE message without markAsReadToken")
-            continue
-
-        logger.info(
-            "Marking LINE message as read: event_index=%s source_type=%s",
-            index,
-            raw_source.get("type"),
-        )
-        try:
-            await line_bot_api.mark_messages_as_read_by_token(
-                MarkMessagesAsReadByTokenRequest(markAsReadToken=read_token)
+        if isinstance(read_token, str) and read_token:
+            logger.info(
+                "Marking LINE message as read: event_index=%s source_type=%s",
+                index,
+                raw_source.get("type"),
             )
-        except Exception:
-            logger.exception(
-                "Failed to mark LINE message as read: event_index=%s",
+            try:
+                await line_bot_api.mark_messages_as_read_by_token(
+                    MarkMessagesAsReadByTokenRequest(markAsReadToken=read_token)
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to mark LINE message as read; continuing message handling: "
+                    "event_index=%s",
+                    index,
+                )
+        else:
+            logger.info(
+                "LINE message has no markAsReadToken; continuing message handling: "
+                "event_index=%s",
                 index,
             )
-            continue
 
         content = message.get("text")
         if not isinstance(content, str) or not content.strip():
@@ -176,15 +170,39 @@ async def handle_callback(request: Request):
             logger.info("Skipping LINE message without userId")
             continue
 
-        save_result = await Mediator.send_async(
-            SaveLineChatCommand(
-                user_id=user_id,
-                content=content,
-            )
+        source_type = raw_source.get("type")
+        if source_type != "user":
+            logger.info("Skipping LINE non-1:1 source: source_type=%s", source_type)
+            continue
+        conversation_id = user_id
+        destination = user_id
+        incoming = IncomingMessage(
+            channel="line",
+            external_conversation_id=conversation_id,
+            external_participant_id=user_id,
+            text=content,
+            external_message_id=(
+                raw_event.get("webhookEventId")
+                if isinstance(raw_event.get("webhookEventId"), str)
+                else None
+            ),
+            metadata={
+                "source_type": str(source_type or "user"),
+                "destination": destination,
+            },
         )
-        if is_err(save_result):
+        flow = getattr(request.app.state, "conversation_flow", None)
+        if flow is None:
+            await Mediator.send_async(AcceptIncomingMessageCommand(incoming))
+            result = None
+        else:
+            result = await flow.process(
+                incoming,
+                LineConversationResultSender(app.state.line_bot_api, destination),
+            )
+        if result is not None and is_err(result):
             logger.error(
-                "Failed to save LINE chat message: event_index=%s source_type=%s",
+                "Failed to process LINE message: event_index=%s source_type=%s",
                 index,
                 raw_source.get("type"),
             )

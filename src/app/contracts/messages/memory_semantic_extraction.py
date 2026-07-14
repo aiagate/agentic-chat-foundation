@@ -9,8 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.contracts.messages.chat_type import ChatType
 
 
-class MemorySleepChatLog(BaseModel):
-    """Normalized raw chat log input for memory extraction."""
+class LongTermMemoryChatLog(BaseModel):
+    """Normalized raw chat log input for long-term memory extraction."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -121,7 +121,7 @@ class MemorySemanticExtractionRequest(BaseModel):
 
     user_id: str
     day: str
-    raw_logs: list[MemorySleepChatLog] = Field(default_factory=list)
+    raw_logs: list[LongTermMemoryChatLog] = Field(default_factory=list)
     existing_profile_summary: str | None = None
     existing_entity_labels: list[str] = Field(default_factory=list)
     existing_timeline_summaries: list[str] = Field(default_factory=list)

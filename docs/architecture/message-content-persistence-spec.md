@@ -25,14 +25,14 @@
 
 - `MessageContent.from_primitive()`
 - `render_message_content_text()`
-- `AgentTurnRunner` の saved chat から prompt を復元する経路
+- `CreateConversationResponse` の履歴から prompt を復元する経路
 - `chat_history_query` の履歴整形
 - `memory_consolidation` の raw chat log 文字列化
 
 ## 互換を持たない経路
 
 - 新規保存時の assistant 返信
-- `AgentRunCoordinator` が保存する generated reply
+- `DeliverConversationResult` が配信成功後に保存する assistant reply
 
 ## 削除条件
 

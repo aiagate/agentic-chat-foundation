@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, auto
 
 from flow_res import Result
-
-from app.domain.aggregates.chat import Chat
 
 
 class RepositoryErrorType(Enum):
@@ -29,57 +28,32 @@ class RepositoryError(Exception):
     message: str
 
 
-class IRepository[T](ABC):
-    """追加・更新・削除を扱うリポジトリ契約。
-
-    ID 参照を前提にしない集約で使う。
-
-    Type Parameters:
-        T: エンティティ型。
-    """
-
-    @abstractmethod
-    async def add(self, entity: T) -> Result[T, RepositoryError]:
-        """新しいエンティティを追加する。"""
-        pass
-
-    @abstractmethod
-    async def update(self, entity: T) -> Result[T, RepositoryError]:
-        """既存エンティティを更新する。"""
-        pass
-
-    @abstractmethod
-    async def delete(self, entity: T) -> Result[None, RepositoryError]:
-        """エンティティを削除する。"""
-        pass
-
-
-class IRepositoryWithId[T, K](IRepository[T], ABC):
-    """ID 参照を追加したリポジトリ契約。
-
-    Type Parameters:
-        T: エンティティ型。
-        K: 主キー型。
-    """
-
-    @abstractmethod
-    async def get_by_id(self, id: K) -> Result[T, RepositoryError]:
-        """ID でエンティティを取得する。"""
-        pass
-
-
 class IChatRecordRepository(ABC):
-    """チャット正本の書き込み契約。"""
+    """チャット正本の書き込み・重複確認契約。"""
 
     @abstractmethod
-    async def add(
+    async def add_message(
         self,
-        chat: Chat,
         *,
-        user_id: str,
+        channel: str,
+        external_conversation_id: str,
+        external_participant_id: str,
+        external_message_id: str | None,
         role: str,
-    ) -> Result[Chat, RepositoryError]:
-        """チャットレコードを追加する。"""
+        message_content: Mapping[str, object],
+        channel_metadata: Mapping[str, object],
+    ) -> Result[str, RepositoryError]:
+        """チャンネルに依存しないチャットレコードを追加する。"""
+        pass
+
+    @abstractmethod
+    async def find_by_external_message_id(
+        self,
+        *,
+        channel: str,
+        external_message_id: str,
+    ) -> Result[str | None, RepositoryError]:
+        """外部メッセージIDから既存の正本IDを取得する。"""
         pass
 
 

@@ -23,19 +23,6 @@ services:
       timeout: 5s
       retries: 20
 
-  redis:
-    image: redis:7-alpine
-    container_name: agentic-chat-foundation-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-
   migrate:
     build:
       context: .
@@ -46,8 +33,6 @@ services:
       - .env.docker
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     command: ["uv", "run", "--frozen", "--no-dev", "alembic", "upgrade", "head"]
 
@@ -61,15 +46,11 @@ services:
       - .env.docker
     volumes:
       - ./memory:/app/memory
-    environment:
-      EVENT_CONSUMER_GROUP: bot
     command: ["uv", "run", "--frozen", "--no-dev", "start-bot"]
     depends_on:
       migrate:
         condition: service_completed_successfully
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
 
   line:
@@ -84,15 +65,11 @@ services:
       - .env.docker
     volumes:
       - ./memory:/app/memory
-    environment:
-      EVENT_CONSUMER_GROUP: line
     command: ["uv", "run", "--frozen", "--no-dev", "start-line"]
     depends_on:
       migrate:
         condition: service_completed_successfully
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
 
   worker:
@@ -105,17 +82,12 @@ services:
       - .env.docker
     volumes:
       - ./memory:/app/memory
-    environment:
-      EVENT_CONSUMER_GROUP: worker
     command: ["uv", "run", "--frozen", "--no-dev", "start-worker"]
     depends_on:
       migrate:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
 
 volumes:
   postgres-data:
-  redis-data:

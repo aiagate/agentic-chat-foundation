@@ -3,44 +3,21 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
-from typing import Any, overload
+from typing import Any
 
 from flow_res import Result
 
-from app.contracts.ports.agent_run_repository import IAgentRunRepository
 from app.domain.queries.chat_history_query import IChatHistoryQuery
 from app.domain.queries.raw_chat_log_query import IRawChatLogQuery
 from app.domain.repositories.interfaces import (
     IChatRecordRepository,
     IMemoryConsolidatedChatSourceRepository,
-    IRepository,
-    IRepositoryWithId,
     RepositoryError,
 )
 
 
 class IUnitOfWork(ABC):
-    """Coordinate repositories and application events in one transaction."""
-
-    @overload
-    def GetRepository[T](self, entity_type: type[T]) -> IRepository[T]: ...
-
-    @overload
-    def GetRepository[T, K](
-        self,
-        entity_type: type[T],
-        key_type: type[K],
-    ) -> IRepositoryWithId[T, K]: ...
-
-    @abstractmethod
-    def GetRepository[T, K](
-        self,
-        entity_type: type[T],
-        key_type: type[K] | None = None,
-    ) -> IRepository[T] | IRepositoryWithId[T, K]:
-        """Return the repository bound to the active transaction."""
-        raise NotImplementedError
+    """Coordinate the small set of repositories in one transaction."""
 
     @abstractmethod
     def GetChatHistoryQuery(self) -> IChatHistoryQuery:
@@ -62,22 +39,6 @@ class IUnitOfWork(ABC):
         self,
     ) -> IMemoryConsolidatedChatSourceRepository:
         """Return the memory projection writer for the transaction."""
-        raise NotImplementedError
-
-    @abstractmethod
-    def GetAgentRunRepository(self) -> IAgentRunRepository:
-        """Return the durable agent workflow repository for the transaction."""
-        raise NotImplementedError
-
-    @abstractmethod
-    def enqueue_event(
-        self,
-        topic: str,
-        payload: Mapping[str, object],
-        *,
-        event_id: str | None = None,
-    ) -> str:
-        """Add an application event to the active database transaction."""
         raise NotImplementedError
 
     @abstractmethod

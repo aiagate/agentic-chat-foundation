@@ -7,7 +7,6 @@ from flow_res import Err, Ok, Result, is_err
 from app.contracts.messages.chat_type import ChatType
 from app.contracts.messages.llm_request_context import (
     LLMRequestContext,
-    build_agent_current_input,
     build_agent_system_prompt,
 )
 from app.contracts.ports.agent_inference_context import (
@@ -64,9 +63,7 @@ class AgentInferenceContextService(IAgentInferenceContextService):
                 tool_definitions=tool_definitions,
                 memory_context=memory_result.value.assembled_context,
                 recent_history=request.turn_context.recent_history,
-                current_input=build_agent_current_input(
-                    prompt=request.turn_context.prompt,
-                    tool_results=request.tool_results,
-                ),
+                prompt=request.turn_context.prompt,
+                tool_results=list(request.tool_results),
             )
         )

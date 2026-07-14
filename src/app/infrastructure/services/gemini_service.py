@@ -12,13 +12,20 @@ from pydantic import ValidationError
 
 from app.contracts.messages.chat_history import ChatHistoryItem
 from app.contracts.messages.generated_content import GeneratedContent
+from app.contracts.messages.llm_request_context import render_agent_prompt
 from app.contracts.messages.tool_contracts import (
+    ToolCall,
     ToolDefinition,
-    render_tool_definitions,
 )
+from app.contracts.messages.tool_result_context import ToolResultContext
 from app.contracts.ports.ai_service import (
     AIServiceError,
     IAIService,
+)
+from app.infrastructure.serializers.provider_tool_binding import (
+    ProviderToolBinding,
+    bind_provider_tools,
+    canonical_tool_name,
 )
 from app.infrastructure.services.ai_request_logging import (
     log_ai_request_context,
@@ -38,7 +45,8 @@ def _parse_generated_content(payload: Any) -> GeneratedContent:
         try:
             loaded_payload = json.loads(payload)
         except ValueError:
-            return GeneratedContent.model_validate_json(payload)
+            normalized = payload.strip()
+            return GeneratedContent(contents=[normalized] if normalized else [])
         return _parse_generated_content(loaded_payload)
     try:
         return GeneratedContent.model_validate(payload)
@@ -46,6 +54,47 @@ def _parse_generated_content(payload: Any) -> GeneratedContent:
         return GeneratedContent(
             contents=[json.dumps(payload, ensure_ascii=False)],
         )
+
+
+def _gemini_tools(bindings: list[ProviderToolBinding]) -> list[types.Tool]:
+    """Translate canonical tools into Gemini function declarations."""
+
+    if not bindings:
+        return []
+    declarations = [
+        types.FunctionDeclaration(
+            name=binding.alias,
+            description=(
+                f"Canonical tool: {binding.definition.name}. "
+                f"{binding.definition.description}"
+            ),
+            parameters_json_schema=binding.definition.arguments_schema,
+        )
+        for binding in bindings
+    ]
+    return [types.Tool(function_declarations=declarations)]
+
+
+def _gemini_function_calls(
+    response: Any,
+    bindings: list[ProviderToolBinding],
+) -> list[ToolCall]:
+    """Normalize Gemini native function calls into canonical tool calls."""
+
+    raw_calls = getattr(response, "function_calls", None)
+    if not isinstance(raw_calls, list):
+        return []
+    tool_calls: list[ToolCall] = []
+    for raw_call in raw_calls:
+        provider_name = getattr(raw_call, "name", None)
+        arguments = getattr(raw_call, "args", None)
+        if not isinstance(provider_name, str) or not isinstance(arguments, dict):
+            raise ValueError("Gemini returned an invalid function call")
+        tool_name = canonical_tool_name(provider_name, bindings)
+        if tool_name is None:
+            raise ValueError(f"Gemini returned an unknown tool: {provider_name}")
+        tool_calls.append(ToolCall(tool_name=tool_name, arguments=arguments))
+    return tool_calls
 
 
 class GeminiService(IAIService):
@@ -62,6 +111,7 @@ class GeminiService(IAIService):
         history: list[ChatHistoryItem],
         system_instruction: str | None = None,
         tool_definitions: list[ToolDefinition] | None = None,
+        tool_results: list[ToolResultContext] | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
         """Generate structured content with Gemini."""
         if self._client is None:
@@ -71,7 +121,12 @@ class GeminiService(IAIService):
         try:
             instructions = _compose_instructions(
                 system_instruction=system_instruction,
-                tool_definitions=tool_definitions,
+            )
+            bindings = bind_provider_tools(tool_definitions)
+            provider_tools = _gemini_tools(bindings)
+            current_prompt = render_agent_prompt(
+                prompt=prompt,
+                tool_results=tool_results or [],
             )
             messages, system_texts = _history_to_gemini_contents(history)
             if system_texts:
@@ -85,7 +140,10 @@ class GeminiService(IAIService):
                     "history": serialize_history(history),
                     "system_texts": system_texts,
                     "prompt": prompt,
-                    "contents": _serialize_gemini_contents(messages, prompt),
+                    "tool_results": [
+                        result.model_dump(mode="json") for result in tool_results or []
+                    ],
+                    "contents": _serialize_gemini_contents(messages, current_prompt),
                     "tool_definitions": serialize_tool_definitions(tool_definitions),
                 },
             )
@@ -94,8 +152,14 @@ class GeminiService(IAIService):
                     thinking_level=types.ThinkingLevel.LOW,
                 ),
                 max_output_tokens=2048,
-                response_mime_type="application/json",
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                    disable=True
+                ),
             )
+            if provider_tools:
+                config.tools = provider_tools
+            else:
+                config.response_mime_type = "application/json"
             config.system_instruction = instructions
 
             response = await call_with_exponential_backoff(
@@ -107,7 +171,7 @@ class GeminiService(IAIService):
                         + [
                             types.Content(
                                 role="user",
-                                parts=[types.Part(text=prompt)],
+                                parts=[types.Part(text=current_prompt)],
                             )
                         ],
                     ),
@@ -116,52 +180,64 @@ class GeminiService(IAIService):
                 service_name="Gemini",
                 logger=logger,
             )
+            native_tool_calls = _gemini_function_calls(response, bindings)
             if response.parsed is not None:
                 parsed_content = _parse_generated_content(response.parsed)
-                if parsed_content.contents or parsed_content.tool_calls:
+                combined_tool_calls = [*parsed_content.tool_calls, *native_tool_calls]
+                if parsed_content.contents or combined_tool_calls:
                     logger.info(
                         "Gemini response accepted: model=%s source=parsed contents=%s tool_calls=%s",
                         self._model,
                         len(parsed_content.contents),
-                        len(parsed_content.tool_calls),
+                        len(combined_tool_calls),
                     )
-                    return Ok(parsed_content)
+                    return Ok(
+                        GeneratedContent(
+                            contents=parsed_content.contents,
+                            tool_calls=combined_tool_calls,
+                        )
+                    )
                 logger.warning(
                     "Gemini structured output was empty; trying raw text fallback."
                 )
             if response.text is None:
+                if native_tool_calls:
+                    return Ok(GeneratedContent(tool_calls=native_tool_calls))
                 return Err(AIServiceError("No content generated."))
             try:
                 parsed_content = _parse_generated_content(response.text)
-                if parsed_content.contents or parsed_content.tool_calls:
+                combined_tool_calls = [*parsed_content.tool_calls, *native_tool_calls]
+                if parsed_content.contents or combined_tool_calls:
                     logger.info(
                         "Gemini response accepted: model=%s source=text contents=%s tool_calls=%s",
                         self._model,
                         len(parsed_content.contents),
-                        len(parsed_content.tool_calls),
+                        len(combined_tool_calls),
                     )
-                    return Ok(parsed_content)
+                    return Ok(
+                        GeneratedContent(
+                            contents=parsed_content.contents,
+                            tool_calls=combined_tool_calls,
+                        )
+                    )
                 return Err(AIServiceError("Gemini returned empty structured output."))
             except ValidationError as e:
                 return Err(AIServiceError(f"Invalid Gemini structured output: {e}"))
         except Exception as e:
-            return Err(AIServiceError(f"Gemini API Error: {e}"))
+            return Err(
+                AIServiceError(
+                    f"Gemini API Error: {e}",
+                    code="gemini_api_error",
+                    retryable=not isinstance(e, (ValueError, ValidationError)),
+                )
+            )
 
 
 def _compose_instructions(
     *,
     system_instruction: str | None,
-    tool_definitions: list[ToolDefinition] | None,
 ) -> str:
-    instructions = system_instruction or "You are a helpful assistant."
-    if tool_definitions:
-        instructions = "\n\n".join(
-            [
-                instructions,
-                render_tool_definitions(tool_definitions),
-            ]
-        )
-    return instructions
+    return system_instruction or "You are a helpful assistant."
 
 
 def _history_to_gemini_contents(

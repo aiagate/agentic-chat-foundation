@@ -164,11 +164,6 @@ def _build_result(
     rendered_text: str | None = None,
 ) -> ToolExecutionResult:
     return ToolExecutionResult(
-        event_id=context.tool_call.event_id,
-        correlation_id=context.tool_call.correlation_id,
-        causation_id=context.tool_call.causation_id,
-        agent_run_id=context.tool_call.agent_run_id,
-        agent_turn_id=context.tool_call.agent_turn_id,
         character_id=_context_character_id(context),
         tool_call_id=context.tool_call.tool_call_id,
         source_message_id=context.tool_call.source_message_id,
@@ -239,10 +234,6 @@ def _normalized_metadata(context: ToolExecutionContext) -> dict[str, str]:
         metadata["channel_id"] = context.channel_id
     if context.tool_call.tool_call_id is not None:
         metadata["tool_call_id"] = context.tool_call.tool_call_id
-    if context.tool_call.agent_run_id is not None:
-        metadata["agent_run_id"] = context.tool_call.agent_run_id
-    if context.tool_call.agent_turn_id is not None:
-        metadata["agent_turn_id"] = context.tool_call.agent_turn_id
     if context.tool_call.decision_summary is not None:
         metadata["decision_summary"] = context.tool_call.decision_summary
 

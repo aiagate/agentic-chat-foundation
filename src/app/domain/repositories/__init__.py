@@ -5,8 +5,6 @@ from app.domain.queries.raw_chat_log_query import IRawChatLogQuery
 from app.domain.repositories.interfaces import (
     IChatRecordRepository,
     IMemoryConsolidatedChatSourceRepository,
-    IRepository,
-    IRepositoryWithId,
     RepositoryError,
     RepositoryErrorType,
 )
@@ -14,8 +12,6 @@ from app.domain.repositories.interfaces import (
 __all__ = [
     "IChatRecordRepository",
     "IMemoryConsolidatedChatSourceRepository",
-    "IRepository",
-    "IRepositoryWithId",
     "IChatHistoryQuery",
     "IRawChatLogQuery",
     "RepositoryError",

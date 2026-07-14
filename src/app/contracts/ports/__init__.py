@@ -10,14 +10,19 @@ from app.contracts.ports.agent_turn_context_query import (
     IAgentTurnContextQuery,
 )
 from app.contracts.ports.ai_service import AIServiceError, IAIService
+from app.contracts.ports.conversation import (
+    ConversationContext,
+    ConversationHistory,
+    ConversationResultSender,
+    ResponseGenerator,
+)
 from app.contracts.ports.embedding_service import (
     EmbeddingServiceError,
     IEmbeddingService,
 )
-from app.contracts.ports.event_bus import EventHandler, IEventBus
 from app.contracts.ports.memory_consolidation import IMemoryConsolidationService
-from app.contracts.ports.memory_index_maintenance import (
-    IMemoryIndexMaintenance,
+from app.contracts.ports.memory_index_projection import (
+    IMemoryIndexProjection,
     MemoryIndexError,
 )
 from app.contracts.ports.memory_index_query import (
@@ -34,7 +39,6 @@ from app.contracts.ports.memory_write_service import (
     IMemoryWriteService,
     MemoryWriteServiceError,
 )
-from app.contracts.ports.outbox_store import IOutboxStore, OutboxStoreError
 from app.contracts.ports.tool_catalog import IToolCatalog
 from app.contracts.ports.tool_executor import (
     IToolExecutor,
@@ -53,26 +57,26 @@ __all__ = [
     "AgentInferenceContextRequest",
     "AgentTurnContextQueryError",
     "EmbeddingServiceError",
-    "EventHandler",
+    "ConversationContext",
+    "ConversationHistory",
+    "ConversationResultSender",
+    "ResponseGenerator",
     "IAIService",
     "IAgentInferenceContextService",
     "IAgentTurnContextQuery",
     "IEmbeddingService",
-    "IEventBus",
     "IMemoryConsolidationService",
     "IMemoryIndexQuery",
-    "IMemoryIndexMaintenance",
+    "IMemoryIndexProjection",
     "IMemoryService",
     "IMemorySemanticExtractionService",
     "IMemoryStore",
     "IMemoryWriteService",
-    "IOutboxStore",
     "MemoryIndexQueryError",
     "MemoryIndexError",
     "MemoryServiceError",
     "MemorySemanticExtractionError",
     "MemoryWriteServiceError",
-    "OutboxStoreError",
     "IToolCatalog",
     "IToolExecutor",
     "ToolExecutionContext",

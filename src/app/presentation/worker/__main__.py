@@ -9,15 +9,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from flow_med import Mediator
-from flow_res import is_err
 from injector import Injector
 
 from app import container
-from app.contracts.ports.event_bus import IEventBus
 from app.infrastructure.database import init_db
-from app.infrastructure.mediator_observer import install as install_mediator_observer
 from app.presentation.worker.registry import EventRegistry
-from app.usecases.memory.rebuild_memory_index import RebuildMemoryIndexCommand
 
 logging.basicConfig(
     level=logging.INFO,
@@ -133,30 +129,13 @@ async def main() -> None:
     # Mediatorの初期化
     Mediator.initialize(injector)
 
-    rebuild_result = await Mediator.send_async(RebuildMemoryIndexCommand())
-    if is_err(rebuild_result):
-        raise RuntimeError(str(rebuild_result.error))
-    logger.info(
-        "Memory index projection rebuilt: %s rows",
-        rebuild_result.value.indexed_count,
-    )
-
-    # 2. EventBusの取得
-    event_bus = injector.get(IEventBus)
-    install_mediator_observer(event_bus)
-
-    # 3. ハンドラーと定期タスクの登録
+    # 2. 定期タスクの登録
     import app.presentation.worker.handlers as _  # type: ignore[reportUnusedImport] # noqa: F401
     from app.presentation.worker.registry import registry
 
-    for topic, handler in registry.registered_handlers:
-        await event_bus.subscribe(topic, handler)
-        logger.info("Registered event handler for topic: %s", topic)
-
-    await event_bus.start()
     _start_scheduled_tasks(registry)
 
-    logger.info("Worker process initialized and listening for events.")
+    logger.info("Worker process initialized for periodic memory organization.")
 
     # 4. 停止信号の処理
 
@@ -182,7 +161,6 @@ async def main() -> None:
         pass
     finally:
         logger.info("Shutting down Worker process...")
-        await event_bus.stop()
 
 
 def start() -> None:

@@ -1,4 +1,4 @@
-"""メモリ睡眠用の生ログ取得クエリ契約。"""
+"""長期記憶整理用の生ログ取得クエリ契約。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True)
-class MemorySleepSourceItem:
+class LongTermMemorySourceItem:
     """意味圧縮の入力になる生ログ1件。"""
 
     id: str
@@ -27,14 +27,14 @@ class MemorySleepSourceItem:
     created_at: datetime | None
 
 
-RawChatLog = MemorySleepSourceItem
+RawChatLog = LongTermMemorySourceItem
 
 
 class IRawChatLogQuery(ABC):
-    """メモリ睡眠処理向けの生ログ取得契約。"""
+    """長期記憶整理向けの生ログ取得契約。"""
 
     @abstractmethod
-    async def list_memory_sleep_source_user_ids(
+    async def list_pending_memory_user_ids(
         self,
         since: datetime | None = None,
         until: datetime | None = None,
@@ -44,13 +44,13 @@ class IRawChatLogQuery(ABC):
         pass
 
     @abstractmethod
-    async def get_memory_sleep_source_items(
+    async def get_pending_memory_source_items(
         self,
         user_id: str,
         chat_type: ChatType,
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 1000,
-    ) -> Result[list[MemorySleepSourceItem], RepositoryError]:
+    ) -> Result[list[LongTermMemorySourceItem], RepositoryError]:
         """指定ユーザーと時間範囲の生ログを取得する。"""
         pass

@@ -54,9 +54,6 @@ def test_generated_content_uses_tool_calls_as_the_only_tool_request_shape() -> N
         contents=["searching"],
         tool_calls=[
             ToolCall(
-                event_id="event-2",
-                agent_run_id="run-2",
-                agent_turn_id="turn-2",
                 tool_call_id="tool-2",
                 character_id="reina",
                 tool_name="web_search",

@@ -196,9 +196,7 @@ async def test_gemini_service_normalizes_legacy_tool_call_arrays(
                 {
                     "id": "call_1",
                     "name": "line.send",
-                    "arguments": {
-                        "contents": ["こんにちは。"]
-                    },
+                    "arguments": {"contents": ["こんにちは。"]},
                 }
             ]
         ),
@@ -384,7 +382,9 @@ async def test_gemini_service_logs_full_request_context(
     assert any("system context" in record.message for record in caplog.records)
     assert any("base system instruction" in record.message for record in caplog.records)
     assert any('"name": "memory.read"' in record.message for record in caplog.records)
-    assert any("Gemini response accepted:" in record.message for record in caplog.records)
+    assert any(
+        "Gemini response accepted:" in record.message for record in caplog.records
+    )
 
 
 @pytest.mark.anyio
@@ -394,7 +394,7 @@ async def test_gpt_service_retries_with_exponential_backoff_then_succeeds(
     """Test that OpenAI retries transient failures with backoff."""
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    response = SimpleNamespace(output_text=json.dumps({"contents": ["retry ok"]}))
+    response = SimpleNamespace(output_text="retry ok", output=[])
     sleep_mock = AsyncMock(return_value=None)
     create_mock = AsyncMock(
         side_effect=[
@@ -437,6 +437,117 @@ async def test_gpt_service_retries_with_exponential_backoff_then_succeeds(
 
 
 @pytest.mark.anyio
+async def test_gpt_service_normalizes_native_function_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OpenAI provider aliases should normalize to canonical application tools."""
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    response = SimpleNamespace(
+        output_text="",
+        output=[
+            SimpleNamespace(
+                type="function_call",
+                name="tool_0",
+                arguments=json.dumps({"memory_id": "entity:example"}),
+            )
+        ],
+    )
+    create_mock = AsyncMock(return_value=response)
+
+    class FakeClient:
+        def __init__(self, api_key: str | None) -> None:
+            self.responses = SimpleNamespace(create=create_mock)
+
+    monkeypatch.setattr(
+        "app.infrastructure.services.gpt_service.AsyncOpenAI",
+        FakeClient,
+    )
+
+    service = GptService()
+    result = await service.generate_content(
+        prompt="read memory",
+        history=[],
+        tool_definitions=[
+            ToolDefinition(
+                name="memory.read",
+                description="Read memory.",
+                arguments_schema={
+                    "type": "object",
+                    "properties": {"memory_id": {"type": "string"}},
+                    "required": ["memory_id"],
+                    "additionalProperties": False,
+                },
+            )
+        ],
+    )
+
+    assert not is_err(result)
+    assert result.value.contents == []
+    assert result.value.tool_calls[0].tool_name == "memory.read"
+    assert result.value.tool_calls[0].arguments == {"memory_id": "entity:example"}
+    openai_call = create_mock.await_args
+    assert openai_call is not None
+    request = openai_call.kwargs
+    assert request["tools"][0]["name"] == "tool_0"
+    assert "text" not in request
+
+
+@pytest.mark.anyio
+async def test_gemini_service_normalizes_native_function_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gemini function calls should normalize to canonical application tools."""
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    response = SimpleNamespace(
+        parsed=None,
+        text=None,
+        function_calls=[
+            SimpleNamespace(name="tool_0", args={"memory_id": "entity:example"})
+        ],
+    )
+    generate_mock = AsyncMock(return_value=response)
+
+    class FakeClient:
+        def __init__(self, api_key: str | None) -> None:
+            self.aio = SimpleNamespace(
+                models=SimpleNamespace(generate_content=generate_mock)
+            )
+
+    monkeypatch.setattr(
+        "app.infrastructure.services.gemini_service.genai.Client",
+        FakeClient,
+    )
+
+    service = GeminiService()
+    result = await service.generate_content(
+        prompt="read memory",
+        history=[],
+        tool_definitions=[
+            ToolDefinition(
+                name="memory.read",
+                description="Read memory.",
+                arguments_schema={
+                    "type": "object",
+                    "properties": {"memory_id": {"type": "string"}},
+                    "required": ["memory_id"],
+                    "additionalProperties": False,
+                },
+            )
+        ],
+    )
+
+    assert not is_err(result)
+    assert result.value.tool_calls[0].tool_name == "memory.read"
+    gemini_call = generate_mock.await_args
+    assert gemini_call is not None
+    config = gemini_call.kwargs["config"]
+    assert config.automatic_function_calling.disable is True
+    assert config.response_mime_type is None
+
+
+@pytest.mark.anyio
 async def test_gpt_service_logs_full_request_context(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -444,7 +555,7 @@ async def test_gpt_service_logs_full_request_context(
     """Test that OpenAI logs the full request context before the API call."""
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    response = SimpleNamespace(output_text=json.dumps({"contents": ["retry ok"]}))
+    response = SimpleNamespace(output_text="retry ok", output=[])
     create_mock = AsyncMock(return_value=response)
 
     class FakeClient:

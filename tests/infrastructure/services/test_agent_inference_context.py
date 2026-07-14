@@ -119,7 +119,10 @@ async def test_context_service_uses_durable_tool_results(mocker: Any) -> None:
     )
 
     assert not is_err(result)
-    assert "durable search result" in result.value.current_input.content
+    assert result.value.prompt == "hello"
+    assert [item.rendered_text for item in result.value.tool_results] == [
+        "durable search result"
+    ]
 
 
 @pytest.mark.anyio

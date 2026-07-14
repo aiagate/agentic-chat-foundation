@@ -7,6 +7,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from app.usecases.conversation.accept_incoming_message import (
+    AcceptIncomingMessageCommand,
+)
+
 
 def _load_line_main(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("LINE_CHANNEL_SECRET", "secret")
@@ -65,16 +69,17 @@ async def test_handle_callback_marks_message_as_read(
     request_model = line_bot_api.mark_messages_as_read_by_token.await_args.args[0]
     assert request_model.mark_as_read_token == "read-token"
     line_main.Mediator.send_async.assert_awaited_once()
-    save_command = line_main.Mediator.send_async.await_args.args[0]
-    assert save_command.user_id == "u1"
-    assert save_command.content == "hello"
+    accept_command = line_main.Mediator.send_async.await_args.args[0]
+    assert isinstance(accept_command, AcceptIncomingMessageCommand)
+    assert accept_command.message.external_participant_id == "u1"
+    assert accept_command.message.text == "hello"
 
 
 @pytest.mark.anyio
-async def test_handle_callback_skips_message_without_read_token(
+async def test_handle_callback_saves_message_without_read_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test LINE webhook handling when the read token is missing."""
+    """A missing read token must not prevent durable message handling."""
     line_main = _load_line_main(monkeypatch)
 
     monkeypatch.setattr(
@@ -110,4 +115,8 @@ async def test_handle_callback_skips_message_without_read_token(
 
     assert result == "OK"
     line_bot_api.mark_messages_as_read_by_token.assert_not_awaited()
-    line_main.Mediator.send_async.assert_not_awaited()
+    line_main.Mediator.send_async.assert_awaited_once()
+    accept_command = line_main.Mediator.send_async.await_args.args[0]
+    assert isinstance(accept_command, AcceptIncomingMessageCommand)
+    assert accept_command.message.external_participant_id == "u1"
+    assert accept_command.message.text == "hello"

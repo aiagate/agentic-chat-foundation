@@ -13,8 +13,8 @@ from app.contracts.messages.agent_profile import AgentProfileBundle
 from app.contracts.messages.character_definition import CharacterDefinition
 from app.contracts.messages.memory_context import MemoryProfile
 from app.contracts.messages.memory_semantic_extraction import (
+    LongTermMemoryChatLog,
     MemorySemanticExtractionRequest,
-    MemorySleepChatLog,
 )
 from app.contracts.ports.agent_profile_service import IAgentProfileService
 from app.contracts.ports.ai_service import IAIService
@@ -63,7 +63,7 @@ async def test_live_ai_provider_extracts_memory_sections() -> None:
         user_id="u1",
         day="2026-05-18",
         raw_logs=[
-            MemorySleepChatLog(
+            LongTermMemoryChatLog(
                 id="raw-1",
                 user_id="u1",
                 role="user",
@@ -71,7 +71,7 @@ async def test_live_ai_provider_extracts_memory_sections() -> None:
                 content="明日の新幹線に乗る前に、お風呂と荷物の準備をどう進めるか相談したい。",
                 occurred_at=datetime(2026, 5, 18, 9, 0, tzinfo=UTC),
             ),
-            MemorySleepChatLog(
+            LongTermMemoryChatLog(
                 id="raw-2",
                 user_id="u1",
                 role="assistant",

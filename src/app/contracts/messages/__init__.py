@@ -8,38 +8,28 @@ from app.contracts.messages.agent_turn_context import AgentTurnContext
 from app.contracts.messages.agentic import (
     AgentEnvelope,
 )
-from app.contracts.messages.app_error import (
-    APP_ERROR_DETECTED_TOPIC,
-    AppErrorDetectedPayload,
-    build_app_error_detected_payload,
-)
 from app.contracts.messages.character_definition import (
     CharacterDefinition,
     RelationshipDefaults,
 )
-from app.contracts.messages.chat_events import (
-    DISCORD_CHAT_REPLY_READY_TOPIC,
-    DISCORD_CHAT_SAVED_TOPIC,
-    LINE_CHAT_REPLY_READY_TOPIC,
-    LINE_CHAT_SAVED_TOPIC,
-    build_discord_chat_saved_payload,
-    build_line_chat_saved_payload,
-    build_reply_ready_payload,
-    reply_topic_for,
-)
 from app.contracts.messages.chat_history import ChatHistoryItem, ChatHistoryWindow
 from app.contracts.messages.chat_type import ChatType
+from app.contracts.messages.conversation import (
+    AcceptedMessage,
+    ConversationResult,
+    DeliveryResult,
+    IncomingMessage,
+)
 from app.contracts.messages.conversation_context import (
     ConversationContext,
     render_conversation_context,
 )
 from app.contracts.messages.generated_content import GeneratedContent
 from app.contracts.messages.llm_request_context import (
-    LLMCurrentInput,
     LLMRequestContext,
-    build_agent_current_input,
     build_agent_system_prompt,
     compose_system_instruction,
+    render_agent_prompt,
 )
 from app.contracts.messages.memory_context import (
     MemoryContextPack,
@@ -56,16 +46,15 @@ from app.contracts.messages.memory_index import (
     MemorySearchResult,
 )
 from app.contracts.messages.memory_semantic_extraction import (
+    LongTermMemoryChatLog,
     MemoryEntityPatch,
     MemoryEvidence,
     MemoryProfilePatch,
     MemorySemanticExtractionRequest,
     MemorySemanticExtractionResult,
-    MemorySleepChatLog,
     MemoryTimelinePatch,
     MemoryTimelineSectionPatch,
 )
-from app.contracts.messages.outbox_message import OutboxMessage
 from app.contracts.messages.relationship_growth import (
     MAX_DAILY_SCORE_INCREASE,
     RELATIONSHIP_ENTITY_TYPE,
@@ -99,20 +88,17 @@ __all__ = [
     "ConversationContext",
     "CharacterDefinition",
     "ChatType",
+    "AcceptedMessage",
+    "ConversationResult",
+    "DeliveryResult",
+    "IncomingMessage",
     "RelationshipDefaults",
     "render_agent_persona_context",
     "render_conversation_context",
-    "APP_ERROR_DETECTED_TOPIC",
-    "AppErrorDetectedPayload",
     "ChatHistoryItem",
     "ChatHistoryWindow",
-    "DISCORD_CHAT_REPLY_READY_TOPIC",
-    "DISCORD_CHAT_SAVED_TOPIC",
     "GeneratedContent",
-    "LLMCurrentInput",
     "LLMRequestContext",
-    "LINE_CHAT_REPLY_READY_TOPIC",
-    "LINE_CHAT_SAVED_TOPIC",
     "MemoryContextPack",
     "MemoryIndexDocument",
     "MemoryIndexRecord",
@@ -128,10 +114,9 @@ __all__ = [
     "MemoryTimelineEntry",
     "MemorySemanticExtractionRequest",
     "MemorySemanticExtractionResult",
-    "MemorySleepChatLog",
+    "LongTermMemoryChatLog",
     "MemoryTimelineSectionPatch",
     "MemoryTimelinePatch",
-    "OutboxMessage",
     "MAX_DAILY_SCORE_INCREASE",
     "RELATIONSHIP_ENTITY_TYPE",
     "RELATIONSHIP_STAGES",
@@ -147,16 +132,11 @@ __all__ = [
     "ToolResultContext",
     "WebSearchResultItem",
     "WebSearchResult",
-    "build_app_error_detected_payload",
-    "build_agent_current_input",
     "build_agent_system_prompt",
-    "build_discord_chat_saved_payload",
-    "build_line_chat_saved_payload",
-    "build_reply_ready_payload",
     "clamp_relationship_score_increase",
     "compose_system_instruction",
+    "render_agent_prompt",
     "relationship_growth_stage_lines",
-    "reply_topic_for",
     "normalize_reply_contents",
     "resolve_relationship_stage",
 ]

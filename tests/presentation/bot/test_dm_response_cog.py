@@ -10,7 +10,9 @@ import pytest
 from flow_res import Ok
 
 from app.presentation.bot.cogs.dm_response_cog import DirectMessageResponseCog
-from app.usecases.chat.save_discord_chat import SaveDiscordChatCommand
+from app.usecases.conversation.accept_incoming_message import (
+    AcceptIncomingMessageCommand,
+)
 
 
 @dataclass
@@ -29,6 +31,7 @@ class _FakeMessage:
     author: _FakeAuthor
     channel: _FakeDMChannel
     content: str | None
+    id: int = 789
 
 
 class _FakeBot:
@@ -65,11 +68,11 @@ async def test_dm_response_cog_saves_text_message(
     await_args = send_async.await_args
     assert await_args is not None
     request = await_args.args[0]
-    assert isinstance(request, SaveDiscordChatCommand)
-    assert request.user_id == "123"
-    assert request.guild_id == "DM"
-    assert request.channel_id == "456"
-    assert request.content == "hello world"
+    assert isinstance(request, AcceptIncomingMessageCommand)
+    assert request.message.external_participant_id == "123"
+    assert request.message.external_conversation_id == "456"
+    assert request.message.metadata == {"guild_id": "DM", "channel_id": "456"}
+    assert request.message.text == "hello world"
 
 
 @pytest.mark.anyio

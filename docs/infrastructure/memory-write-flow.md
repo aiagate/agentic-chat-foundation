@@ -1,67 +1,38 @@
 # Memory Write Flow
 
-この文書は、現在の memory 更新経路をまとめる。
+長期記憶の書き込みはUC-04「会話から長期記憶を整理する」に集約する。
+会話応答中に長期記憶を直接更新したり、tool callの実行状態を永続化したりしない。
 
-## 現行の書き込み経路
-
-現行コードで実際に動いている memory 更新は、次の 2 系統である。
-
-1. `memory.sleep` による sleep / consolidation
-2. `memory.write_candidate` による raw Timeline 書き込み
-
-`AgentTurnRunner` は memory を読むだけで、長期記憶の書き込みはしない。
-
-## sleep / consolidation
+## 周期的な記憶整理
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Worker as Worker handler
-    participant UC as RunMemorySleepHandler
-    participant Raw as IRawChatLogQuery
-    participant Service as IMemoryConsolidationService
-    participant Store as IMemoryStore
-    participant Projection as memory_consolidated_chat_sources
+    participant Worker
+    participant UC as UC-04 OrganizeLongTermMemory
+    participant Raw as Raw chat query
+    participant AI as Semantic extraction
+    participant Store as Memory store
+    participant Projection as Search projection
 
-    Worker->>UC: RunMemorySleepCommand
-    UC->>Raw: pending raw chat logs
-    UC->>UC: group logs by user/day
-    UC->>Service: consolidate_chat_logs(store, user_id, day, raw_logs, reference_time)
-    Service->>Store: write/update markdown memory
-    UC->>Projection: mark source chat IDs + commit
+    Worker->>UC: 周期的な整理契機
+    UC->>Raw: 未整理のuser/assistant raw chat log
+    UC->>AI: profile/episode/entity 更新案
+    AI-->>UC: 検証済み更新案
+    UC->>Store: 3種類のmemoryをupsert
+    UC->>Projection: 変更された文書だけupsert/delete
 ```
 
-### 実装上の入口
+## 実装上の境界
 
-- worker 側の入口は [run_memory_sleep_scheduled_task](../../src/app/presentation/worker/handlers/memory_sleep_handlers.py)
-- そこから [RunMemorySleepHandler](../../src/app/usecases/memory/run_memory_sleep.py) を呼ぶ
-- `RunMemorySleepHandler` は [IRawChatLogQuery](../../src/app/domain/queries/raw_chat_log_query.py) を使って対象ログを選ぶ
-- 意味圧縮と memory 更新は [IMemoryConsolidationService](../../src/app/contracts/ports/memory_consolidation.py) に委譲する
-- 正常完了したchat IDは`memory_consolidated_chat_sources` projectionへ記録し、次回sleep対象と短期会話履歴から除外する
-- 短期会話セッションは最新のmemory処理境界以降を使用し、memory処理が止まった場合は24時間超の無操作を補助境界とする
-
-## raw Timeline 書き込み
-
-`memory.write_candidate` は、現行実装では [FilesystemMemoryWriteService.add_log](../../src/app/infrastructure/services/memory_write_service.py) を通じて
-raw Timeline Markdown を書く。
-
-これは long-term memory の目標状態とは一致していないが、現在の tool flow ではまだ残っている。
-
-### flow
-
-1. `GenericToolExecutor` が `memory.write_candidate` を受ける
-2. `IMemoryWriteService.add_log(...)` を呼ぶ
-3. `FilesystemMemoryWriteService` が `timeline_type: "raw"` の Markdown を保存する
+- Workerは定期的にUC-04を起動するだけで、memory storageを直接操作しない。
+- UC-04はraw chat logを読み、profile、episode、entity/relationshipを一度の整理処理で更新する。
+- assistantのraw chat logはUC-03のチャネル配信成功後に追加される。
+- projectionはmemory documentの変更分だけ更新する。全件rebuild、repair、backup、起動時再構築は行わない。
+- 整理に失敗した回はその場で失敗として確定し、自動retryや永続待機を行わない。
 
 ## 読み取りとの分離
 
-- read: `AgentTurnRunner` -> `IMemoryService.build_context(...)`
-- detailed read: `memory.read` -> `IMemoryService.read_memory(...)`
-- write: `memory.sleep` -> `RunMemorySleepHandler` -> `IMemoryConsolidationService.consolidate_chat_logs(...)`
-- candidate write: `GenericToolExecutor` -> `IMemoryWriteService.add_log(...)`
-
-## 補足
-
-- presentation 層は memory storage を直接操作しない
-- `FilesystemAgentProfileService` は agent profile を自動生成しない。存在確認と読み込みのみを行う
-- worker の scheduled task は `schedule_run_time` を持ち、実行時刻の揃え込みをサポートする
+- 応答作成: `CreateConversationResponse` -> `ConversationContext` -> memory read
+- 記憶更新: `OrganizeLongTermMemory` -> raw chat query -> `MemoryConsolidator`
+- presentation層はmemory storageを直接参照しない。

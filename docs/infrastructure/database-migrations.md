@@ -1,5 +1,9 @@
 # データベースマイグレーションガイド
 
+> このガイドには過去のUser/Team管理用migration例が含まれる。現在の対象はraw chat logと
+> 長期memory（profile、episode、entity/relationship）であり、実際に適用する列・テーブルは
+> Alembicの最新headと [一括改修計画](../architecture/application-rebuild-plan.md) を正本とする。
+
 最終更新日: 2025-12-05
 
 このドキュメントは、Alembicを使用したデータベースマイグレーションの作成・管理方法を説明します。
@@ -52,17 +56,15 @@
 
 まず、`src/app/infrastructure/orm_models/` 配下のORMモデルを変更します。
 
-例: `user_orm.py`
+例: `chat_orm.py`
 
 ```python
-class UserORM(SQLModel, table=True):
-    __tablename__ = "users"
+class ChatORM(SQLModel, table=True):
+    __tablename__ = "chats"
 
-    id: str | None = Field(default=None, primary_key=True, max_length=26)
-    display_name: str = Field(max_length=255, index=True)  # 変更
-    email: str = Field(max_length=255, unique=True, index=True)
-    created_at: datetime = Field(...)
-    updated_at: datetime = Field(...)
+    channel: str = Field(max_length=20, index=True)
+    external_conversation_id: str = Field(max_length=255, index=True)
+    external_participant_id: str = Field(max_length=255, index=True)
 ```
 
 ### 2. マイグレーションファイルの生成

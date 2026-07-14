@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncGenerator
-from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 
-from app.contracts.ports.event_bus import IEventBus
 from app.contracts.ports.unit_of_work import IUnitOfWork
 from app.infrastructure.orm_registry import init_orm_mappings
 from app.infrastructure.unit_of_work import SQLAlchemyUnitOfWork
@@ -97,12 +95,6 @@ def pytest_collection_modifyitems(
     for item in items:
         if item.get_closest_marker("scenario") is not None:
             item.add_marker(skip_marker)
-
-
-@pytest.fixture
-def event_bus() -> AsyncMock:
-    """Provide a mock event bus for tests."""
-    return AsyncMock(spec=IEventBus)
 
 
 @pytest.fixture

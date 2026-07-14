@@ -55,13 +55,10 @@
 
 ## このリポジトリでの具体例
 
-- `docs/architecture/message-content-persistence-spec.md` では、`payload.text` と `payload.texts` の残存互換と削除条件を別途定義している。
-- `src/app/contracts/messages/tool_use.py` は削除され、tool の共有 DTO は `src/app/contracts/messages/tool_contracts.py` に集約された。
-- `src/app/contracts/ports/search_context_store.py` は削除され、短期 tool result の契約は `src/app/contracts/ports/tool_result_store.py` に移った。
-- `src/app/infrastructure/services/search_context_store.py` は削除され、実装は `src/app/infrastructure/stores/tool_result_store.py` に移った。
-- `src/app/infrastructure/services/memory_store.py` は削除され、Markdown memory の低レベル I/O は `src/app/infrastructure/memory/store.py` に移った。
-- `src/app/infrastructure/services/memory_index.py` は削除され、検索は `src/app/infrastructure/queries/memory_index_query_service.py` と `src/app/infrastructure/repositories/memory_index_repository.py` に分離された。
-- `src/app/usecases/search/handle_search_request.py` は削除され、generic tool flow は `src/app/infrastructure/services/tool_call_router.py` と `src/app/usecases/agent/handle_tool_execution.py` に集約された。
+- Discord/LINE固有の旧会話ORMとTPH列は、単一の`ChatORM`と汎用メッセージ列へ移行した。
+- チャットイベント、Redis EventBus、outbox、AgentRunの契約と実装は、同期的なUC-01〜UC-03へ移行したうえで削除した。
+- メモリインデックスのbackup/rebuild/repair状態は削除し、変更対象だけを更新するprojectionへ集約した。
+- 組織管理のUseCase・ORM・入口は、現行の1対1会話スコープ外として削除した。
 
 ## 例外
 

@@ -6,18 +6,25 @@ import os
 from typing import Any, cast
 
 from flow_res import Err, Ok, Result
-from openai import AsyncOpenAI
-from openai.types.responses import ResponseInputItemParam
+from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
+from openai.types.responses import FunctionToolParam, ResponseInputItemParam
 
 from app.contracts.messages.chat_history import ChatHistoryItem
 from app.contracts.messages.generated_content import GeneratedContent
+from app.contracts.messages.llm_request_context import render_agent_prompt
 from app.contracts.messages.tool_contracts import (
+    ToolCall,
     ToolDefinition,
-    render_tool_definitions,
 )
+from app.contracts.messages.tool_result_context import ToolResultContext
 from app.contracts.ports.ai_service import (
     AIServiceError,
     IAIService,
+)
+from app.infrastructure.serializers.provider_tool_binding import (
+    ProviderToolBinding,
+    bind_provider_tools,
+    canonical_tool_name,
 )
 from app.infrastructure.services.ai_request_logging import (
     log_ai_request_context,
@@ -31,11 +38,70 @@ from app.infrastructure.services.retry_support import (
 logger = logging.getLogger(__name__)
 
 
-def _parse_generated_content(payload: Any) -> GeneratedContent:
-    """Parse structured OpenAI output into the DTO."""
-    if isinstance(payload, str):
-        return GeneratedContent.model_validate_json(payload)
-    return GeneratedContent.model_validate(payload)
+def _parse_openai_response(
+    response: Any,
+    bindings: list[ProviderToolBinding],
+) -> GeneratedContent:
+    """Normalize OpenAI text and native function calls into the app DTO."""
+
+    contents: list[str] = []
+    output_text = getattr(response, "output_text", None)
+    if isinstance(output_text, str) and output_text.strip():
+        contents.append(output_text.strip())
+
+    tool_calls: list[ToolCall] = []
+    raw_output = getattr(response, "output", [])
+    if isinstance(raw_output, list):
+        for item in raw_output:
+            if getattr(item, "type", None) != "function_call":
+                continue
+            provider_name = getattr(item, "name", None)
+            raw_arguments = getattr(item, "arguments", None)
+            if not isinstance(provider_name, str) or not isinstance(raw_arguments, str):
+                raise ValueError("OpenAI returned an invalid function call")
+            tool_name = canonical_tool_name(provider_name, bindings)
+            if tool_name is None:
+                raise ValueError(f"OpenAI returned an unknown tool: {provider_name}")
+            arguments = json.loads(raw_arguments)
+            if not isinstance(arguments, dict):
+                raise ValueError("OpenAI tool arguments must be a JSON object")
+            tool_calls.append(ToolCall(tool_name=tool_name, arguments=arguments))
+
+    if not contents and not tool_calls:
+        raise ValueError("OpenAI returned neither text nor tool calls")
+    return GeneratedContent(contents=contents, tool_calls=tool_calls)
+
+
+def _openai_tools(
+    bindings: list[ProviderToolBinding],
+) -> list[FunctionToolParam]:
+    """Translate canonical tool definitions into Responses API functions."""
+
+    return [
+        FunctionToolParam(
+            type="function",
+            name=binding.alias,
+            description=(
+                f"Canonical tool: {binding.definition.name}. "
+                f"{binding.definition.description}"
+            ),
+            parameters=binding.definition.arguments_schema,
+            strict=False,
+        )
+        for binding in bindings
+    ]
+
+
+def _is_retryable_openai_error(error: Exception) -> bool:
+    """Return whether an OpenAI failure can plausibly succeed on retry."""
+
+    if isinstance(error, (APIConnectionError, APITimeoutError)):
+        return True
+    if isinstance(error, APIStatusError):
+        return error.status_code in {408, 409, 429} or error.status_code >= 500
+    if isinstance(error, (ValueError, json.JSONDecodeError)):
+        return False
+    return True
 
 
 class GptService(IAIService):
@@ -44,6 +110,7 @@ class GptService(IAIService):
     def __init__(self) -> None:
         api_key = os.getenv("OPENAI_API_KEY")
         self._client = AsyncOpenAI(api_key=api_key) if api_key else None
+        self._model = os.getenv("OPENAI_MODEL", "gpt-5.6-terra")
 
     async def generate_content(
         self,
@@ -51,6 +118,7 @@ class GptService(IAIService):
         history: list[ChatHistoryItem],
         system_instruction: str | None = None,
         tool_definitions: list[ToolDefinition] | None = None,
+        tool_results: list[ToolResultContext] | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
         """Generate structured content with OpenAI."""
         if self._client is None:
@@ -60,60 +128,70 @@ class GptService(IAIService):
         try:
             instructions = _compose_instructions(
                 system_instruction=system_instruction,
-                tool_definitions=tool_definitions,
             )
+            bindings = bind_provider_tools(tool_definitions)
+            provider_tools = _openai_tools(bindings)
             input_messages = _history_to_openai_input(history)
-            input_messages.append({"role": "user", "content": prompt})
+            current_prompt = render_agent_prompt(
+                prompt=prompt,
+                tool_results=tool_results or [],
+            )
+            input_messages.append({"role": "user", "content": current_prompt})
             log_ai_request_context(
                 logger,
                 service_name="OpenAI",
                 payload={
-                    "model": "gpt-4o-mini",
+                    "model": self._model,
                     "instructions": instructions,
                     "history": serialize_history(history),
                     "prompt": prompt,
+                    "tool_results": [
+                        result.model_dump(mode="json") for result in tool_results or []
+                    ],
                     "input_messages": input_messages,
                     "tool_definitions": serialize_tool_definitions(tool_definitions),
                 },
             )
 
-            response = await call_with_exponential_backoff(
-                lambda: client.responses.create(
-                    model="gpt-4o-mini",
+            async def create_response() -> Any:
+                request_input = cast(list[ResponseInputItemParam], input_messages)
+                if provider_tools:
+                    return await client.responses.create(
+                        model=self._model,
+                        instructions=instructions,
+                        input=request_input,
+                        store=False,
+                        tools=provider_tools,
+                    )
+                return await client.responses.create(
+                    model=self._model,
                     instructions=instructions,
-                    input=cast(list[ResponseInputItemParam], input_messages),
+                    input=request_input,
                     store=False,
-                    text={
-                        "format": {
-                            "type": "json_schema",
-                            "name": "generated_content",
-                            "schema": GeneratedContent.model_json_schema(),
-                            "strict": True,
-                        }
-                    },
-                ),
+                )
+
+            response = await call_with_exponential_backoff(
+                create_response,
                 service_name="OpenAI",
                 logger=logger,
+                should_retry=_is_retryable_openai_error,
             )
-            return Ok(_parse_generated_content(json.loads(response.output_text)))
+            return Ok(_parse_openai_response(response, bindings))
         except Exception as e:
-            return Err(AIServiceError(f"OpenAI API Error: {e}"))
+            return Err(
+                AIServiceError(
+                    f"OpenAI API Error: {e}",
+                    code="openai_api_error",
+                    retryable=_is_retryable_openai_error(e),
+                )
+            )
 
 
 def _compose_instructions(
     *,
     system_instruction: str | None,
-    tool_definitions: list[ToolDefinition] | None,
 ) -> str:
-    instructions = system_instruction or "You are a helpful assistant."
-    if tool_definitions:
-        instructions = "\n\n".join(
-            [
-                instructions,
-                render_tool_definitions(tool_definitions),
-            ]
-        )
-    return instructions
+    return system_instruction or "You are a helpful assistant."
 
 
 def _history_to_openai_input(

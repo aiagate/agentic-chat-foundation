@@ -94,7 +94,7 @@
 - `memory_index_documents` は main DB の projection として migration 管理する。
 - `MemoryIndexRepository` は `src/app/infrastructure/repositories/memory_index_repository.py` に置き、スキーマ詳細を知らない永続化境界にする。
 - `SQLAlchemyMemoryIndexQuery` は main DB projection から候補を取得し、`MemoryIndexSearch` は渡された候補のランキングに集中する。
-- `MemorySleepQueryService` は `src/app/infrastructure/queries/memory_sleep_query_service.py` に置き、sleep 対象の選定に限定する。
+- `LongTermMemoryQueryService` は `src/app/infrastructure/queries/long_term_memory_query_service.py` に置き、整理対象の選定に限定する。
 - `InMemoryToolResultStore` と `InMemoryToolCallStore` は短期保存に限定する。
 - `FilesystemMemoryStore` は `src/app/infrastructure/memory/store.py` に置き、Markdown memory の低レベル I/O に限定する。
 

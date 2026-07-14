@@ -1,6 +1,6 @@
 # agentic-chat-foundation
 
-`agentic-chat-foundation` は、Discord / LINE / API / Worker を分離して動かす
+`agentic-chat-foundation` は、Discord / LINE のチャネル入口と、周期記憶整理Workerを持つ
 agentic chat application foundation です。
 
 単純な Discord Bot の雛形ではなく、チャット入力、AI 推論、tool 実行、返信送信、
@@ -12,11 +12,11 @@ agentic chat application foundation です。
 
 このリポジトリは、次のようなアプリケーションを作るためのテンプレートです。
 
-- Discord DM と LINE webhook の入力を受ける chatbot
-- LLM が tool call を提案し、アプリケーション側で検証して実行する agentic workflow
+- Discord DM と LINE webhook の入力を受ける1対1テキスト chatbot
+- LLM が提案した外部情報取得を応答作成中に同期実行する workflow
 - Web search や memory.read の結果を短期 context として再推論へ戻す応答生成
 - SQL raw chat log と Markdown long-term memory を分離した memory system
-- Discord / LINE / API / Worker を別プロセスとして運用できる構成
+- Discord / LINE のチャネル処理と、周期的な長期記憶整理を別プロセスとして運用できる構成
 
 ## 現在のプロセス構成
 
@@ -24,44 +24,36 @@ Docker Compose では、主に次の process / service を起動します。
 
 - `bot`: Discord Bot process
 - `line`: LINE webhook と LINE 返信 sender を持つ FastAPI process
-- `worker`: chat event、tool event、scheduled memory sleep を処理する Worker process
+- `worker`: scheduled long-term memory organization を処理する Worker process
 - `migrate`: Alembic migration runner
 - `postgres`: application database
-- `redis`: cross-process EventBus transport
 
-チャットの返信は 1 つの process で完結させず、保存イベント、agent turn、tool execution、
-reply-ready event を経由して送信側 process に戻します。
+チャットの返信は、受信したprocess内で受付→応答作成→配信を同期的に完了します。配信に成功した
+assistant応答だけをraw chat logへ保存し、次の応答とUC-04の記憶整理で利用します。
 
 ## 設計の中心
 
-このプロジェクトは Clean Architecture を基調にしつつ、`flow-med` の Mediator と
-`IEventBus` で process 間の処理をつなぎます。
+このプロジェクトは Clean Architecture を基調にし、チャネル入口から共通の会話UseCaseを
+同期的に呼び出します。
 
 主な境界は次の通りです。
 
-- `src/app/presentation`: Discord、LINE、API、Worker の入口と送信処理
+- `src/app/presentation`: Discord、LINE、Worker の入口と送信処理
 - `src/app/usecases`: Command / Query / Handler による application flow
-- `src/app/application`: UseCaseから再利用するdurable workflowの状態遷移
-- `src/app/domain`: aggregate、value object、repository / query 契約
-- `src/app/contracts/ports`: AI、EventBus、memory、tool などの application boundary
-- `src/app/contracts/messages`: DTO、event topic、payload builder
-- `src/app/infrastructure`: DB、ORM、EventBus、AI provider、memory、store、query 実装
+- `src/app/application`: UseCaseから再利用する応答作成の補助サービス
+- `src/app/domain`: 会話・記憶に固有のvalue object、repository / query 契約
+- `src/app/contracts/ports`: AI、memory、tool、会話送信などの application boundary
+- `src/app/contracts/messages`: 会話・AI・memory のDTO
+- `src/app/infrastructure`: DB、ORM、AI provider、memory、store、query 実装
 
 アプリケーション境界の契約は `contracts/ports` と `contracts/messages` に置きます。
-`domain/interfaces` は、domain 内で再利用する抽象だけを置く場所です。
+Domain固有の不変条件に閉じる型は `domain` に置き、複数レイヤーの境界契約は `contracts` に置きます。
 
-## Agentic workflow
+## 応答作成
 
-LLM は外部機能を直接実行しません。
-
-会話単位の`ConversationCoordinator`と要求単位の`AgentRun`をPostgreSQLへ保存し、
-`agent.run.wakeup`で状態機械を進めます。`IAIService`が返した`ToolCall`も
-`AgentToolCall`として永続化し、`agent.tool.requested`で実行します。複数toolの結果は
-すべて完了してからjoinされ、次turnへまとめて投入されます。
-
-Redisはイベント配送だけを担い、run、tool result、lease、retry状態の正本にはしません。
-外部I/O中はDB transactionを保持せず、前後の短いclaim/apply transactionをlease tokenで
-保護します。詳細は[Durable Agent Run](docs/architecture/durable-agent-run.md)を参照してください。
+受付済みメッセージについて、履歴・長期記憶・対話相手の設定を読み込み、必要なtool callを
+同期実行してから再推論します。応答作成、外部情報取得、配信のいずれかに失敗した場合は、
+自動retryや永続待機を行わず、その結果を利用者へ届けます。
 
 ## Memory
 
@@ -70,14 +62,13 @@ Memory は raw chat log と long-term memory を分けて扱います。
 - SQL database: raw chat log の source of truth
 - Markdown memory: Profile、Timeline summary、Entity などの抽象 memory
 - Main SQL database: migration 管理された再構築可能な search projection
-- PostgreSQL: AgentRun、tool call/result、lease、retryのdurable application state
+- PostgreSQL: raw chat logと長期記憶の検索projection
 
-現行の read path は skills-like な manifest 方式です。Agent turn では compact な
-`memory_id + 1行概要` を system context に注入し、詳細が必要になったときだけ
-`memory.read(memory_id)` で本文を取り出します。
+現行の read path は compact な memory manifest 方式です。応答作成では
+`memory_id + 1行概要` を system context に注入し、詳細が必要なときだけ本文を読み取ります。
 
-現行実装では、`memory.write_candidate` が raw Timeline Markdown を書く経路も残っています。
-これは移行中の動作であり、raw chat の正本は SQL です。
+記憶の更新は周期的なUC-04に集約し、raw chatの正本はSQLです。全件rebuild、repair、backupなどの
+耐障害性専用処理は業務フローに含めません。
 
 ## 技術要素
 
@@ -90,7 +81,6 @@ Memory は raw chat log と long-term memory を分けて扱います。
 - `injector`
 - SQLModel / SQLAlchemy / Alembic
 - PostgreSQL / SQLite
-- Redis
 - Google Gemini / OpenAI
 - Ollama web search adapter
 - Ruff / Pyright / pytest
@@ -99,9 +89,9 @@ Memory は raw chat log と long-term memory を分けて扱います。
 
 詳細は `docs/` 配下に分かれています。
 
+- [アクター別ハイレベルユースケースとユースケース記述](docs/product/application-use-cases.md)
+- [ユースケース準拠の一括改修計画](docs/architecture/application-rebuild-plan.md)
 - [アーキテクチャ概要](docs/architecture/architecture-overview.md)
-- [イベント呼び出しグラフ](docs/architecture/event-call-graph.md)
-- [Durable Agent Run](docs/architecture/durable-agent-run.md)
 - [Agentic Chat Orchestration](docs/architecture/patterns/agentic-chat-orchestration.md)
 - [LLM Web Search Orchestration](docs/architecture/patterns/llm-web-search-orchestration.md)
 - [Domain 実装ガイド](docs/domain/domain-implementation-guide.md)

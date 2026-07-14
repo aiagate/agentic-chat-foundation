@@ -1,88 +1,81 @@
 # Architecture Overview
 
+この文書は、現在の業務ユースケースに沿った実行構成を示す。設計の正本は
+[アクター別ユースケースと記述](../product/application-use-cases.md) と
+[一括改修計画](application-rebuild-plan.md) である。
+
 ## 依存方向
 
 ```text
 presentation -> usecases -> application -> contracts/domain
-                    infrastructure -> contracts/domain
+infrastructure -> contracts/domain
 ```
 
-- `presentation`: Discord、LINE、API、Workerのadapter。
+- `presentation`: Discord、LINE、定期実行の入口とチャネル送信アダプタ。
 - `usecases`: 外部要求ごとのCommand/Query入口。1 module 1 Handler。
-- `application`: 複数stepを持つAgent固有のオーケストレーション。
-- `contracts/ports`: AI、tool、UoWなどのapplication boundary。
-- `contracts/messages`: layerをまたぐDTO、topic、payload builder。
-- `domain`: chat等のaggregate、value object、domain固有の抽象。
-- `infrastructure`: PostgreSQL、Redis、AI、memory、external APIの実装。
+- `application`: 応答作成や記憶整理で共有する業務補助サービス。
+- `contracts/ports`: AI、tool、会話履歴、記憶、送信などの境界。
+- `contracts/messages`: layerをまたぐ会話・AI・memory DTO。
+- `domain`: 会話と記憶に固有の値、repository/query契約。
+- `infrastructure`: PostgreSQL、ORM、AI provider、memory、外部検索の実装。
 
-UseCase同士は呼び出さない。再利用する進行ロジックは`application`へ置き、
-infrastructureとpresentationへ依存させない。fitness testでこの方向を固定する。
+UseCase同士は呼び出さない。複数のUseCaseから再利用する処理は
+`application` または責務を表すinfrastructure serviceへ切り出す。
 
 ## プロセス
 
-- `bot`: Discord入力とreply-readyの送信。
-- `line`: LINE webhook入力とreply-readyの送信。
-- `worker`: Outbox配送後のイベント購読、Agent/tool実行、lease復旧、memory sleep。
+- `bot`: Discord DMの受信、UC-01〜UC-03、Discordへの返信。
+- `line`: LINE webhookの受信、UC-01〜UC-03、LINEへの返信。
+- `worker`: UC-04（周期的な長期記憶整理）の起動だけを担当する。
 - `migrate`: Alembic migration。
-- `postgres`: domainデータ、Outbox、durable application stateの正本。
-- `redis`: process間event transport。workflow stateの正本ではない。
+- `postgres`: raw chat logとmemory projectionの正本。
 
-## Chat acceptance
-
-`SaveDiscordChatHandler` / `SaveLineChatHandler`は、chat rowと`chat.*.saved` Outboxを
-同一transactionで保存する。Workerの`StartAgentRunHandler`はsource chat idで
-idempotentにrunを受理し、会話mailboxが空いている場合だけwakeupを作る。
-
-会話keyは次の要素から作る。
+会話処理は受信したプロセス内で、次の論理順に完了する。
 
 ```text
-character_id + chat_type + platform conversation id
+UC-01 AcceptIncomingMessage
+  -> UC-02 CreateConversationResponse
+  -> UC-03 DeliverConversationResult
 ```
 
-Discordのconversation idはguild/channel、LINE 1:1はuser idである。chat idはmessage id
-なのでserialization keyには使わない。
+Redis、transactional outbox、AgentRun、lease、retry、recoveryは会話フローの前提にしない。
 
-## Durable Agent workflow
+## 会話フロー
 
-`ConversationCoordinator`、`AgentRun`、`AgentToolCall`をPostgreSQLへ保存する。
-Run coordinatorはclaim transactionで短いleaseを取得し、transactionを閉じてから
-履歴/memory取得とLLM推論を行い、別のapply transactionで結果を反映する。
+1. チャネルアダプタが外部メッセージを`IncomingMessage`へ変換する。
+2. UC-01がuserメッセージをraw chat logへ保存し、`AcceptedMessage`を返す。
+3. UC-02が直近履歴、profile、episode、entity/relationshipを読み、必要な外部検索を同期実行して応答を作る。
+4. UC-03が元のチャネルへ送信し、送信成功後にassistantメッセージをraw chat logへ保存する。
+5. どの段階でも失敗は即時結果として確定し、自動再実行用の状態を生成しない。
 
-```text
-queued -> ready -> running -> waiting_for_tools -> ready
-                         \-> retry_wait -> ready
-                         \-> completed / failed / cancelled
-```
+外部メッセージIDは受信時に保存し、同じチャネル・IDの再受付を一件に制限する。
+チャネル固有の識別子は単一の会話メッセージモデルのメタデータとして保持し、
+Discord/LINE用の継承集約やTPH別名は持たない。
 
-LLMがcontentsを返した場合、assistant chat、reply-ready Outbox、run状態をatomicに保存する。
-ToolCallを返した場合、catalogで検証してdurable rowとtool requested Outboxを保存する。
-複数toolは全件terminalになった時だけ最後の完了transactionがrunをreadyへ戻す。
+## 長期記憶
 
-配送topicは`agent.run.wakeup`と`agent.tool.requested`だけであり、payloadはdurable idと
-sequence/attemptだけを持つ。古い配送は状態条件が一致せずno-opになる。
+raw chat logはuser・assistant双方のメッセージを保持する。UC-04は未整理のraw logを
+周期的に読み取り、次の3種類を更新する。
 
-30秒ごとのrecovery scanが期限切れleaseと期限到来retryを再配送可能にする。
-`app.error.detected`は観測専用で、workflowを再起動しない。
+- profile: 利用者・エージェントの安定した属性。
+- episode: 期間内の出来事を圧縮した要約。
+- entity/relationship: 正規化された事実と関係。
 
-詳細は[Durable Agent Run](durable-agent-run.md)と
-[Event Call Graph](event-call-graph.md)を参照する。
+memory documentの変更に対応するprojectionだけを更新し、全件rebuild、repair、backup、
+startup時の再構築は行わない。整理に失敗した回は失敗として終了する。
 
-## Tool boundary
+## ユースケースとポート
 
-`IToolCatalog`は定義と制限、`IToolExecutor`は外部実行を担当する。永続化とjoinは
-`AgentRunRepository`が担当し、executorはRedis storeやEventBusを知らない。
+| UseCase | 主なポート |
+| --- | --- |
+| `AcceptIncomingMessage` | `ConversationHistory` |
+| `CreateConversationResponse` | `ConversationContext`、`ResponseGenerator`、同期`ToolExecutor` |
+| `DeliverConversationResult` | `ConversationResultSender`、assistant履歴書き込み |
+| `OrganizeLongTermMemory` | raw chat query、`MemoryConsolidator`、memory store/projection |
 
-`web_search`、`memory.read`、`memory.write_candidate`は次turnへ結果を戻す。
-`line.send` / `discord.send`は単独callかつterminalである。
+チャネル、AI provider、DB、ファイル形式はUseCaseから直接参照しない。
 
-## Memory
+## 対象外
 
-raw chatの正本はPostgreSQL、長期memory documentはMarkdown、検索projectionはmain SQL DBに
-分離する。Markdown更新はtemp fileをflushして`os.replace`するatomic replacementを使う。
-Agent推論は`IMemoryService`のretrieval boundaryだけを参照し、pathやMarkdown形式を知らない。
-
-## Transactional Outbox
-
-外部processへ渡すイベントはbusiness writeと同じtransactionでOutboxへ追加する。
-dispatcherがclaim/publish/markを行うため、DB commit後・publish前のprocess停止から復旧できる。
-consumer側でもsequence、attempt、source idによるidempotencyを必須とする。
+組織・team・membership管理、管理API、グループ会話、メディア入力、自発的通知、
+配送保証、障害回復、永続的な処理待ちはこのアプリケーションの対象外である。

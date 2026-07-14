@@ -18,8 +18,8 @@ from app.infrastructure.services.gpt_service import GptService
 from app.infrastructure.services.memory_consolidation import (
     MemoryConsolidationService,
 )
-from app.infrastructure.services.memory_index_maintenance import (
-    MemoryIndexMaintenanceService,
+from app.infrastructure.services.memory_index_projection import (
+    MemoryIndexProjectionService,
 )
 from app.infrastructure.services.memory_semantic_extraction import (
     MemorySemanticExtractionService,
@@ -38,7 +38,7 @@ from app.infrastructure.services.tool_executor import GenericToolExecutor
 __all__ = [
     "AgentInferenceContextService",
     "MemoryConsolidationService",
-    "MemoryIndexMaintenanceService",
+    "MemoryIndexProjectionService",
     "DeterministicEmbeddingService",
     "GeminiEmbeddingService",
     "FilesystemAgentProfileService",

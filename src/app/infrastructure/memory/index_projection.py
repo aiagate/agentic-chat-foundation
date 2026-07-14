@@ -35,7 +35,7 @@ def collect_memory_index_documents(
     user_id: str | None,
     character_id: str,
 ) -> list[MemoryIndexDocument]:
-    """Collect source documents for one user or for a complete rebuild."""
+    """Collect source documents for one user projection refresh."""
 
     if user_id is not None:
         return read_index_documents(

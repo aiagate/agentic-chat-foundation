@@ -1,4 +1,4 @@
-"""Semantic sleep/consolidation for Markdown Timeline memories."""
+"""Semantic consolidation for Markdown long-term memories."""
 
 from __future__ import annotations
 
@@ -13,10 +13,10 @@ from flow_res import is_err
 from app.contracts.messages.agent_profile import AgentProfileBundle
 from app.contracts.messages.character_definition import RelationshipDefaults
 from app.contracts.messages.memory_semantic_extraction import (
+    LongTermMemoryChatLog,
     MemoryEntityPatch,
     MemorySectionSummary,
     MemorySemanticExtractionRequest,
-    MemorySleepChatLog,
     MemoryTimelinePatch,
     MemoryTimelineSectionPatch,
 )
@@ -26,7 +26,7 @@ from app.contracts.messages.relationship_growth import (
     resolve_relationship_stage,
 )
 from app.contracts.ports.agent_profile_service import IAgentProfileService
-from app.contracts.ports.memory_index_maintenance import IMemoryIndexMaintenance
+from app.contracts.ports.memory_index_projection import IMemoryIndexProjection
 from app.contracts.ports.memory_semantic_extraction import (
     IMemorySemanticExtractionService,
 )
@@ -67,10 +67,16 @@ def _missing_agent_profile_service() -> IAgentProfileService:
 
 @dataclass(frozen=True, slots=True)
 class MemoryConsolidationService:
-    """LLM-backed consolidation service for Markdown memory storage."""
+    """Write one conversation batch to the three long-term memory views.
+
+    Semantic extraction produces profile updates, episodic timeline sections,
+    and entity/relationship patches in one business operation.  This service
+    owns the Markdown projection details; scheduling, source selection, and
+    completion marking stay in the organizing use case.
+    """
 
     semantic_extraction_service: IMemorySemanticExtractionService | None = None
-    memory_index_maintenance: IMemoryIndexMaintenance | None = None
+    memory_index_projection: IMemoryIndexProjection | None = None
     agent_profile_service: IAgentProfileService | None = None
 
     async def consolidate_chat_logs(
@@ -99,12 +105,12 @@ class MemoryConsolidationService:
         )
         if (
             results or wrote_entity_patches
-        ) and self.memory_index_maintenance is not None:
-            rebuild_result = await self.memory_index_maintenance.rebuild_memory_index(
+        ) and self.memory_index_projection is not None:
+            refresh_result = await self.memory_index_projection.refresh_for_user(
                 user_id=user_id
             )
-            if is_err(rebuild_result):
-                raise RuntimeError(str(rebuild_result.error))
+            if is_err(refresh_result):
+                raise RuntimeError(str(refresh_result.error))
         return len(results)
 
 
@@ -194,7 +200,7 @@ def _build_extraction_request(
     reference_time: datetime,
 ) -> MemorySemanticExtractionRequest:
     filtered_raw_logs = [
-        MemorySleepChatLog(
+        LongTermMemoryChatLog(
             id=raw_log.id,
             user_id=raw_log.user_id,
             role=raw_log.role,

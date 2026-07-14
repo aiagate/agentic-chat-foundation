@@ -15,10 +15,6 @@ class GeneratedContent(AgentEnvelope):
 
     model_config = ConfigDict(extra="forbid")
 
-    agent_context: AgentEnvelope | None = Field(
-        default=None,
-        description="Legacy agentic envelope metadata bridge for the response.",
-    )
     contents: list[str] = Field(
         default_factory=list,
         description="Generated assistant response texts.",
@@ -80,11 +76,6 @@ def _normalize_legacy_tool_call(value: object) -> dict[str, object] | None:
         normalized["tool_call_id"] = tool_call_id.strip()
 
     for key in (
-        "event_id",
-        "correlation_id",
-        "causation_id",
-        "agent_run_id",
-        "agent_turn_id",
         "character_id",
         "source_message_id",
         "decision_summary",

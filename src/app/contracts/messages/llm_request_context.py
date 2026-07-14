@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.contracts.messages.chat_history import ChatHistoryItem
@@ -13,19 +11,6 @@ from app.contracts.messages.conversation_context import (
 )
 from app.contracts.messages.tool_contracts import ToolDefinition
 from app.contracts.messages.tool_result_context import ToolResultContext
-
-LLMInputKind = Literal["message", "tool_result"]
-
-
-class LLMCurrentInput(BaseModel):
-    """Current input supplied to the LLM for this turn."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    kind: LLMInputKind = Field(
-        description="Whether the input is a user message or tool result."
-    )
-    content: str = Field(description="Prompt text passed as the current turn input.")
 
 
 class LLMRequestContext(BaseModel):
@@ -49,8 +34,12 @@ class LLMRequestContext(BaseModel):
         default_factory=list,
         description="Recent conversation history retained for the turn.",
     )
-    current_input: LLMCurrentInput = Field(
-        description="Newest input item for the turn, either a message or tool result.",
+    prompt: str = Field(
+        description="Authoritative user request for the whole agent run.",
+    )
+    tool_results: list[ToolResultContext] = Field(
+        default_factory=list,
+        description="Additional observations collected while answering the request.",
     )
 
 
@@ -65,42 +54,39 @@ def build_agent_system_prompt(
             render_conversation_context(conversation_context),
             (
                 "Output contract:\n"
-                "- Return a single JSON object that matches GeneratedContent.\n"
-                "- Each item in contents is delivered as one message to the current "
-                "conversation.\n"
-                "- A response may contain both contents and tool_calls.\n"
-                "- Put tool requests in tool_calls.\n"
-                "- Divide contents into natural conversational message units."
+                "- Answer the user's current request directly when no tool is needed.\n"
+                "- Use only the tools exposed by the provider when external context "
+                "or an application action is needed.\n"
+                "- Do not describe a tool request as ordinary reply text.\n"
+                "- Use the current conversation's send-message tool when the reply "
+                "must be divided into multiple message units."
             ),
         ]
     )
 
 
-def build_agent_current_input(
+def render_agent_prompt(
     *,
     prompt: str,
     tool_results: list[ToolResultContext] | tuple[ToolResultContext, ...],
-) -> LLMCurrentInput:
-    """Build the current LLM input with all joined tool outcomes."""
-    if tool_results:
-        rendered_results = "\n\n".join(
-            f"[{result.tool_name}]\n{result.rendered_text}" for result in tool_results
-        )
-        return LLMCurrentInput(
-            kind="tool_result",
-            content="\n".join(
-                [
-                    "Tool result received.",
-                    (
-                        "Use the tool result and recent conversation to answer the "
-                        "user's latest request directly."
-                    ),
-                    "",
-                    rendered_results,
-                ]
-            ),
-        )
-    return LLMCurrentInput(kind="message", content=prompt)
+) -> str:
+    """Render one stable user request with observations collected for it."""
+    if not tool_results:
+        return prompt
+    rendered_results = "\n\n".join(
+        f"[{result.tool_name}]\n{result.rendered_text}" for result in tool_results
+    )
+    return "\n".join(
+        [
+            "User request:",
+            prompt,
+            "",
+            "Tool results collected for this request:",
+            rendered_results,
+            "",
+            "Answer the user request using these results.",
+        ]
+    )
 
 
 def compose_system_instruction(context: LLMRequestContext) -> str | None:
