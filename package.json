@@ -2,24 +2,30 @@
   "name": "codex-micro-guide",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build && rm -rf dist && mv out dist",
-    "start": "next start",
-    "lint": "next lint"
+    "dev": "vinext dev",
+    "build": "rm -rf dist && vinext build && mkdir -p dist/.openai && cp .openai/hosting.json dist/.openai/hosting.json",
+    "start": "vinext start",
+    "lint": "vinext lint"
   },
   "overrides": {
     "postcss": "8.5.10"
   },
   "dependencies": {
     "next": "15.5.20",
-    "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "react-server-dom-webpack": "19.2.7",
+    "vinext": "1.0.0-beta.2"
   },
   "devDependencies": {
+    "@vitejs/plugin-react": "6.0.1",
+    "@vitejs/plugin-rsc": "0.5.27",
     "@types/node": "22.15.21",
     "@types/react": "19.1.2",
     "@types/react-dom": "19.1.2",
-    "typescript": "5.8.3"
+    "typescript": "5.8.3",
+    "vite": "8.1.5"
   }
 }
