@@ -17,6 +17,9 @@ __pycache__
 .env
 .env.local
 memory/
+!memory/profiles/
+!memory/profiles/agent/
+!memory/profiles/agent/**
 memory_*/
 poc/
 tests/

@@ -4,9 +4,6 @@ from app.infrastructure.memory.embedding import (
     DeterministicEmbeddingService,
     GeminiEmbeddingService,
 )
-from app.infrastructure.queries.memory_index_query_service import (
-    MemoryIndexSearch,
-)
 from app.infrastructure.services.agent_inference_context import (
     AgentInferenceContextService,
 )
@@ -25,9 +22,6 @@ from app.infrastructure.services.memory_semantic_extraction import (
     MemorySemanticExtractionService,
 )
 from app.infrastructure.services.memory_service import FilesystemMemoryService
-from app.infrastructure.services.memory_write_service import (
-    FilesystemMemoryWriteService,
-)
 from app.infrastructure.services.mock_ai_service import MockAIService
 from app.infrastructure.services.ollama_web_search_service import (
     OllamaWebSearchService,
@@ -43,8 +37,6 @@ __all__ = [
     "GeminiEmbeddingService",
     "FilesystemAgentProfileService",
     "FilesystemMemoryService",
-    "FilesystemMemoryWriteService",
-    "MemoryIndexSearch",
     "GeminiService",
     "GptService",
     "MemorySemanticExtractionService",

@@ -6,6 +6,7 @@ import sys
 from collections.abc import Awaitable, Callable
 from datetime import datetime, time, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from flow_med import Mediator
@@ -85,9 +86,14 @@ def _start_scheduled_tasks(
 ) -> list[asyncio.Task[None]]:
     """Start all scheduled worker tasks registered by decorators."""
 
-    current_time = now or datetime.now().astimezone()
     tasks: list[asyncio.Task[None]] = []
     for interval, task_func in registry.scheduled_tasks:
+        schedule_timezone = getattr(task_func, "schedule_timezone", None)
+        if not isinstance(schedule_timezone, ZoneInfo):
+            schedule_timezone = datetime.now().astimezone().tzinfo
+        current_time = now or datetime.now(schedule_timezone)
+        if now is not None and schedule_timezone is not None:
+            current_time = now.astimezone(schedule_timezone)
         schedule_run_time = getattr(task_func, "schedule_run_time", None)
         if not isinstance(schedule_run_time, time):
             schedule_run_time = None
@@ -132,6 +138,12 @@ async def main() -> None:
     # 2. 定期タスクの登録
     import app.presentation.worker.handlers as _  # type: ignore[reportUnusedImport] # noqa: F401
     from app.presentation.worker.registry import registry
+
+    if os.getenv("WORKER_RUN_ONCE") == "1":
+        for _, task_func in registry.scheduled_tasks:
+            await task_func()
+        logger.info("Worker run-once completed.")
+        return
 
     _start_scheduled_tasks(registry)
 

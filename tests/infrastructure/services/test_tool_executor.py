@@ -5,6 +5,7 @@ from typing import Any, cast
 import pytest
 from flow_res import Err, Ok, is_err
 
+from app.contracts.messages.chat_type import ChatType
 from app.contracts.messages.memory_context import MemoryReadResult, MemorySource
 from app.contracts.messages.tool_contracts import ToolCall
 from app.contracts.messages.web_search_result import (
@@ -12,13 +13,11 @@ from app.contracts.messages.web_search_result import (
     WebSearchResultItem,
 )
 from app.contracts.ports.memory_service import IMemoryService
-from app.contracts.ports.memory_write_service import IMemoryWriteService
 from app.contracts.ports.tool_executor import ToolExecutionContext
 from app.contracts.ports.web_search_service import (
     IWebSearchService,
     WebSearchServiceError,
 )
-from app.domain.value_objects.chat_type import ChatType
 from app.infrastructure.services.tool_executor import GenericToolExecutor
 
 CHARACTER_ID = "shirasagi-reina"
@@ -28,13 +27,6 @@ CHARACTER_ID = "shirasagi-reina"
 def memory_service(mocker: Any) -> IMemoryService:
     service = mocker.Mock(spec=IMemoryService)
     service.read_memory = mocker.AsyncMock(return_value=Ok(_memory_read_result()))
-    return service
-
-
-@pytest.fixture
-def memory_write_service(mocker: Any) -> IMemoryWriteService:
-    service = mocker.Mock(spec=IMemoryWriteService)
-    service.add_log = mocker.AsyncMock(return_value=Ok(None))
     return service
 
 
@@ -55,12 +47,10 @@ def web_search_service(mocker: Any) -> IWebSearchService:
 
 def _executor(
     memory_service: IMemoryService,
-    memory_write_service: IMemoryWriteService,
     web_search_service: IWebSearchService,
 ) -> GenericToolExecutor:
     return GenericToolExecutor(
         memory_service=memory_service,
-        memory_write_service=memory_write_service,
         web_search_service=web_search_service,
     )
 
@@ -85,12 +75,11 @@ def _context(name: str, arguments: dict[str, object]) -> ToolExecutionContext:
 @pytest.mark.anyio
 async def test_web_search_returns_structured_and_rendered_result(
     memory_service: IMemoryService,
-    memory_write_service: IMemoryWriteService,
     web_search_service: IWebSearchService,
 ) -> None:
-    result = await _executor(
-        memory_service, memory_write_service, web_search_service
-    ).execute(_context("web_search", {"query": "search", "max_results": 3}))
+    result = await _executor(memory_service, web_search_service).execute(
+        _context("web_search", {"query": "search", "max_results": 3})
+    )
 
     assert not is_err(result)
     assert result.value.result["retrieved_context"] is True
@@ -101,12 +90,11 @@ async def test_web_search_returns_structured_and_rendered_result(
 @pytest.mark.anyio
 async def test_memory_read_returns_prompt_ready_text(
     memory_service: IMemoryService,
-    memory_write_service: IMemoryWriteService,
     web_search_service: IWebSearchService,
 ) -> None:
-    result = await _executor(
-        memory_service, memory_write_service, web_search_service
-    ).execute(_context("memory.read", {"memory_id": "entity:memory-lookup"}))
+    result = await _executor(memory_service, web_search_service).execute(
+        _context("memory.read", {"memory_id": "entity:memory-lookup"})
+    )
 
     assert not is_err(result)
     assert result.value.result["result_count"] == 1
@@ -114,38 +102,16 @@ async def test_memory_read_returns_prompt_ready_text(
 
 
 @pytest.mark.anyio
-async def test_memory_write_candidate_uses_write_boundary(
-    memory_service: IMemoryService,
-    memory_write_service: IMemoryWriteService,
-    web_search_service: IWebSearchService,
-) -> None:
-    result = await _executor(
-        memory_service, memory_write_service, web_search_service
-    ).execute(
-        _context(
-            "memory.write_candidate",
-            {"content": "remember this", "metadata": {"source": "tool"}},
-        )
-    )
-
-    assert not is_err(result)
-    call = cast(Any, memory_write_service.add_log).await_args
-    assert call.kwargs["content"] == "remember this"
-    assert call.kwargs["metadata"]["source"] == "tool"
-
-
-@pytest.mark.anyio
 async def test_search_failure_is_returned_to_durable_coordinator(
     memory_service: IMemoryService,
-    memory_write_service: IMemoryWriteService,
     web_search_service: IWebSearchService,
 ) -> None:
     cast(Any, web_search_service.search).return_value = Err(
         WebSearchServiceError("search failed")
     )
-    result = await _executor(
-        memory_service, memory_write_service, web_search_service
-    ).execute(_context("web_search", {"query": "latest"}))
+    result = await _executor(memory_service, web_search_service).execute(
+        _context("web_search", {"query": "latest"})
+    )
 
     assert is_err(result)
     assert result.error.message == "Failed to execute web search"
@@ -154,12 +120,11 @@ async def test_search_failure_is_returned_to_durable_coordinator(
 @pytest.mark.anyio
 async def test_terminal_send_tool_is_not_executed_by_adapter(
     memory_service: IMemoryService,
-    memory_write_service: IMemoryWriteService,
     web_search_service: IWebSearchService,
 ) -> None:
-    result = await _executor(
-        memory_service, memory_write_service, web_search_service
-    ).execute(_context("discord.send", {"contents": ["hello"]}))
+    result = await _executor(memory_service, web_search_service).execute(
+        _context("discord.send", {"contents": ["hello"]})
+    )
 
     assert is_err(result)
     assert result.error.message == "Unsupported tool: discord.send"

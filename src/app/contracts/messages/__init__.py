@@ -10,7 +10,6 @@ from app.contracts.messages.agentic import (
 )
 from app.contracts.messages.character_definition import (
     CharacterDefinition,
-    RelationshipDefaults,
 )
 from app.contracts.messages.chat_history import ChatHistoryItem, ChatHistoryWindow
 from app.contracts.messages.chat_type import ChatType
@@ -24,12 +23,35 @@ from app.contracts.messages.conversation_context import (
     ConversationContext,
     render_conversation_context,
 )
+from app.contracts.messages.discussion import (
+    AgentTurnDecision,
+    AgentTurnDisposition,
+    AgentTurnRecord,
+    AutonomousTopicActivity,
+    AutonomousTopicContext,
+    AutonomousTopicTurnRecord,
+    DiscussionActivity,
+    DiscussionAuthorKind,
+    DiscussionContextMessage,
+    DiscussionHistoryItem,
+    DiscussionParticipantContext,
+    DiscussionTurnContext,
+    IncomingDiscussionMessage,
+    ObservedDiscussionMessage,
+    PrivateReflection,
+    SentDiscussionMessage,
+    TopicStimulus,
+)
 from app.contracts.messages.generated_content import GeneratedContent
 from app.contracts.messages.llm_request_context import (
     LLMRequestContext,
     build_agent_system_prompt,
     compose_system_instruction,
     render_agent_prompt,
+)
+from app.contracts.messages.memory_consolidation import (
+    MemoryChangeSet,
+    MemoryConsolidationResult,
 )
 from app.contracts.messages.memory_context import (
     MemoryContextPack,
@@ -52,17 +74,14 @@ from app.contracts.messages.memory_semantic_extraction import (
     MemoryProfilePatch,
     MemorySemanticExtractionRequest,
     MemorySemanticExtractionResult,
-    MemoryTimelinePatch,
     MemoryTimelineSectionPatch,
 )
-from app.contracts.messages.relationship_growth import (
-    MAX_DAILY_SCORE_INCREASE,
-    RELATIONSHIP_ENTITY_TYPE,
-    RELATIONSHIP_STAGES,
-    RelationshipStage,
-    clamp_relationship_score_increase,
-    relationship_growth_stage_lines,
-    resolve_relationship_stage,
+from app.contracts.messages.relationship import (
+    CharacterRelationshipDefinition,
+    RelationshipBehaviorDirective,
+    RelationshipSignalCandidate,
+    RelationshipSignalKind,
+    RelationshipStateView,
 )
 from app.contracts.messages.tool_contracts import (
     SearchToolArguments,
@@ -83,6 +102,12 @@ from app.contracts.messages.web_search_result import (
 
 __all__ = [
     "AgentEnvelope",
+    "AgentTurnDecision",
+    "AgentTurnDisposition",
+    "AgentTurnRecord",
+    "AutonomousTopicActivity",
+    "AutonomousTopicContext",
+    "AutonomousTopicTurnRecord",
     "AgentTurnContext",
     "AgentProfileBundle",
     "ConversationContext",
@@ -91,8 +116,21 @@ __all__ = [
     "AcceptedMessage",
     "ConversationResult",
     "DeliveryResult",
+    "DiscussionActivity",
+    "DiscussionAuthorKind",
+    "DiscussionContextMessage",
+    "DiscussionHistoryItem",
+    "DiscussionParticipantContext",
+    "DiscussionTurnContext",
     "IncomingMessage",
-    "RelationshipDefaults",
+    "IncomingDiscussionMessage",
+    "ObservedDiscussionMessage",
+    "PrivateReflection",
+    "CharacterRelationshipDefinition",
+    "RelationshipBehaviorDirective",
+    "RelationshipSignalCandidate",
+    "RelationshipSignalKind",
+    "RelationshipStateView",
     "render_agent_persona_context",
     "render_conversation_context",
     "ChatHistoryItem",
@@ -100,6 +138,8 @@ __all__ = [
     "GeneratedContent",
     "LLMRequestContext",
     "MemoryContextPack",
+    "MemoryChangeSet",
+    "MemoryConsolidationResult",
     "MemoryIndexDocument",
     "MemoryIndexRecord",
     "MemorySearchFilters",
@@ -116,11 +156,6 @@ __all__ = [
     "MemorySemanticExtractionResult",
     "LongTermMemoryChatLog",
     "MemoryTimelineSectionPatch",
-    "MemoryTimelinePatch",
-    "MAX_DAILY_SCORE_INCREASE",
-    "RELATIONSHIP_ENTITY_TYPE",
-    "RELATIONSHIP_STAGES",
-    "RelationshipStage",
     "ToolArguments",
     "ToolCall",
     "ToolContinuation",
@@ -128,15 +163,14 @@ __all__ = [
     "ToolExecutionResult",
     "ToolExecutionStatus",
     "SearchToolArguments",
+    "SentDiscussionMessage",
+    "TopicStimulus",
     "ToolSideEffect",
     "ToolResultContext",
     "WebSearchResultItem",
     "WebSearchResult",
     "build_agent_system_prompt",
-    "clamp_relationship_score_increase",
     "compose_system_instruction",
     "render_agent_prompt",
-    "relationship_growth_stage_lines",
     "normalize_reply_contents",
-    "resolve_relationship_stage",
 ]

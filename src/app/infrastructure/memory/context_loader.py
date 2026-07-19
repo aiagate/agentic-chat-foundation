@@ -25,21 +25,16 @@ from app.infrastructure.memory.store import FilesystemMemoryStore, StoredMemoryD
 def read_index_documents(
     store: FilesystemMemoryStore,
     user_id: str,
-    *,
-    character_id: str,
-    relationship_entity_id: str,
 ) -> list[MemoryIndexDocument]:
     """Load the searchable documents needed for memory manifest and detail reads."""
 
     stored_documents: list[StoredMemoryDocument] = []
-    stored_documents.extend(_agent_profile_documents(store, character_id=character_id))
     stored_documents.extend(_user_profile_documents(store, user_id=user_id))
     stored_documents.extend(_timeline_documents(store, user_id=user_id))
     stored_documents.extend(
         _entity_documents(
             store,
             user_id=user_id,
-            relationship_entity_id=relationship_entity_id,
         )
     )
     return [
@@ -82,8 +77,7 @@ def entity_from_document(document: MemoryMarkdownDocument) -> MemoryEntity:
     """Convert an entity document into the app DTO."""
 
     front_matter = document.front_matter
-    raw_properties = front_matter.get("properties", front_matter.get("attributes", {}))
-    raw_attributes = front_matter.get("attributes", raw_properties)
+    raw_properties = front_matter.get("properties", {})
     return MemoryEntity(
         id=front_matter_string(front_matter["id"]),
         user_id=front_matter_string(front_matter["user_id"]),
@@ -91,28 +85,12 @@ def entity_from_document(document: MemoryMarkdownDocument) -> MemoryEntity:
         entity_type=front_matter_string(front_matter["entity_type"]),
         status=front_matter_string(front_matter.get("status", "active")),
         aliases=front_matter_string_list(front_matter.get("aliases", [])),
-        attributes=front_matter_string_dict(raw_attributes),
         properties=front_matter_property_dict(raw_properties),
         missing_attributes=front_matter_string_list(
             front_matter.get("missing_attributes", [])
         ),
         confidence=front_matter_float(front_matter.get("confidence"), default=1.0),
     )
-
-
-def entity_is_selected_relationship(
-    document: MemoryMarkdownDocument,
-    *,
-    relationship_entity_id: str,
-) -> bool:
-    """Keep non-relationship entities and only the chosen relationship entity."""
-
-    front_matter = document.front_matter
-    if front_matter.get("entity_type") != "relationship":
-        return True
-    if not relationship_entity_id:
-        return True
-    return front_matter_string(front_matter.get("id")) == relationship_entity_id
 
 
 def front_matter_property_dict(value: object) -> dict[str, MemoryPropertyValue]:
@@ -139,21 +117,6 @@ def front_matter_property_value(value: object) -> MemoryPropertyValue:
     return front_matter_string(value)
 
 
-def agent_profile_paths(
-    store: FilesystemMemoryStore,
-    *,
-    character_id: str,
-) -> list[Path]:
-    """Return the existing agent profile bundle parts in stable order."""
-
-    resolved_paths: list[Path] = []
-    for part in ("AGENTS", "SOUL", "PERSONAL", "MEMORY"):
-        path = store.agent_profile_part_path(part, character_id=character_id)
-        if path.exists():
-            resolved_paths.append(path)
-    return resolved_paths
-
-
 def index_document_from_stored(
     stored: StoredMemoryDocument,
     *,
@@ -175,23 +138,6 @@ def relative_reference(path: Path, root: Path) -> str:
         return path.relative_to(root).as_posix()
     except ValueError:
         return path.as_posix()
-
-
-def _agent_profile_documents(
-    store: FilesystemMemoryStore,
-    *,
-    character_id: str,
-) -> list[StoredMemoryDocument]:
-    return [
-        StoredMemoryDocument(
-            path=path,
-            document=store.read_document(
-                path,
-                expected_memory_type="profile",
-            ),
-        )
-        for path in agent_profile_paths(store, character_id=character_id)
-    ]
 
 
 def _user_profile_documents(
@@ -236,7 +182,6 @@ def _entity_documents(
     store: FilesystemMemoryStore,
     *,
     user_id: str,
-    relationship_entity_id: str,
 ) -> list[StoredMemoryDocument]:
     documents: list[StoredMemoryDocument] = []
     for path in store.iter_entity_paths(user_id):
@@ -245,10 +190,7 @@ def _entity_documents(
             expected_memory_type="entity",
             expected_user_id=user_id,
         )
-        if not entity_is_selected_relationship(
-            document,
-            relationship_entity_id=relationship_entity_id,
-        ):
+        if document.front_matter.get("entity_type") == "relationship":
             continue
         documents.append(StoredMemoryDocument(path=path, document=document))
     return documents

@@ -4,21 +4,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import yaml
+from pydantic import ValidationError
+
 from app.contracts.messages.agent_profile import AgentProfileBundle
-from app.contracts.messages.character_definition import (
-    CharacterDefinition,
-    RelationshipDefaults,
-)
-from app.contracts.messages.memory_context import MemoryProfile
+from app.contracts.messages.character_definition import CharacterDefinition
+from app.contracts.messages.relationship import CharacterRelationshipDefinition
 from app.contracts.ports.agent_profile_service import (
     AgentProfileServiceError,
     IAgentProfileService,
 )
 from app.contracts.ports.memory_store import IMemoryStore
-from app.infrastructure.memory.markdown import (
-    MemoryMarkdownDocument,
-    front_matter_string_or_none,
+from app.infrastructure.memory.agent_profile_markdown import (
+    AgentProfileMarkdownDocument,
+    AgentProfileMarkdownError,
+    parse_agent_profile_markdown,
 )
+from app.infrastructure.memory.store import MemoryStoreError
 
 
 @dataclass(slots=True)
@@ -40,11 +42,8 @@ class FilesystemAgentProfileService(IAgentProfileService):
         soul_document = self._read_part("SOUL")
         personal_document = self._read_part("PERSONAL")
         memory_document = self._read_part("MEMORY")
-        profile = _load_profile()
-        character = _load_character_definition(
-            character_id=self.character_id,
-            personal_document=personal_document,
-        )
+        character = _load_character_definition(character_id=self.character_id)
+        relationship = self._read_relationship_definition()
         persona_context = "\n\n".join(
             part
             for part in (
@@ -55,106 +54,51 @@ class FilesystemAgentProfileService(IAgentProfileService):
             )
             if part
         )
-        relationship_defaults = RelationshipDefaults(
-            trust_score=_front_matter_float(
-                personal_document.front_matter,
-                "relationship_initial_trust_score",
-                default=character.relationship_defaults.trust_score,
-            ),
-            warmth_score=_front_matter_float(
-                personal_document.front_matter,
-                "relationship_initial_warmth_score",
-                default=character.relationship_defaults.warmth_score,
-            ),
-            stage=_front_matter_int(
-                personal_document.front_matter,
-                "relationship_initial_stage",
-                default=character.relationship_defaults.stage,
-            ),
-        )
         return AgentProfileBundle(
-            profile=profile,
             character=character,
             persona_context=persona_context,
-            relationship_entity_id=character.relationship_entity_id,
-            relationship_entity_label=character.relationship_entity_label,
-            relationship_entity_type=character.relationship_entity_type,
-            relationship_tag=character.relationship_tag,
-            relationship_defaults=relationship_defaults,
+            relationship=relationship,
         )
 
-    def _read_part(self, part: str) -> MemoryMarkdownDocument:
+    def _read_relationship_definition(self) -> CharacterRelationshipDefinition:
+        path = self.store.agent_relationship_definition_path(self.character_id)
+        try:
+            payload = yaml.safe_load(
+                self.store.read_agent_relationship_definition(self.character_id)
+            )
+            return CharacterRelationshipDefinition.model_validate(payload)
+        except (MemoryStoreError, yaml.YAMLError, ValidationError) as exc:
+            raise AgentProfileServiceError(f"{path}: {exc}") from exc
+
+    def _read_part(self, part: str) -> AgentProfileMarkdownDocument:
         path = self.store.agent_profile_part_path(
             part,
             character_id=self.character_id,
         )
         if path.exists():
-            return self.store.read_document(path, expected_memory_type="profile")
+            try:
+                document = parse_agent_profile_markdown(
+                    self.store.read_agent_profile_part(
+                        part,
+                        character_id=self.character_id,
+                    ),
+                    location=str(path),
+                )
+                if part != "PERSONAL" and document.metadata:
+                    raise AgentProfileServiceError(
+                        f"agent profile bundle part must not have metadata: {path}"
+                    )
+                return document
+            except (MemoryStoreError, AgentProfileMarkdownError) as exc:
+                raise AgentProfileServiceError(str(exc)) from exc
 
         raise AgentProfileServiceError(
             f"agent profile bundle missing required file: {path}"
         )
 
 
-def _load_profile() -> MemoryProfile:
-    return MemoryProfile(user_id="ai")
-
-
 def _load_character_definition(
     *,
     character_id: str,
-    personal_document: MemoryMarkdownDocument,
 ) -> CharacterDefinition:
-    relationship_entity_id = front_matter_string_or_none(
-        personal_document.front_matter.get("relationship_entity_id")
-    )
-    relationship_entity_label = front_matter_string_or_none(
-        personal_document.front_matter.get("relationship_entity_label")
-    )
-    relationship_entity_type = front_matter_string_or_none(
-        personal_document.front_matter.get("relationship_entity_type")
-    )
-    relationship_tag = front_matter_string_or_none(
-        personal_document.front_matter.get("relationship_tag")
-    )
-    if not relationship_entity_id or not relationship_entity_label:
-        raise AgentProfileServiceError(
-            "agent profile bundle is missing required relationship metadata"
-        )
-    return CharacterDefinition(
-        character_id=character_id,
-        relationship_entity_id=relationship_entity_id,
-        relationship_entity_label=relationship_entity_label,
-        relationship_entity_type=relationship_entity_type or "relationship",
-        relationship_tag=relationship_tag or "agent-growth",
-    )
-
-
-def _front_matter_float(
-    values: dict[str, object],
-    key: str,
-    *,
-    default: float,
-) -> float:
-    raw = values.get(key)
-    if not isinstance(raw, str | int | float):
-        return default
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return default
-
-
-def _front_matter_int(
-    values: dict[str, object],
-    key: str,
-    *,
-    default: int,
-) -> int:
-    raw = values.get(key)
-    if not isinstance(raw, str | int | float):
-        return default
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return default
+    return CharacterDefinition(character_id=character_id)

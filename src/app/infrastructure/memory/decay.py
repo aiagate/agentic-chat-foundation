@@ -50,26 +50,6 @@ def calculate_decay_score(
     return round(min(max(score, 0.0), 1.0), 6)
 
 
-def should_compress_after_consolidation(
-    front_matter: Mapping[str, object],
-    *,
-    importance_threshold: float = 0.3,
-) -> bool:
-    """Return whether a summarized raw Timeline can be safely compressed."""
-
-    if front_matter.get("pinned") is True:
-        return False
-    if str(front_matter.get("retention_state") or "active") != "active":
-        return False
-    return (
-        _clamp_float(
-            front_matter.get("importance"),
-            default=0.5,
-        )
-        <= importance_threshold
-    )
-
-
 def _retention_multiplier(retention_state: str) -> float:
     if retention_state == "compressed":
         return 0.65

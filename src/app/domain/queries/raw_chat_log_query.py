@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from flow_res import Result
 
-from app.domain.value_objects.chat_type import ChatType
+from app.contracts.messages.chat_type import ChatType
 
 if TYPE_CHECKING:
     from app.domain.repositories.interfaces import RepositoryError
@@ -25,9 +25,7 @@ class LongTermMemorySourceItem:
     chat_type: ChatType
     message_content: dict[str, Any]
     created_at: datetime | None
-
-
-RawChatLog = LongTermMemorySourceItem
+    character_id: str
 
 
 class IRawChatLogQuery(ABC):
@@ -36,6 +34,7 @@ class IRawChatLogQuery(ABC):
     @abstractmethod
     async def list_pending_memory_user_ids(
         self,
+        character_id: str,
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 1000,
@@ -46,6 +45,7 @@ class IRawChatLogQuery(ABC):
     @abstractmethod
     async def get_pending_memory_source_items(
         self,
+        character_id: str,
         user_id: str,
         chat_type: ChatType,
         since: datetime | None = None,

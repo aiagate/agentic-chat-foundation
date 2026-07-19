@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from flow_res import Err, Ok, Result, is_err
 from pydantic import ValidationError
 
-from app.contracts.messages.agent_profile import AgentProfileBundle
 from app.contracts.messages.chat_history import ChatHistoryItem
 from app.contracts.messages.generated_content import GeneratedContent
 from app.contracts.messages.memory_semantic_extraction import (
@@ -18,7 +17,6 @@ from app.contracts.messages.memory_semantic_extraction import (
     MemorySemanticExtractionResult,
     MemoryTimelineSectionPatch,
 )
-from app.contracts.messages.relationship_growth import MAX_DAILY_SCORE_INCREASE
 from app.contracts.ports.agent_profile_service import IAgentProfileService
 from app.contracts.ports.ai_service import IAIService
 from app.contracts.ports.memory_semantic_extraction import (
@@ -43,8 +41,8 @@ class MemorySemanticExtractionService(IMemorySemanticExtractionService):
     ) -> Result[MemorySemanticExtractionResult, MemorySemanticExtractionError]:
         """Extract structured memory patches from raw chat logs."""
 
-        profile_bundle = self.agent_profile_service.load_agent_profile_bundle()
-        prompt = _build_prompt(request, profile_bundle=profile_bundle)
+        self.agent_profile_service.load_agent_profile_bundle()
+        prompt = _build_prompt(request)
         base_system_instruction = (
             "あなたはチャットログから長期記憶を抽出するアシスタントです。 "
             "返答は JSON オブジェクト 1 個だけにしてください。 "
@@ -80,11 +78,10 @@ class MemorySemanticExtractionService(IMemorySemanticExtractionService):
             extraction_result = _parse_generated_content(ai_result.value)
             if extraction_result is not None:
                 logger.info(
-                    "Memory semantic extraction result: user_id=%s day=%s sections=%s timeline_patch=%s entity_patches=%s profile_patch=%s evidence_notes=%s",
+                    "Memory semantic extraction result: user_id=%s day=%s sections=%s entity_patches=%s profile_patch=%s evidence_notes=%s",
                     request.user_id,
                     request.day,
                     _summarize_sections(extraction_result.sections),
-                    "yes" if extraction_result.timeline_patch is not None else "no",
                     _summarize_entity_patches(extraction_result.entity_patches),
                     "yes" if extraction_result.profile_patch is not None else "no",
                     _summarize_text_list(extraction_result.evidence.notes),
@@ -126,8 +123,6 @@ class MemorySemanticExtractionService(IMemorySemanticExtractionService):
 
 def _build_prompt(
     request: MemorySemanticExtractionRequest,
-    *,
-    profile_bundle: AgentProfileBundle,
 ) -> str:
     lines = [
         "以下の raw chat logs から、その日を後から思い出せる長期記憶を抽出してください。",
@@ -142,6 +137,13 @@ def _build_prompt(
         "各 section の source_chat_ids には、その section の根拠となった raw log の id だけを返してください。",
         "source_chat_ids は Raw logs に実在する id だけを使い、1 つ以上指定してください。",
         "1 つの raw log id を複数の section に重複して割り当てないでください。",
+        "profile/entity の変更にも、その変更を直接支える source_chat_ids と observed_at を付けてください。",
+        "長期的に有用なプロフィール・Entity情報がなければ、対応する patch は返さないでください。毎日の追記は不要です。",
+        "現在の嗜好・属性の訂正（例: 好きから嫌い）は update_mode=replace とし、古い値を残さず、維持する値を含む完全な現在状態を返してください。",
+        "勤務先など時間経過による変化は update_mode=transition とし、現在値を更新して過去値を履歴として残せるようにしてください。",
+        "訂正か時間変化か判断できない場合は update_mode=defer とし、確定情報として書かないでください。",
+        "各 raw log は source_evaluations で used / not_memorable / deferred のいずれか一つに分類してください。",
+        "used は必ずいずれかの patch の source_chat_ids に含め、根拠不足は deferred にしてください。",
         "返答は 1 つの JSON オブジェクトのみで、次のスキーマに厳密に一致させてください。",
         "{",
         '  "sections": [',
@@ -162,7 +164,6 @@ def _build_prompt(
         '      "confidence": 0.0',
         "    }",
         "  ],",
-        '  "timeline_patch": { ... } | null,',
         '  "entity_patches": [',
         "    {",
         '      "id": "string",',
@@ -171,14 +172,18 @@ def _build_prompt(
         '      "entity_type": "project|object|person|concept|relationship|...",',
         '      "status": "active|unresolved|deprecated|merged|archived",',
         '      "aliases": ["string"],',
-        '      "attributes": {},',
         '      "properties": {},',
         '      "missing_attributes": ["string"],',
-        '      "confidence": 0.0',
+        '      "confidence": 0.0,',
+        '      "source_chat_ids": ["raw-chat-id"],',
+        '      "observed_at": "ISO-8601",',
+        '      "update_mode": "merge|replace|transition|defer"',
         "    }",
         "  ],",
-        '  "profile_patch": { ... } | null,',
-        '  "evidence": { "notes": ["string"] }',
+        '  "profile_patch": { "user_id": "string", "summary": "string|null", "display_name": "string|null", "traits": [], "preferences": [], "confidence": 0.0, "source_chat_ids": ["raw-chat-id"], "observed_at": "ISO-8601", "update_mode": "merge|replace|defer" } | null,',
+        '  "evidence": { "notes": ["string"] },',
+        '  "source_evaluations": [{ "chat_id": "raw-chat-id", "disposition": "used|not_memorable|deferred", "reason": "string" }],',
+        '  "relationship_signals": [{ "kind": "strong_negative|negative|neutral|positive|strong_positive", "confidence": 0.0, "reason": "日本語の短い根拠", "source_chat_ids": ["raw-chat-id"], "observed_at": "ISO-8601" }]',
         "}",
         "トップレベルのキーは増やさないでください。",
         "section_slug は英小文字の kebab-case で、安定して再利用できる短い名前にしてください。",
@@ -192,36 +197,22 @@ def _build_prompt(
         "出力全体は JSON オブジェクト 1 個のみで、説明文や挨拶は書かないでください。",
         '  例: {"title": "お風呂前のひと息", "summary": {"topic": "お風呂に入る前に荷物や明日の準備をどう進めるか話した", "self_feeling": "少し急いでいるが、段取りを整えたい", "other_feeling": "相手は落ち着かせながら、先に何をするかを一緒に考えている", "outcome": "まずお風呂に入ってから荷物を整える流れになった"}}',
         "",
-        "関係性 Entity 抽出ルール:",
-        (
-            "- "
-            f"{profile_bundle.relationship_entity_label} に明確な変化がある場合だけ、"
-            f"id '{profile_bundle.relationship_entity_id}' の entity_patch を返してください。"
-        ),
-        (
-            f"- label は '{profile_bundle.relationship_entity_label}'、entity_type は "
-            f"'{profile_bundle.relationship_entity_type}' にしてください。"
-        ),
-        (
-            "- 新規作成時の基準値は "
-            f"trust={profile_bundle.relationship_defaults.trust_score:.0f}, "
-            f"warmth={profile_bundle.relationship_defaults.warmth_score:.0f}, "
-            f"stage={profile_bundle.relationship_defaults.stage} です。"
-        ),
-        "- properties には trust_score, warmth_score, evidence_count, recent_signal を入れます。",
-        "- trust_score と warmth_score は 0〜100 の数値です。",
-        f"- 1 日の上昇提案は最大 +{MAX_DAILY_SCORE_INCREASE:.0f} を目安にしてください。",
-        "- 不快、拒否、距離を置く発言がある場合は上昇させないでください。",
-        "- assistant 側の願望、演出、自己都合を関係性の根拠にしないでください。",
-        "- 依存、嫉妬、独占欲、駆け引きを成長条件にしないでください。",
-        "- 根拠が弱い場合、関係性 entity_patch は返さず entity_patches を空のままにしてください。",
+        "関係シグナル抽出ルール:",
+        "- 関係状態をEntityとして出力せず、relationship_signalsだけで表現してください。",
+        "- 普通の会話、発言量、連絡頻度だけではneutralです。",
+        "- 明確な信頼、配慮、率直な自己開示、関係修復はpositiveです。",
+        "- 明確な拒絶、信頼の毀損、敵意、境界侵害はnegativeです。",
+        "- strong系は関係を大きく変える明示的な根拠がある場合だけ使ってください。",
+        "- assistant側の願望や演出を根拠にせず、raw chatの事実だけを評価してください。",
+        "- 各signalは直接の根拠となるsource_chat_idsを1件以上持たせてください。",
+        "- 明確な変化がなければrelationship_signalsは空配列にしてください。",
         f"user_id: {request.user_id}",
         f"day: {request.day}",
         "",
         "既存のプロフィール要約:",
         request.existing_profile_summary or "(なし)",
         "",
-        "既存の Entity ラベル:",
+        "既存の Entity 状態:",
         ", ".join(request.existing_entity_labels) or "(なし)",
         "",
         "既存の Timeline 要約:",

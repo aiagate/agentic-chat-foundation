@@ -59,7 +59,16 @@ def build_agent_system_prompt(
                 "or an application action is needed.\n"
                 "- Do not describe a tool request as ordinary reply text.\n"
                 "- Use the current conversation's send-message tool when the reply "
-                "must be divided into multiple message units."
+                "must be divided into multiple message units.\n"
+                "- For a direct LINE/DM reply, use 2 to 4 natural sentences, avoid "
+                "headings, bullet lists, Markdown, and formal closings.\n"
+                "- Acknowledge one specific feeling, then offer at most one ordinary "
+                "next step or question. Prefer everyday Japanese over clinical or "
+                "business terms.\n"
+                "- Do not propose symptom logs, self-assessment, or a consultation "
+                "plan for ordinary low mood. Do not add a routine medical-provider "
+                "or helpline recommendation. If there is clear imminent danger, "
+                "prioritize brief safety guidance."
             ),
         ]
     )

@@ -132,10 +132,7 @@ def memory_id_for_document(index_document: MemoryIndexDocument) -> str:
     if explicit_memory_id:
         return explicit_memory_id
     memory_type = front_matter.get("memory_type")
-    reference = index_document.reference
     if memory_type == "profile":
-        if front_matter.get("profile_scope") == "agent":
-            return f"agent_profile:{Path(reference).stem.lower()}"
         user_id = front_matter_string(front_matter.get("user_id"), default="unknown")
         return f"profile:{quote(user_id, safe='')}"
     raw_id = front_matter_string(front_matter.get("id"))
@@ -205,15 +202,10 @@ def manifest_when(front_matter: dict[str, object]) -> str | None:
     return date_part or occurred_at
 
 
-def source_user_id(front_matter: dict[str, object]) -> str | None:
-    """Resolve the user scope for rendered memory sources."""
+def source_user_id(front_matter: dict[str, object]) -> str:
+    """Resolve the owning user for a rendered memory source."""
 
-    if front_matter.get("profile_scope") == "agent":
-        return None
-    value = front_matter.get("user_id")
-    if isinstance(value, str):
-        return value
-    return None
+    return front_matter_string(front_matter["user_id"])
 
 
 def _profile_detail_lines(front_matter: dict[str, object]) -> list[str]:
@@ -258,7 +250,7 @@ def _entity_detail_lines(front_matter: dict[str, object]) -> list[str]:
     aliases = front_matter_string_list(front_matter.get("aliases"))
     if aliases:
         lines.append(f"- aliases: {', '.join(aliases)}")
-    properties = front_matter.get("properties") or front_matter.get("attributes")
+    properties = front_matter.get("properties")
     if isinstance(properties, dict) and properties:
         lines.append("- properties:")
         for key, value in sorted(properties.items()):

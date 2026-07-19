@@ -12,6 +12,8 @@ from app.contracts.ports.conversation import (
     ConversationResultSender,
     ResponseGenerator,
 )
+from app.contracts.ports.relationship import IRelationshipInteractionProcessor
+from app.contracts.ports.user_identity_query import IUserIdentityQuery
 from app.usecases.conversation.accept_incoming_message import (
     AcceptIncomingMessageCommand,
     AcceptIncomingMessageHandler,
@@ -34,26 +36,32 @@ class ConversationFlow:
         history: ConversationHistory,
         context: ConversationContext,
         generator: ResponseGenerator,
+        user_identity_query: IUserIdentityQuery,
+        relationship_processor: IRelationshipInteractionProcessor,
     ) -> None:
         self._history = history
         self._context = context
         self._generator = generator
+        self._user_identity_query = user_identity_query
+        self._relationship_processor = relationship_processor
 
     async def process(
         self,
         message: IncomingMessage,
         sender: ConversationResultSender,
     ) -> Result[DeliveryResult, UseCaseError]:
-        accepted = await AcceptIncomingMessageHandler(self._history).handle(
-            AcceptIncomingMessageCommand(message)
-        )
+        accepted = await AcceptIncomingMessageHandler(
+            self._history, self._user_identity_query
+        ).handle(AcceptIncomingMessageCommand(message))
         if is_err(accepted):
             return Err(accepted.error)
         if not accepted.value.is_new:
-            return Ok(DeliveryResult(message_id=accepted.value.message_id, delivered=True))
+            return Ok(
+                DeliveryResult(message_id=accepted.value.message_id, delivered=True)
+            )
 
         created = await CreateConversationResponseHandler(
-            self._context, self._generator
+            self._context, self._generator, self._relationship_processor
         ).handle(CreateConversationResponseCommand(accepted.value))
         if is_err(created):
             return Err(created.error)

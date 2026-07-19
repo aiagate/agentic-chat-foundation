@@ -16,28 +16,25 @@ from app.infrastructure.queries.memory_index_projection_query import (
 from app.infrastructure.repositories.memory_index_repository import (
     MemoryIndexRepository,
 )
+from app.infrastructure.services.memory_index_projection import (
+    MemoryIndexProjectionService,
+)
 
 
 @pytest.mark.anyio
-async def test_projection_query_combines_agent_and_exact_user_records(
+async def test_projection_query_returns_only_exact_user_records(
     session_factory: async_sessionmaker[AsyncSession],
     tmp_path: Path,
 ) -> None:
     """The query should compose scopes without leaking another user's rows."""
 
     store = FilesystemMemoryStore(tmp_path / "memory")
-    character_id = "agent-1"
-    agent_path = store.agent_profile_part_path("SOUL", character_id=character_id)
     user_path = store.entity_path("u1", "desk")
     other_path = store.entity_path("u2", "private")
-    _write_profile(store, agent_path)
     _write_entity(store, user_path, user_id="u1", entity_id="desk")
     _write_entity(store, other_path, user_id="u2", entity_id="private")
 
     records = [
-        _record(
-            store, agent_path, user_id=None, memory_type="profile", source_id="soul"
-        ),
         _record(store, user_path, user_id="u1", memory_type="entity", source_id="desk"),
         _record(
             store,
@@ -53,49 +50,10 @@ async def test_projection_query_combines_agent_and_exact_user_records(
 
     result = await SQLAlchemyMemoryIndexQuery(session_factory, store).list_documents(
         user_id="u1",
-        character_id=character_id,
-        relationship_entity_id=f"relationship:{character_id}",
     )
 
     assert not is_err(result)
-    assert [document.reference for document in result.value] == [
-        "entities/u1/desk.md",
-        "profiles/agent/agent-1/SOUL.md",
-    ]
-
-
-@pytest.mark.anyio
-async def test_user_projection_delete_preserves_agent_profile(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    """Deleting one user scope must not delete shared agent-profile rows."""
-
-    records = [
-        _raw_record(
-            source_path="profiles/agent/agent-1/SOUL.md",
-            user_id=None,
-            memory_type="profile",
-            source_id="soul",
-        ),
-        _raw_record(
-            source_path="entities/u1/desk.md",
-            user_id="u1",
-            memory_type="entity",
-            source_id="desk",
-        ),
-    ]
-    async with session_factory() as session:
-        repository = MemoryIndexRepository(session)
-        await repository.upsert_records(records)
-        await repository.delete_by_user_id("u1")
-        await session.commit()
-
-    async with session_factory() as session:
-        remaining = await MemoryIndexRepository(session).list_all_records()
-
-    assert [record.source_path for record in remaining] == [
-        "profiles/agent/agent-1/SOUL.md"
-    ]
+    assert [document.reference for document in result.value] == ["entities/u1/desk.md"]
 
 
 @pytest.mark.anyio
@@ -123,28 +81,56 @@ async def test_projection_query_reports_stale_missing_source(
         FilesystemMemoryStore(tmp_path / "memory"),
     ).list_documents(
         user_id="u1",
-        character_id="agent-1",
-        relationship_entity_id="relationship:agent-1",
     )
 
     assert is_err(result)
     assert "failed to read memory document" in str(result.error)
 
 
-def _write_profile(store: FilesystemMemoryStore, path: Path) -> None:
-    store.write_document(
-        path,
-        front_matter={
-            "schema_version": 1,
-            "memory_type": "profile",
-            "profile_scope": "agent",
-            "id": "soul",
-            "user_id": None,
-            "created_at": "2026-06-30T00:00:00+00:00",
-            "updated_at": "2026-06-30T00:00:00+00:00",
-        },
-        body="# Soul",
+@pytest.mark.anyio
+async def test_projection_service_applies_exact_path_delta(
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> None:
+    store = FilesystemMemoryStore(tmp_path / "memory")
+    changed_path = store.entity_path("u1", "changed")
+    stale_path = store.entity_path("u1", "stale")
+    preserved_path = store.entity_path("u1", "preserved")
+    _write_entity(store, changed_path, user_id="u1", entity_id="changed")
+    async with session_factory() as session:
+        await MemoryIndexRepository(session).upsert_records(
+            [
+                _record(
+                    store,
+                    stale_path,
+                    user_id="u1",
+                    memory_type="entity",
+                    source_id="stale",
+                ),
+                _record(
+                    store,
+                    preserved_path,
+                    user_id="u1",
+                    memory_type="entity",
+                    source_id="preserved",
+                ),
+            ]
+        )
+        await session.commit()
+
+    result = await MemoryIndexProjectionService(
+        root=store.root,
+        session_factory=session_factory,
+    ).apply_changes(
+        user_id="u1",
+        upsert_paths=[changed_path],
+        delete_paths=[stale_path],
     )
+
+    assert not is_err(result)
+    async with session_factory() as session:
+        records = await MemoryIndexRepository(session).list_by_user_id("u1")
+    assert [record.source_id for record in records] == ["changed", "preserved"]
 
 
 def _write_entity(
@@ -174,7 +160,7 @@ def _record(
     store: FilesystemMemoryStore,
     path: Path,
     *,
-    user_id: str | None,
+    user_id: str,
     memory_type: str,
     source_id: str,
 ) -> MemoryIndexRecord:
@@ -189,7 +175,7 @@ def _record(
 def _raw_record(
     *,
     source_path: str,
-    user_id: str | None,
+    user_id: str,
     memory_type: str,
     source_id: str,
 ) -> MemoryIndexRecord:

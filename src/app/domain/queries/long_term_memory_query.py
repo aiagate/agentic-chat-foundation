@@ -6,7 +6,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from app.domain.queries.raw_chat_log_query import IRawChatLogQuery, RawChatLog
+from app.domain.queries.raw_chat_log_query import (
+    IRawChatLogQuery,
+    LongTermMemorySourceItem,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,7 +18,8 @@ class LongTermMemoryTarget:
 
     user_id: str
     day: date
-    raw_logs: list[RawChatLog]
+    raw_logs: list[LongTermMemorySourceItem]
+    character_id: str
 
 
 class ILongTermMemoryQuery(ABC):
@@ -26,6 +30,7 @@ class ILongTermMemoryQuery(ABC):
         self,
         query: IRawChatLogQuery,
         *,
+        character_id: str,
         reference_time: datetime,
     ) -> list[LongTermMemoryTarget]:
         """対象の user/day バッチを列挙する。"""

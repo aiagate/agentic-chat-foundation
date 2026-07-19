@@ -25,11 +25,14 @@ class AcceptedMessage:
     """Canonical message after it has been recorded in conversation history."""
 
     message_id: str
-    conversation_id: str
-    participant_id: str
+    character_id: str
+    user_id: str
+    external_conversation_id: str
+    external_participant_id: str
     text: str
     channel: str
     occurred_at: datetime
+    order_key: int = 0
     metadata: Mapping[str, str] = field(default_factory=dict)
     is_new: bool = True
 
@@ -39,7 +42,7 @@ class ConversationResult:
     """Logical response produced for one accepted message."""
 
     message_id: str
-    conversation_id: str
+    external_conversation_id: str
     channel: str
     contents: tuple[str, ...] = ()
     unavailable: bool = False
@@ -52,4 +55,6 @@ class DeliveryResult:
 
     message_id: str
     delivered: bool
+    delivered_count: int = 0
+    failed_content_index: int | None = None
     failure_reason: str | None = None

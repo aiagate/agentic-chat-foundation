@@ -44,17 +44,13 @@
 - 呼び出し側が責務を誤認しないか。
 - 既存の `Service` に責務を足して肥大化させていないか。
 
-## このリポジトリでの具体例
+## 判断例
 
-- `GptService` と `GeminiService` は、外部 AI 境界の差し替え実装なので `Service` として妥当である。
-- `OllamaWebSearchService` は、外部 web search API のアダプタなので `Service` として妥当である。
-- `FilesystemMemoryService` は、main DB projection query と Markdown store を束ねる取得オーケストレーションなので `Service` として妥当である。
-- `FilesystemAgentProfileService` は、プロファイル束の読み込みサービスなので `Service` として妥当である。
-- `MemoryConsolidationService` は、抽出結果の反映というオーケストレーションを持つため `Service` として妥当である。
-- `GenericToolExecutor` は、tool ごとの実行先をまとめるアダプタなので `Service` として妥当である。
-- `InMemoryToolResultStore` は `Service` ではなく `Store` とする。
-- `LongTermMemoryQueryService` は `Service` ではなく `Query` 側に置く。
-- `memory/store.py` や `markdown.py` のような低レベル I/O と変換関数は `Service` にしない。
+- 外部の応答作成サービスや外部情報源を呼び出すアダプタは、外部境界を閉じ込める `Service` として扱う。
+- 複数の読み取り・更新をまとめて、人物像や出来事などの業務上の結果を反映する処理は、
+  オーケストレーションを担う `Service` として扱う。
+- 検索条件の解釈や候補の選定は `Query`、永続化の入出力は `Repository`、単純な保存は `Store` として扱う。
+- ファイルパス計算、MarkdownやJSONの変換、単純な一時保存は `Service` として扱わない。
 
 ## 反例
 

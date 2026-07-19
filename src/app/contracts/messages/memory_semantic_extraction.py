@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.contracts.messages.chat_type import ChatType
+from app.contracts.messages.relationship import RelationshipSignalCandidate
 
 
 class LongTermMemoryChatLog(BaseModel):
@@ -16,6 +18,7 @@ class LongTermMemoryChatLog(BaseModel):
 
     id: str = Field(description="Stable source chat identifier.")
     user_id: str = Field(description="Owning user identifier.")
+    character_id: str = Field(description="Character boundary of the source chat.")
     role: str = Field(description="Message role.")
     chat_type: ChatType = Field(description="Chat channel type.")
     content: str = Field(description="Normalized message text.")
@@ -34,7 +37,7 @@ class MemoryEvidence(BaseModel):
 
 
 class MemorySectionSummary(BaseModel):
-    """Structured daily summary used for Timeline content."""
+    """Structured episodic summary used for Timeline content."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -42,22 +45,6 @@ class MemorySectionSummary(BaseModel):
     self_feeling: str = Field(description="How the user seemed to feel.")
     other_feeling: str = Field(description="How the other side seemed to feel.")
     outcome: str = Field(description="What remained as a result or decision.")
-
-
-class MemoryTimelinePatch(BaseModel):
-    """Proposed Timeline memory update."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = Field(description="Stable timeline memory id.")
-    user_id: str = Field(description="Owning user identifier.")
-    day: str = Field(description="Timeline day in YYYY-MM-DD format.")
-    summary: MemorySectionSummary = Field(description="Structured daily summary.")
-    entity_ids: list[str] = Field(
-        default_factory=list,
-        description="Related entity identifiers.",
-    )
-    confidence: float = Field(description="Extraction confidence.")
 
 
 class MemoryTimelineSectionPatch(BaseModel):
@@ -74,7 +61,7 @@ class MemoryTimelineSectionPatch(BaseModel):
         min_length=1,
         description="Source chat identifiers belonging to this section.",
     )
-    summary: MemorySectionSummary = Field(description="Structured daily summary.")
+    summary: MemorySectionSummary = Field(description="Structured episode summary.")
     entity_ids: list[str] = Field(
         default_factory=list,
         description="Related entity identifiers.",
@@ -93,12 +80,17 @@ class MemoryEntityPatch(BaseModel):
     entity_type: str = Field(description="Entity type.")
     status: str = Field(description="Entity status.")
     aliases: list[str] = Field(default_factory=list)
-    attributes: dict[str, str] = Field(default_factory=dict)
     properties: dict[str, str | int | float | bool | list[str] | None] = Field(
         default_factory=dict
     )
     missing_attributes: list[str] = Field(default_factory=list)
     confidence: float = Field(description="Extraction confidence.")
+    source_chat_ids: list[str] = Field(
+        default_factory=list,
+        description="Raw chat evidence for this entity change.",
+    )
+    observed_at: datetime | None = Field(default=None)
+    update_mode: Literal["merge", "replace", "transition", "defer"] = "merge"
 
 
 class MemoryProfilePatch(BaseModel):
@@ -112,6 +104,22 @@ class MemoryProfilePatch(BaseModel):
     traits: list[str] = Field(default_factory=list)
     preferences: list[str] = Field(default_factory=list)
     confidence: float = Field(description="Extraction confidence.")
+    source_chat_ids: list[str] = Field(
+        default_factory=list,
+        description="Raw chat evidence for this profile change.",
+    )
+    observed_at: datetime | None = Field(default=None)
+    update_mode: Literal["merge", "replace", "defer"] = "merge"
+
+
+class MemorySourceEvaluation(BaseModel):
+    """Disposition assigned to one raw chat input."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    chat_id: str
+    disposition: Literal["used", "not_memorable", "deferred"]
+    reason: str = ""
 
 
 class MemorySemanticExtractionRequest(BaseModel):
@@ -132,8 +140,12 @@ class MemorySemanticExtractionResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    timeline_patch: MemoryTimelinePatch | None = None
     sections: list[MemoryTimelineSectionPatch] = Field(default_factory=list)
     entity_patches: list[MemoryEntityPatch] = Field(default_factory=list)
     profile_patch: MemoryProfilePatch | None = None
     evidence: MemoryEvidence = Field(default_factory=MemoryEvidence)
+    source_evaluations: list[MemorySourceEvaluation] = Field(default_factory=list)
+    relationship_signals: list[RelationshipSignalCandidate] = Field(
+        default_factory=list,
+        description="Confirmed relationship signals supported by raw chat evidence.",
+    )

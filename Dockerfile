@@ -12,5 +12,6 @@ RUN apt-get update \
 COPY pyproject.toml uv.lock README.md alembic.ini ./
 COPY src ./src
 COPY alembic ./alembic
+COPY memory/profiles/agent ./memory/profiles/agent
 
 RUN uv sync --frozen --no-dev

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
@@ -14,9 +13,6 @@ from app.contracts.messages.tool_contracts import (
     ToolExecutionResult,
 )
 from app.contracts.ports.memory_service import IMemoryService
-from app.contracts.ports.memory_write_service import (
-    IMemoryWriteService,
-)
 from app.contracts.ports.tool_executor import (
     IToolExecutor,
     ToolExecutionContext,
@@ -32,11 +28,9 @@ class GenericToolExecutor(IToolExecutor):
         self,
         *,
         memory_service: IMemoryService,
-        memory_write_service: IMemoryWriteService,
         web_search_service: IWebSearchService,
     ) -> None:
         self._memory_service = memory_service
-        self._memory_write_service = memory_write_service
         self._web_search_service = web_search_service
 
     async def execute(
@@ -50,8 +44,6 @@ class GenericToolExecutor(IToolExecutor):
                 result = await self._execute_web_search(context)
             case "memory.read":
                 result = await self._execute_memory_read(context)
-            case "memory.write_candidate":
-                result = await self._execute_memory_write_candidate(context)
             case _:
                 result = Err(
                     ToolExecutorError(
@@ -123,39 +115,6 @@ class GenericToolExecutor(IToolExecutor):
             _build_result(context, result, rendered_text=memory_result.rendered_text)
         )
 
-    async def _execute_memory_write_candidate(
-        self,
-        context: ToolExecutionContext,
-    ) -> Result[ToolExecutionResult, ToolExecutorError]:
-        content = _require_nonempty_string(context.tool_call.arguments, "content")
-        if content is None:
-            return Err(ToolExecutorError("Tool call content must not be empty"))
-
-        role = _normalized_role(context.tool_call.arguments.get("role"))
-        metadata = _normalized_metadata(context)
-        metadata_payload = dict(metadata)
-        write_result = await self._memory_write_service.add_log(
-            user_id=context.user_id,
-            role=role,
-            content=content,
-            metadata=metadata_payload,
-        )
-        if is_err(write_result):
-            return Err(ToolExecutorError("Failed to write memory candidate"))
-
-        result = {
-            "written": True,
-            "role": role,
-            "content_length": len(content),
-        }
-        return Ok(
-            _build_result(
-                context,
-                result,
-                rendered_text=json.dumps(result, ensure_ascii=False),
-            )
-        )
-
 
 def _build_result(
     context: ToolExecutionContext,
@@ -212,35 +171,3 @@ def _require_nonempty_string(
         if text:
             return text
     return None
-
-
-def _normalized_role(value: object) -> str:
-    if isinstance(value, str) and value.strip():
-        role = value.strip()
-        if role in {"user", "assistant", "system"}:
-            return role
-    return "assistant"
-
-
-def _normalized_metadata(context: ToolExecutionContext) -> dict[str, str]:
-    metadata: dict[str, str] = {
-        "chat_id": context.chat_id,
-        "chat_type": context.chat_type.to_primitive(),
-        "tool_name": context.tool_call.tool_name,
-    }
-    if context.guild_id is not None:
-        metadata["guild_id"] = context.guild_id
-    if context.channel_id is not None:
-        metadata["channel_id"] = context.channel_id
-    if context.tool_call.tool_call_id is not None:
-        metadata["tool_call_id"] = context.tool_call.tool_call_id
-    if context.tool_call.decision_summary is not None:
-        metadata["decision_summary"] = context.tool_call.decision_summary
-
-    raw_metadata = context.tool_call.arguments.get("metadata")
-    if isinstance(raw_metadata, dict):
-        for key, value in raw_metadata.items():
-            if value is None:
-                continue
-            metadata[str(key)] = str(value)
-    return metadata

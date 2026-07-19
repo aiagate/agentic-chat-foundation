@@ -1,6 +1,12 @@
 """Tests for provider-ready agent request rendering."""
 
-from app.contracts.messages.llm_request_context import render_agent_prompt
+from datetime import UTC, datetime
+
+from app.contracts.messages.conversation_context import ConversationContext
+from app.contracts.messages.llm_request_context import (
+    build_agent_system_prompt,
+    render_agent_prompt,
+)
 from app.contracts.messages.tool_result_context import ToolResultContext
 
 
@@ -26,6 +32,25 @@ def test_render_agent_prompt_returns_original_request_without_tool_results() -> 
     prompt = "土日横浜周辺で何かイベントないですかね"
 
     assert render_agent_prompt(prompt=prompt, tool_results=[]) == prompt
+
+
+def test_build_agent_system_prompt_includes_human_sns_reply_contract() -> None:
+    """Direct replies should use the concise conversational style contract."""
+
+    prompt = build_agent_system_prompt(
+        "persona",
+        ConversationContext(
+            chat_scope="LINE user_id=user-1",
+            current_time=datetime.now(tz=UTC),
+            timezone="UTC",
+            observed_message_count=0,
+            has_session_boundary=False,
+        ),
+    )
+
+    assert "2 to 4 natural sentences" in prompt
+    assert "Do not propose symptom logs" in prompt
+    assert "LINE/DM" in prompt
 
 
 def test_render_agent_prompt_keeps_request_with_web_search_result() -> None:

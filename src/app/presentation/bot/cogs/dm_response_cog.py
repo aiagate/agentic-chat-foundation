@@ -65,6 +65,13 @@ class DirectMessageResponseCog(BaseCog, name="DM Response"):
             DiscordConversationResultSender(message.channel),
         )
         if is_err(result):
+            logger.error(
+                "Failed to process Discord DM: channel_id=%s external_message_id=%s "
+                "error=%s",
+                channel_id,
+                incoming.external_message_id,
+                result.error.message,
+            )
             await message.channel.send("メッセージの処理に失敗しました。")
             return
 

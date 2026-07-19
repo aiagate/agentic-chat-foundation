@@ -63,7 +63,7 @@ class StoredMemoryDocument:
 def default_memory_root() -> Path:
     """Return the configured memory root path."""
 
-    return Path(os.getenv("MEMORY_ROOT") or os.getenv("MEMORY_AGENT_ROOT") or "memory")
+    return Path(os.getenv("MEMORY_ROOT") or "memory")
 
 
 def encode_path_segment(value: str) -> str:
@@ -94,7 +94,7 @@ class FilesystemMemoryStore:
         for relative in ("profiles/agent", "profiles/users", "timeline", "entities"):
             (self.root / relative).mkdir(parents=True, exist_ok=True)
 
-    def agent_profile_dir(self, character_id: str) -> Path:
+    def _agent_profile_dir(self, character_id: str) -> Path:
         """Return the agent profile bundle directory."""
 
         return self.root / "profiles" / "agent" / encode_path_segment(character_id)
@@ -110,19 +110,39 @@ class FilesystemMemoryStore:
         normalized = part.upper()
         if normalized not in _AGENT_PROFILE_PARTS:
             raise MemoryStoreError(f"Invalid agent profile part: {part!r}")
-        return self.agent_profile_dir(character_id) / f"{normalized}.md"
+        return self._agent_profile_dir(character_id) / f"{normalized}.md"
 
-    def agent_profile_bundle_paths(
+    def read_agent_profile_part(
         self,
+        part: str,
         *,
         character_id: str,
-    ) -> dict[str, Path]:
-        """Return all agent profile bundle paths keyed by part name."""
+    ) -> str:
+        """Read one raw agent profile bundle part."""
 
-        return {
-            part: self.agent_profile_part_path(part, character_id=character_id)
-            for part in _AGENT_PROFILE_PARTS
-        }
+        path = self.agent_profile_part_path(part, character_id=character_id)
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise MemoryStoreError(
+                f"{path}: failed to read agent profile part"
+            ) from exc
+
+    def agent_relationship_definition_path(self, character_id: str) -> Path:
+        """Return the character relationship YAML path."""
+
+        return self._agent_profile_dir(character_id) / "RELATIONSHIP.yaml"
+
+    def read_agent_relationship_definition(self, character_id: str) -> str:
+        """Read one character relationship YAML definition."""
+
+        path = self.agent_relationship_definition_path(character_id)
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise MemoryStoreError(
+                f"{path}: failed to read relationship definition"
+            ) from exc
 
     def user_profile_path(self, user_id: str) -> Path:
         """Return a user-scoped profile path."""
@@ -137,39 +157,6 @@ class FilesystemMemoryStore:
             / "entities"
             / encode_path_segment(user_id)
             / f"{encode_path_segment(entity_id)}.md"
-        )
-
-    def raw_timeline_path(
-        self,
-        *,
-        user_id: str,
-        occurred_at: datetime,
-        role: str,
-    ) -> Path:
-        """Return a new user-scoped raw Timeline path."""
-
-        safe_role = encode_path_segment(role.lower())
-        return (
-            self.root
-            / "timeline"
-            / encode_path_segment(user_id)
-            / "raw"
-            / f"{occurred_at:%Y}"
-            / f"{occurred_at:%m}"
-            / f"{occurred_at:%Y-%m-%d}_{safe_role}-{uuid.uuid4().hex[:8]}.md"
-        )
-
-    def daily_timeline_path(self, *, user_id: str, day: date) -> Path:
-        """Return the user-scoped daily Timeline summary path."""
-
-        return (
-            self.root
-            / "timeline"
-            / encode_path_segment(user_id)
-            / "daily"
-            / f"{day:%Y}"
-            / f"{day:%m}"
-            / f"{day:%Y-%m-%d}.md"
         )
 
     def section_timeline_path(

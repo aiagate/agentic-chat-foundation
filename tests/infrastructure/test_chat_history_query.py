@@ -6,8 +6,8 @@ import pytest
 from flow_res import is_ok
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.contracts.messages.chat_type import ChatType
 from app.contracts.ports.unit_of_work import IUnitOfWork
-from app.domain.value_objects.chat_type import ChatType
 from app.infrastructure.orm_models.chat_orm import ChatORM
 
 
@@ -24,9 +24,9 @@ async def test_get_recent_history_returns_chronological_order(
         query = uow.GetChatHistoryQuery()
         result = await query.get_recent_history(
             ChatType.DISCORD,
+            character_id="shirasagi-reina",
             user_id="u1",
-            guild_id="DM",
-            channel_id="123",
+            external_conversation_id="123",
             limit=10,
         )
         assert is_ok(result)
@@ -67,15 +67,37 @@ async def test_get_recent_history_filters_by_scope(
         query = uow.GetChatHistoryQuery()
         result = await query.get_recent_history(
             ChatType.DISCORD,
+            character_id="shirasagi-reina",
             user_id="u1",
-            guild_id="DM",
-            channel_id="123",
+            external_conversation_id="123",
             limit=10,
         )
 
     assert is_ok(result)
     history = result.value.items
     assert [item.id for item in history] == ["chat-1", "chat-2", "chat-3"]
+
+
+@pytest.mark.anyio
+async def test_get_recent_history_respects_acceptance_boundary(
+    uow: IUnitOfWork,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A later accepted message cannot enter an earlier turn's context."""
+
+    await _seed_chat_rows(session_factory)
+    async with uow:
+        result = await uow.GetChatHistoryQuery().get_recent_history(
+            ChatType.DISCORD,
+            character_id="shirasagi-reina",
+            user_id="u1",
+            external_conversation_id="123",
+            before_order_key=2,
+            limit=10,
+        )
+
+    assert is_ok(result)
+    assert [item.id for item in result.value.items] == ["chat-1", "chat-2"]
 
 
 @pytest.mark.anyio
@@ -99,9 +121,9 @@ async def test_get_recent_history_starts_after_memory_consolidation(
     async with uow:
         result = await uow.GetChatHistoryQuery().get_recent_history(
             ChatType.DISCORD,
+            character_id="shirasagi-reina",
             user_id="u1",
-            guild_id="DM",
-            channel_id="123",
+            external_conversation_id="123",
             limit=10,
         )
 
@@ -118,48 +140,51 @@ async def _seed_chat_rows(
             [
                 ChatORM(
                     id="chat-1",
-                    type=ChatType.DISCORD.to_primitive(),
+                    channel="discord",
+                    external_conversation_id="123",
+                    external_participant_id="participant-1",
                     user_id="u1",
+                    accepted_sequence=1,
                     role="user",
                     message_content={
                         "type": "TEXT",
-                        "payload": {"text": "first"},
+                        "payload": {"texts": ["first"]},
                     },
-                    version=0,
                     created_at=datetime(2026, 5, 18, 10, 0, tzinfo=UTC),
                     updated_at=datetime(2026, 5, 18, 10, 0, tzinfo=UTC),
-                    discord_guild_id="DM",
-                    discord_channel_id="123",
+                    channel_metadata={"guild_id": "DM", "channel_id": "123"},
                 ),
                 ChatORM(
                     id="chat-2",
-                    type=ChatType.DISCORD.to_primitive(),
+                    channel="discord",
+                    external_conversation_id="123",
+                    external_participant_id="participant-1",
                     user_id="u1",
+                    accepted_sequence=2,
                     role="assistant",
                     message_content={
                         "type": "TEXT",
                         "payload": {"texts": ["assistant reply", "follow-up"]},
                     },
-                    version=0,
                     created_at=datetime(2026, 5, 18, 10, 5, tzinfo=UTC),
                     updated_at=datetime(2026, 5, 18, 10, 5, tzinfo=UTC),
-                    discord_guild_id="DM",
-                    discord_channel_id="123",
+                    channel_metadata={"guild_id": "DM", "channel_id": "123"},
                 ),
                 ChatORM(
                     id="chat-3",
-                    type=ChatType.DISCORD.to_primitive(),
+                    channel="discord",
+                    external_conversation_id="123",
+                    external_participant_id="participant-1",
                     user_id="u1",
+                    accepted_sequence=3,
                     role="user",
                     message_content={
                         "type": "TEXT",
-                        "payload": {"text": "second"},
+                        "payload": {"texts": ["second"]},
                     },
-                    version=0,
                     created_at=datetime(2026, 5, 18, 10, 10, tzinfo=UTC),
                     updated_at=datetime(2026, 5, 18, 10, 10, tzinfo=UTC),
-                    discord_guild_id="DM",
-                    discord_channel_id="123",
+                    channel_metadata={"guild_id": "DM", "channel_id": "123"},
                 ),
             ]
         )
@@ -173,18 +198,19 @@ async def _seed_other_scope_rows(
         session.add(
             ChatORM(
                 id="chat-x",
-                type=ChatType.DISCORD.to_primitive(),
+                channel="discord",
+                external_conversation_id="999",
+                external_participant_id="participant-1",
                 user_id="u1",
+                accepted_sequence=4,
                 role="user",
                 message_content={
                     "type": "TEXT",
-                    "payload": {"text": "other channel"},
+                    "payload": {"texts": ["other channel"]},
                 },
-                version=0,
                 created_at=datetime(2026, 5, 18, 10, 15, tzinfo=UTC),
                 updated_at=datetime(2026, 5, 18, 10, 15, tzinfo=UTC),
-                discord_guild_id="DM",
-                discord_channel_id="999",
+                channel_metadata={"guild_id": "DM", "channel_id": "999"},
             )
         )
         await session.commit()

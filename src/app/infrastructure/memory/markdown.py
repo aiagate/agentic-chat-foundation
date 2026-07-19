@@ -155,15 +155,13 @@ def _validate_profile_front_matter(
 ) -> None:
     _require_fields(front_matter, _PROFILE_REQUIRED_FIELDS, location=location)
     profile_scope = front_matter["profile_scope"]
-    if profile_scope not in {"agent", "user"}:
+    if profile_scope != "user":
         raise MemoryMarkdownError(
             f"{location}: invalid profile_scope {profile_scope!r}"
         )
     user_id = front_matter.get("user_id")
-    if profile_scope == "user" and not isinstance(user_id, str):
+    if not isinstance(user_id, str):
         raise MemoryMarkdownError(f"{location}: user profile requires user_id")
-    if profile_scope == "agent" and user_id is not None:
-        raise MemoryMarkdownError(f"{location}: agent profile must not set user_id")
 
 
 def _validate_iso_timestamp(

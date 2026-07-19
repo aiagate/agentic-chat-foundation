@@ -37,6 +37,11 @@ from app.infrastructure.services.retry_support import (
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_OPENAI_MODEL = "gpt-5.6-terra"
+_DEFAULT_OPENAI_REASONING_EFFORT = "low"
+_DEFAULT_OPENAI_TEXT_VERBOSITY = "low"
+_DEFAULT_OPENAI_MAX_OUTPUT_TOKENS = 1024
+
 
 def _parse_openai_response(
     response: Any,
@@ -110,7 +115,19 @@ class GptService(IAIService):
     def __init__(self) -> None:
         api_key = os.getenv("OPENAI_API_KEY")
         self._client = AsyncOpenAI(api_key=api_key) if api_key else None
-        self._model = os.getenv("OPENAI_MODEL", "gpt-5.6-terra")
+        self._model = os.getenv("OPENAI_MODEL", _DEFAULT_OPENAI_MODEL)
+        self._reasoning_effort = os.getenv(
+            "OPENAI_REASONING_EFFORT",
+            _DEFAULT_OPENAI_REASONING_EFFORT,
+        )
+        self._text_verbosity = os.getenv(
+            "OPENAI_TEXT_VERBOSITY",
+            _DEFAULT_OPENAI_TEXT_VERBOSITY,
+        )
+        self._max_output_tokens = _positive_int_env(
+            "OPENAI_MAX_OUTPUT_TOKENS",
+            _DEFAULT_OPENAI_MAX_OUTPUT_TOKENS,
+        )
 
     async def generate_content(
         self,
@@ -142,6 +159,11 @@ class GptService(IAIService):
                 service_name="OpenAI",
                 payload={
                     "model": self._model,
+                    "generation_params": {
+                        "reasoning_effort": self._reasoning_effort,
+                        "text_verbosity": self._text_verbosity,
+                        "max_output_tokens": self._max_output_tokens,
+                    },
                     "instructions": instructions,
                     "history": serialize_history(history),
                     "prompt": prompt,
@@ -155,20 +177,18 @@ class GptService(IAIService):
 
             async def create_response() -> Any:
                 request_input = cast(list[ResponseInputItemParam], input_messages)
+                request_kwargs: dict[str, Any] = {
+                    "model": self._model,
+                    "instructions": instructions,
+                    "input": request_input,
+                    "store": False,
+                    "max_output_tokens": self._max_output_tokens,
+                    "reasoning": {"effort": self._reasoning_effort},
+                    "text": {"verbosity": self._text_verbosity},
+                }
                 if provider_tools:
-                    return await client.responses.create(
-                        model=self._model,
-                        instructions=instructions,
-                        input=request_input,
-                        store=False,
-                        tools=provider_tools,
-                    )
-                return await client.responses.create(
-                    model=self._model,
-                    instructions=instructions,
-                    input=request_input,
-                    store=False,
-                )
+                    request_kwargs["tools"] = provider_tools
+                return await client.responses.create(**request_kwargs)
 
             response = await call_with_exponential_backoff(
                 create_response,
@@ -192,6 +212,23 @@ def _compose_instructions(
     system_instruction: str | None,
 ) -> str:
     return system_instruction or "You are a helpful assistant."
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    """Read a positive integer environment setting with a safe fallback."""
+
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError:
+        logger.warning("Invalid %s=%r; using default %d", name, raw_value, default)
+        return default
+    if value <= 0:
+        logger.warning("Invalid %s=%r; using default %d", name, raw_value, default)
+        return default
+    return value
 
 
 def _history_to_openai_input(

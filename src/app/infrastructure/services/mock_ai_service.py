@@ -1,5 +1,6 @@
 """Mock AI service implementation."""
 
+import json
 import logging
 
 from flow_res import Ok, Result
@@ -46,6 +47,44 @@ class MockAIService(IAIService):
                 "tool_definitions": serialize_tool_definitions(tool_definitions),
             },
         )
+        if system_instruction and '"speech_intent"' in system_instruction:
+            return Ok(
+                GeneratedContent(
+                    contents=[
+                        json.dumps(
+                            {
+                                "speech_intent": "silent",
+                                "texts": [],
+                                "private_reflection": {
+                                    "observation": "Mock discussion observation",
+                                    "stance": "neutral",
+                                    "emotion": "calm",
+                                    "next_intent": "wait for another message",
+                                    "open_question": None,
+                                },
+                            }
+                        )
+                    ]
+                )
+            )
+        if (
+            system_instruction
+            and "Classify only the user's relationship signal" in system_instruction
+        ):
+            return Ok(
+                GeneratedContent(
+                    contents=[
+                        json.dumps(
+                            {
+                                "kind": "neutral",
+                                "confidence": 1.0,
+                                "reason": "mock neutral signal",
+                                "source_chat_ids": [],
+                            }
+                        )
+                    ]
+                )
+            )
         return Ok(
             GeneratedContent(
                 contents=[

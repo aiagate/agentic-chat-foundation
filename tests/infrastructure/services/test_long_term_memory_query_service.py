@@ -6,9 +6,9 @@ from typing import Any
 import pytest
 from flow_res import Err, Ok
 
+from app.contracts.messages.chat_type import ChatType
 from app.domain.queries.raw_chat_log_query import LongTermMemorySourceItem
 from app.domain.repositories import RepositoryError, RepositoryErrorType
-from app.domain.value_objects.chat_type import ChatType
 from app.infrastructure.queries.long_term_memory_query_service import (
     LongTermMemoryQueryService,
 )
@@ -58,6 +58,7 @@ async def test_list_pending_targets_groups_by_day_and_sorts_logs(
     service = LongTermMemoryQueryService()
     targets = await service.list_pending_targets(
         query,
+        character_id="shirasagi-reina",
         reference_time=datetime(2026, 5, 19, 9, 0, tzinfo=UTC),
     )
 
@@ -70,7 +71,8 @@ async def test_list_pending_targets_groups_by_day_and_sorts_logs(
         "raw-c",
     ]
     query.list_pending_memory_user_ids.assert_awaited_once_with(
-        until=datetime(2026, 5, 19, 0, 0, tzinfo=UTC),
+        "shirasagi-reina",
+        until=datetime(2026, 5, 18, 15, 0, tzinfo=UTC),
         limit=10000,
     )
     assert query.get_pending_memory_source_items.await_count == 2
@@ -97,6 +99,7 @@ async def test_list_pending_targets_raises_on_repository_error(
     with pytest.raises(RuntimeError, match="boom"):
         await service.list_pending_targets(
             query,
+            character_id="shirasagi-reina",
             reference_time=datetime(2026, 5, 19, tzinfo=UTC),
         )
 
@@ -109,9 +112,10 @@ def _long_term_memory_source_item(
 ) -> LongTermMemorySourceItem:
     return LongTermMemorySourceItem(
         id=raw_id,
+        character_id="shirasagi-reina",
         user_id="u1",
         role="user",
         chat_type=chat_type,
-        message_content={"payload": {"text": raw_id}},
+        message_content={"type": "TEXT", "payload": {"texts": [raw_id]}},
         created_at=created_at,
     )

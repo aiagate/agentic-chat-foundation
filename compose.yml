@@ -45,7 +45,9 @@ services:
       - .env.local
       - .env.docker
     volumes:
-      - ./memory:/app/memory
+      - ./memory/profiles/users:/app/memory/profiles/users
+      - ./memory/timeline:/app/memory/timeline
+      - ./memory/entities:/app/memory/entities
     command: ["uv", "run", "--frozen", "--no-dev", "start-bot"]
     depends_on:
       migrate:
@@ -64,7 +66,9 @@ services:
       - .env.local
       - .env.docker
     volumes:
-      - ./memory:/app/memory
+      - ./memory/profiles/users:/app/memory/profiles/users
+      - ./memory/timeline:/app/memory/timeline
+      - ./memory/entities:/app/memory/entities
     command: ["uv", "run", "--frozen", "--no-dev", "start-line"]
     depends_on:
       migrate:
@@ -81,7 +85,9 @@ services:
       - .env.local
       - .env.docker
     volumes:
-      - ./memory:/app/memory
+      - ./memory/profiles/users:/app/memory/profiles/users
+      - ./memory/timeline:/app/memory/timeline
+      - ./memory/entities:/app/memory/entities
     command: ["uv", "run", "--frozen", "--no-dev", "start-worker"]
     depends_on:
       migrate:

@@ -12,7 +12,7 @@ dependencies = [
     "fastapi>=0.124.4",
     "flow-med>=0.1.1",
     "flow-res==0.1.1",
-    "google-genai>=2.0.1",
+    "google-genai>=2.11.0",
     "injector>=0.22.0",
     "line-bot-sdk>=3.23.0",
     "openai>=2.36.0",

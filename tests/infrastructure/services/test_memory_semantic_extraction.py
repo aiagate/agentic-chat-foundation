@@ -14,29 +14,32 @@ from flow_res import Ok, Result, is_ok
 from app.contracts.messages.agent_profile import AgentProfileBundle
 from app.contracts.messages.character_definition import CharacterDefinition
 from app.contracts.messages.chat_history import ChatHistoryItem
+from app.contracts.messages.chat_type import ChatType
 from app.contracts.messages.generated_content import GeneratedContent
-from app.contracts.messages.memory_context import MemoryProfile
 from app.contracts.messages.memory_semantic_extraction import (
     LongTermMemoryChatLog,
+    MemoryEntityPatch,
+    MemoryProfilePatch,
     MemorySectionSummary,
     MemorySemanticExtractionRequest,
     MemoryTimelineSectionPatch,
 )
-from app.contracts.messages.relationship_growth import MAX_DAILY_SCORE_INCREASE
 from app.contracts.messages.tool_contracts import ToolDefinition
 from app.contracts.messages.tool_result_context import ToolResultContext
 from app.contracts.ports.agent_profile_service import IAgentProfileService
 from app.contracts.ports.ai_service import AIServiceError, IAIService
 from app.domain.queries.raw_chat_log_query import LongTermMemorySourceItem
-from app.domain.value_objects.chat_type import ChatType
 from app.infrastructure.memory.store import FilesystemMemoryStore
 from app.infrastructure.services.memory_consolidation import (
     MemoryConsolidationService,
     _validate_section_source_chat_ids,
+    _write_entity_patch,
+    _write_profile_patch,
 )
 from app.infrastructure.services.memory_semantic_extraction import (
     MemorySemanticExtractionService,
 )
+from tests._relationship_fixture import relationship_definition
 
 
 class _FakeAIService(IAIService):
@@ -68,12 +71,15 @@ class _FakeAIService(IAIService):
                     "confidence": 0.92,
                 }
             ],
-            "timeline_patch": None,
             "entity_patches": [],
             "profile_patch": None,
             "evidence": {
                 "notes": ["User mentioned project-x"],
             },
+            "source_evaluations": [
+                {"chat_id": "raw-1", "disposition": "used", "reason": "根拠"},
+                {"chat_id": "raw-2", "disposition": "used", "reason": "根拠"},
+            ],
         }
         return Ok(GeneratedContent(contents=[json.dumps(payload)]))
 
@@ -129,7 +135,6 @@ class _RetryingAIService(IAIService):
             )
 
         payload = {
-            "timeline_patch": None,
             "sections": [
                 {
                     "id": "u1-2026-05-18-work-progress",
@@ -153,6 +158,10 @@ class _RetryingAIService(IAIService):
             "evidence": {
                 "notes": ["User mentioned project-x"],
             },
+            "source_evaluations": [
+                {"chat_id": "raw-1", "disposition": "used", "reason": "根拠"},
+                {"chat_id": "raw-2", "disposition": "used", "reason": "根拠"},
+            ],
         }
         return Ok(GeneratedContent(contents=[json.dumps(payload, ensure_ascii=False)]))
 
@@ -191,12 +200,7 @@ class _FakeAgentProfileService(IAgentProfileService):
 
 
 AGENT_PROFILE_BUNDLE = AgentProfileBundle(
-    profile=MemoryProfile(user_id="ai"),
-    character=CharacterDefinition(
-        character_id="jondue",
-        relationship_entity_id="relationship:jondue",
-        relationship_entity_label="Relationship with Jon Due",
-    ),
+    character=CharacterDefinition(character_id="jondue"),
     persona_context="\n".join(
         [
             "You are Jon Due, a calm host persona.",
@@ -204,10 +208,7 @@ AGENT_PROFILE_BUNDLE = AgentProfileBundle(
             "Keep responses warm, clear, and attentive.",
         ]
     ),
-    relationship_entity_id="relationship:jondue",
-    relationship_entity_label="Relationship with Jon Due",
-    relationship_entity_type="relationship",
-    relationship_tag="agent-growth",
+    relationship=relationship_definition(),
 )
 
 
@@ -263,30 +264,23 @@ class _RelationshipAIService(IAIService):
         del prompt, history, system_instruction, tool_definitions, tool_results
         payload = {
             "sections": [],
-            "timeline_patch": None,
-            "entity_patches": [
-                {
-                    "id": AGENT_PROFILE_BUNDLE.relationship_entity_id,
-                    "user_id": "u1",
-                    "label": AGENT_PROFILE_BUNDLE.relationship_entity_label,
-                    "entity_type": AGENT_PROFILE_BUNDLE.relationship_entity_type,
-                    "status": "active",
-                    "aliases": [],
-                    "attributes": {},
-                    "properties": {
-                        "trust_score": 80,
-                        "warmth_score": 80,
-                        "evidence_count": 2,
-                        "recent_signal": "There was a polite follow-up conversation.",
-                    },
-                    "missing_attributes": [],
-                    "confidence": 0.91,
-                }
-            ],
+            "entity_patches": [],
             "profile_patch": None,
             "evidence": {
                 "notes": ["User returned and continued a respectful topic"],
             },
+            "source_evaluations": [
+                {"chat_id": "raw-1", "disposition": "used", "reason": "根拠"}
+            ],
+            "relationship_signals": [
+                {
+                    "kind": "positive",
+                    "confidence": 0.91,
+                    "reason": "丁寧な会話を継続した",
+                    "source_chat_ids": ["raw-1"],
+                    "observed_at": "2026-05-18T10:00:00Z",
+                }
+            ],
         }
         return Ok(GeneratedContent(contents=[json.dumps(payload, ensure_ascii=False)]))
 
@@ -362,6 +356,7 @@ async def test_memory_semantic_extraction_service_logs_references_and_result(
             LongTermMemoryChatLog(
                 id="raw-1",
                 user_id="u1",
+                character_id="shirasagi-reina",
                 role="user",
                 chat_type=ChatType.DISCORD,
                 content="Planning project-x and checking next steps.",
@@ -499,24 +494,33 @@ async def test_memory_consolidation_includes_recent_timeline_summaries_in_prompt
     raw_logs = [
         LongTermMemorySourceItem(
             id="raw-1",
+            character_id="shirasagi-reina",
             user_id="u1",
             role="user",
             chat_type=ChatType.DISCORD,
-            message_content={"payload": {"text": "Planning project-x."}},
+            message_content={
+                "type": "TEXT",
+                "payload": {"texts": ["Planning project-x."]},
+            },
             created_at=datetime(2026, 5, 18, 10, 0, tzinfo=UTC),
         ),
         LongTermMemorySourceItem(
             id="raw-2",
+            character_id="shirasagi-reina",
             user_id="u1",
             role="assistant",
             chat_type=ChatType.LINE,
-            message_content={"payload": {"text": "Captured memory update."}},
+            message_content={
+                "type": "TEXT",
+                "payload": {"texts": ["Captured memory update."]},
+            },
             created_at=datetime(2026, 5, 18, 11, 0, tzinfo=UTC),
         ),
     ]
 
     recording_ai = _RecordingAIService()
     service = MemoryConsolidationService(
+        store=store,
         semantic_extraction_service=MemorySemanticExtractionService(
             recording_ai,
             _FakeAgentProfileService(),
@@ -524,15 +528,15 @@ async def test_memory_consolidation_includes_recent_timeline_summaries_in_prompt
         agent_profile_service=_FakeAgentProfileService(),
     )
 
-    consolidated_count = await service.consolidate_chat_logs(
-        store,
+    consolidation_result = await service.consolidate_chat_logs(
         user_id="u1",
         day=datetime(2026, 5, 18).date(),
         raw_logs=raw_logs,
         reference_time=datetime(2026, 5, 19, tzinfo=UTC),
     )
 
-    assert consolidated_count == 1
+    assert consolidation_result.episode_upserted_count == 1
+    assert consolidation_result.evaluated_chat_ids == ("raw-1", "raw-2")
     assert recording_ai.last_prompt is not None
     assert '"source_chat_ids": ["raw-chat-id"]' in recording_ai.last_prompt
     assert "1 つの raw log id を複数の section" in recording_ai.last_prompt
@@ -541,12 +545,12 @@ async def test_memory_consolidation_includes_recent_timeline_summaries_in_prompt
     assert "Yesterday summary" in recording_ai.last_prompt
     assert "ラノベのタイトルや章タイトルのように" in recording_ai.last_prompt
     assert "8〜14 文字前後" in recording_ai.last_prompt
-    assert AGENT_PROFILE_BUNDLE.relationship_entity_id in recording_ai.last_prompt
-    assert "依存、嫉妬、独占欲、駆け引き" in recording_ai.last_prompt
+    assert '"relationship_signals"' in recording_ai.last_prompt
+    assert "関係状態をEntityとして出力せず" in recording_ai.last_prompt
 
 
 @pytest.mark.anyio
-async def test_organize_long_term_memory_uses_semantic_extraction_service(
+async def test_consolidate_conversation_history_uses_semantic_extraction_service(
     tmp_path: Path,
 ) -> None:
     """Memory organization should write from semantic extraction output."""
@@ -556,23 +560,32 @@ async def test_organize_long_term_memory_uses_semantic_extraction_service(
     raw_logs = [
         LongTermMemorySourceItem(
             id="raw-1",
+            character_id="shirasagi-reina",
             user_id="u1",
             role="user",
             chat_type=ChatType.DISCORD,
-            message_content={"payload": {"text": "Planning project-x."}},
+            message_content={
+                "type": "TEXT",
+                "payload": {"texts": ["Planning project-x."]},
+            },
             created_at=datetime(2026, 5, 18, 10, 0, tzinfo=UTC),
         ),
         LongTermMemorySourceItem(
             id="raw-2",
+            character_id="shirasagi-reina",
             user_id="u1",
             role="assistant",
             chat_type=ChatType.LINE,
-            message_content={"payload": {"text": "Captured memory update."}},
+            message_content={
+                "type": "TEXT",
+                "payload": {"texts": ["Captured memory update."]},
+            },
             created_at=datetime(2026, 5, 18, 11, 0, tzinfo=UTC),
         ),
     ]
 
     service = MemoryConsolidationService(
+        store=store,
         semantic_extraction_service=MemorySemanticExtractionService(
             _FakeAIService(),
             _FakeAgentProfileService(),
@@ -580,8 +593,7 @@ async def test_organize_long_term_memory_uses_semantic_extraction_service(
         agent_profile_service=_FakeAgentProfileService(),
     )
 
-    consolidated_count = await service.consolidate_chat_logs(
-        store,
+    consolidation_result = await service.consolidate_chat_logs(
         user_id="u1",
         day=datetime(2026, 5, 18).date(),
         raw_logs=raw_logs,
@@ -589,16 +601,12 @@ async def test_organize_long_term_memory_uses_semantic_extraction_service(
     )
 
     work = store.read_document(
-        store.section_timeline_path(
-            user_id="u1",
-            day=datetime(2026, 5, 18).date(),
-            section_slug="work-progress",
-        ),
+        store.iter_timeline_paths("u1")[0],
         expected_memory_type="timeline",
         expected_user_id="u1",
     )
 
-    assert consolidated_count == 1
+    assert consolidation_result.episode_upserted_count == 1
     assert work.front_matter["summary_of"] == ["raw-1", "raw-2"]
     assert work.front_matter["source_chat_ids"] == ["raw-1", "raw-2"]
     assert "Team planning" in work.body
@@ -626,22 +634,31 @@ async def test_memory_consolidation_reuses_existing_section_for_same_raw_logs(
     raw_logs = [
         LongTermMemorySourceItem(
             id="raw-1",
+            character_id="shirasagi-reina",
             user_id="u1",
             role="user",
             chat_type=ChatType.DISCORD,
-            message_content={"payload": {"text": "Discussed project progress."}},
+            message_content={
+                "type": "TEXT",
+                "payload": {"texts": ["Discussed project progress."]},
+            },
             created_at=datetime(2026, 5, 18, 10, 0, tzinfo=UTC),
         ),
         LongTermMemorySourceItem(
             id="raw-2",
+            character_id="shirasagi-reina",
             user_id="u1",
             role="assistant",
             chat_type=ChatType.LINE,
-            message_content={"payload": {"text": "Captured memory update."}},
+            message_content={
+                "type": "TEXT",
+                "payload": {"texts": ["Captured memory update."]},
+            },
             created_at=datetime(2026, 5, 18, 11, 0, tzinfo=UTC),
         ),
     ]
     service = MemoryConsolidationService(
+        store=store,
         semantic_extraction_service=MemorySemanticExtractionService(
             _FakeAIService(),
             _FakeAgentProfileService(),
@@ -649,8 +666,7 @@ async def test_memory_consolidation_reuses_existing_section_for_same_raw_logs(
         agent_profile_service=_FakeAgentProfileService(),
     )
 
-    consolidated_count = await service.consolidate_chat_logs(
-        store,
+    consolidation_result = await service.consolidate_chat_logs(
         user_id="u1",
         day=day,
         raw_logs=raw_logs,
@@ -673,7 +689,7 @@ async def test_memory_consolidation_reuses_existing_section_for_same_raw_logs(
         expected_user_id="u1",
     )
 
-    assert consolidated_count == 1
+    assert consolidation_result.episode_upserted_count == 1
     assert existing_path.exists()
     assert not new_path.exists()
     assert existing.front_matter["section_slug"] == "existing-work-progress"
@@ -682,24 +698,28 @@ async def test_memory_consolidation_reuses_existing_section_for_same_raw_logs(
 
 
 @pytest.mark.anyio
-async def test_memory_consolidation_upserts_relationship_entity_with_clamped_growth(
+async def test_memory_consolidation_returns_relationship_signals_without_entity(
     tmp_path: Path,
 ) -> None:
-    """Relationship patches should persist as user-scoped Entity memory."""
+    """Relationship signals should leave memory Entity persistence untouched."""
 
     store = FilesystemMemoryStore(tmp_path / "memory")
-    _write_relationship_entity(store, user_id="u1", trust_score=8, warmth_score=4)
     raw_logs = [
         LongTermMemorySourceItem(
             id="raw-1",
+            character_id="shirasagi-reina",
             user_id="u1",
             role="user",
             chat_type=ChatType.DISCORD,
-            message_content={"payload": {"text": "今日も少し話したくて来た。"}},
+            message_content={
+                "type": "TEXT",
+                "payload": {"texts": ["今日も少し話したくて来た。"]},
+            },
             created_at=datetime(2026, 5, 18, 10, 0, tzinfo=UTC),
         )
     ]
     service = MemoryConsolidationService(
+        store=store,
         semantic_extraction_service=MemorySemanticExtractionService(
             _RelationshipAIService(),
             _FakeAgentProfileService(),
@@ -707,33 +727,102 @@ async def test_memory_consolidation_upserts_relationship_entity_with_clamped_gro
         agent_profile_service=_FakeAgentProfileService(),
     )
 
-    consolidated_count = await service.consolidate_chat_logs(
-        store,
+    consolidation_result = await service.consolidate_chat_logs(
         user_id="u1",
         day=datetime(2026, 5, 18).date(),
         raw_logs=raw_logs,
         reference_time=datetime(2026, 5, 19, tzinfo=UTC),
     )
 
-    relationship = store.read_document(
-        store.entity_path("u1", AGENT_PROFILE_BUNDLE.relationship_entity_id),
-        expected_memory_type="entity",
-        expected_user_id="u1",
+    assert consolidation_result.episode_upserted_count == 0
+    assert consolidation_result.entity_upserted_count == 0
+    assert len(consolidation_result.relationship_signals) == 1
+    assert consolidation_result.relationship_signals[0].kind == "positive"
+    assert not store.iter_entity_paths("u1")
+
+
+def test_profile_correction_replaces_obsolete_preferences(tmp_path: Path) -> None:
+    store = FilesystemMemoryStore(tmp_path / "memory")
+    store.write_document(
+        store.user_profile_path("u1"),
+        front_matter={
+            "schema_version": 1,
+            "memory_type": "profile",
+            "id": "profile:u1",
+            "user_id": "u1",
+            "profile_scope": "user",
+            "summary": "食の好み",
+            "traits": [],
+            "preferences": ["ぶどうが好き"],
+            "created_at": "2026-05-17T00:00:00+00:00",
+            "updated_at": "2026-05-17T00:00:00+00:00",
+        },
+        body="# u1",
     )
 
-    assert consolidated_count == 0
-    assert (
-        relationship.front_matter["entity_type"]
-        == AGENT_PROFILE_BUNDLE.relationship_entity_type
+    _write_profile_patch(
+        store,
+        user_id="u1",
+        profile_patch=MemoryProfilePatch(
+            user_id="u1",
+            summary="食の好み",
+            preferences=["ぶどうが嫌い"],
+            confidence=0.95,
+            source_chat_ids=["raw-1"],
+            observed_at=datetime(2026, 5, 18, 10, 0, tzinfo=UTC),
+            update_mode="replace",
+        ),
+        reference_time=datetime(2026, 5, 19, tzinfo=UTC),
     )
-    properties = cast(dict[str, object], relationship.front_matter["properties"])
-    assert properties["trust_score"] == 8 + MAX_DAILY_SCORE_INCREASE
-    assert properties["warmth_score"] == 4 + MAX_DAILY_SCORE_INCREASE
-    assert properties["stage"] == 1
-    assert properties["stage_name"] == "acquaintance"
-    assert properties["recent_signal"] == "There was a polite follow-up conversation."
-    assert relationship.front_matter["source_chat_ids"] == ["raw-1"]
-    assert "## Relationship Stage" in relationship.body
+
+    profile = store.read_document(
+        store.user_profile_path("u1"),
+        expected_memory_type="profile",
+        expected_user_id="u1",
+    )
+    assert profile.front_matter["preferences"] == ["ぶどうが嫌い"]
+    assert "ぶどうが好き" not in profile.body
+
+
+def test_entity_transition_retains_previous_temporal_value(tmp_path: Path) -> None:
+    store = FilesystemMemoryStore(tmp_path / "memory")
+    _write_entity(store, user_id="u1", entity_id="employment")
+    entity_path = store.entity_path("u1", "employment")
+    existing = store.read_document(entity_path)
+    existing_front_matter = dict(existing.front_matter)
+    existing_front_matter["properties"] = {"company": "旧会社"}
+    existing_front_matter["source_chat_ids"] = ["raw-old"]
+    store.write_document(
+        entity_path,
+        front_matter=existing_front_matter,
+        body=existing.body,
+    )
+
+    _write_entity_patch(
+        store,
+        entity_patch=MemoryEntityPatch(
+            id="employment",
+            user_id="u1",
+            label="勤務先",
+            entity_type="employment",
+            status="active",
+            properties={"company": "新会社"},
+            confidence=0.9,
+            source_chat_ids=["raw-new"],
+            observed_at=datetime(2026, 5, 18, 10, 0, tzinfo=UTC),
+            update_mode="transition",
+        ),
+        source_chat_ids=["raw-new"],
+        reference_time=datetime(2026, 5, 19, tzinfo=UTC),
+    )
+
+    entity = store.read_document(entity_path)
+    assert cast(dict[str, object], entity.front_matter["properties"])["company"] == (
+        "新会社"
+    )
+    history = cast(list[dict[str, object]], entity.front_matter["property_history"])
+    assert history[0]["value"] == "旧会社"
+    assert history[0]["source_chat_ids"] == ["raw-old"]
 
 
 def _write_entity(
@@ -754,7 +843,6 @@ def _write_entity(
             "status": "active",
             "aliases": [],
             "properties": {},
-            "attributes": {},
             "missing_attributes": [],
             "referenced_in": [],
             "created_at": "2026-05-18T00:00:00+00:00",
@@ -766,48 +854,6 @@ def _write_entity(
             "metadata": {},
         },
         body="# Project X",
-    )
-
-
-def _write_relationship_entity(
-    store: FilesystemMemoryStore,
-    *,
-    user_id: str,
-    trust_score: int,
-    warmth_score: int,
-) -> None:
-    store.write_document(
-        store.entity_path(user_id, AGENT_PROFILE_BUNDLE.relationship_entity_id),
-        front_matter={
-            "schema_version": 1,
-            "memory_type": "entity",
-            "id": AGENT_PROFILE_BUNDLE.relationship_entity_id,
-            "user_id": user_id,
-            "label": AGENT_PROFILE_BUNDLE.relationship_entity_label,
-            "entity_type": AGENT_PROFILE_BUNDLE.relationship_entity_type,
-            "status": "active",
-            "aliases": [],
-            "properties": {
-                "stage": 0,
-                "stage_name": "first-time guest",
-                "trust_score": trust_score,
-                "warmth_score": warmth_score,
-                "evidence_count": 1,
-                "recent_signal": "初回の会話",
-            },
-            "attributes": {},
-            "missing_attributes": [],
-            "referenced_in": [],
-            "source_chat_ids": [],
-            "created_at": "2026-05-17T00:00:00+00:00",
-            "updated_at": "2026-05-17T00:00:00+00:00",
-            "tags": ["relationship", "agent-growth"],
-            "importance": 0.75,
-            "confidence": 1.0,
-            "pinned": False,
-            "metadata": {},
-        },
-        body="# Relationship with Jon Due",
     )
 
 

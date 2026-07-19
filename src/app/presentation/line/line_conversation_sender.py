@@ -25,6 +25,7 @@ class LineConversationResultSender(ConversationResultSender):
                 delivered=False,
                 failure_reason="Response has no text content",
             )
+        delivered_count = 0
         try:
             for content in contents:
                 await self._api.push_message(
@@ -41,10 +42,17 @@ class LineConversationResultSender(ConversationResultSender):
                         customAggregationUnits=None,
                     )
                 )
+                delivered_count += 1
         except Exception as exc:
             return DeliveryResult(
                 message_id=result.message_id,
                 delivered=False,
+                delivered_count=delivered_count,
+                failed_content_index=delivered_count,
                 failure_reason=str(exc),
             )
-        return DeliveryResult(message_id=result.message_id, delivered=True)
+        return DeliveryResult(
+            message_id=result.message_id,
+            delivered=True,
+            delivered_count=delivered_count,
+        )

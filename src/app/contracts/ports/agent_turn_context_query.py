@@ -31,7 +31,10 @@ class IAgentTurnContextQuery(ABC):
         chat_id: str,
         provided_prompt: str | None,
         chat_type: ChatType,
+        character_id: str,
         user_id: str,
+        external_conversation_id: str,
+        before_order_key: int | None = None,
         guild_id: str,
         channel_id: str,
     ) -> Result[AgentTurnContext, AgentTurnContextQueryError]:

@@ -9,17 +9,21 @@ from flow_res import Err, Ok, is_err
 from app.contracts.messages.agent_profile import AgentProfileBundle
 from app.contracts.messages.agent_turn_context import AgentTurnContext
 from app.contracts.messages.character_definition import CharacterDefinition
+from app.contracts.messages.chat_type import ChatType
 from app.contracts.messages.conversation_context import ConversationContext
-from app.contracts.messages.memory_context import MemoryContextPack, MemoryProfile
+from app.contracts.messages.memory_context import MemoryContextPack
+from app.contracts.messages.relationship import RelationshipStateView
 from app.contracts.messages.tool_result_context import ToolResultContext
 from app.contracts.ports.agent_inference_context import AgentInferenceContextRequest
 from app.contracts.ports.agent_profile_service import IAgentProfileService
 from app.contracts.ports.memory_service import IMemoryService, MemoryServiceError
-from app.domain.value_objects.chat_type import ChatType
+from app.contracts.ports.relationship import IRelationshipQuery
+from app.domain.aggregates.character_relationship import RelationshipStageId
 from app.infrastructure.services.agent_inference_context import (
     AgentInferenceContextService,
 )
 from app.infrastructure.services.tool_catalog import StaticToolCatalog
+from tests._relationship_fixture import relationship_definition
 
 
 def _turn_context() -> AgentTurnContext:
@@ -38,17 +42,9 @@ def _turn_context() -> AgentTurnContext:
 
 def _profile_bundle() -> AgentProfileBundle:
     return AgentProfileBundle(
-        profile=MemoryProfile(user_id="ai"),
-        character=CharacterDefinition(
-            character_id="character-1",
-            relationship_entity_id="relationship:character-1",
-            relationship_entity_label="Relationship",
-        ),
+        character=CharacterDefinition(character_id="character-1"),
         persona_context="Persona contract",
-        relationship_entity_id="relationship:character-1",
-        relationship_entity_label="Relationship",
-        relationship_entity_type="relationship",
-        relationship_tag="agent-growth",
+        relationship=relationship_definition(),
     )
 
 
@@ -57,10 +53,23 @@ def _service(mocker: Any, *, memory_result: Any) -> AgentInferenceContextService
     memory_service.build_context = mocker.AsyncMock(return_value=memory_result)
     profile_service = mocker.Mock(spec=IAgentProfileService)
     profile_service.load_agent_profile_bundle.return_value = _profile_bundle()
+    relationship_query = mocker.Mock(spec=IRelationshipQuery)
+    relationship_query.get = mocker.AsyncMock(
+        return_value=Ok(
+            RelationshipStateView(
+                character_id="character-1",
+                user_id="user-1",
+                affection=0,
+                stage_id=RelationshipStageId.DISTANT,
+                version=1,
+            )
+        )
+    )
     return AgentInferenceContextService(
         memory_service,
         profile_service,
         StaticToolCatalog(),
+        relationship_query,
     )
 
 
@@ -76,6 +85,7 @@ async def test_context_service_assembles_line_tools_and_memory(mocker: Any) -> N
     result = await service.assemble(
         AgentInferenceContextRequest(
             turn_context=_turn_context(),
+            message_id="message-1",
             user_id="user-1",
             character_id="character-1",
             chat_type=ChatType.LINE,
@@ -88,7 +98,6 @@ async def test_context_service_assembles_line_tools_and_memory(mocker: Any) -> N
     assert {tool.name for tool in result.value.tool_definitions} == {
         "web_search",
         "memory.read",
-        "memory.write_candidate",
         "line.send",
     }
 
@@ -103,6 +112,7 @@ async def test_context_service_uses_durable_tool_results(mocker: Any) -> None:
     result = await service.assemble(
         AgentInferenceContextRequest(
             turn_context=_turn_context(),
+            message_id="message-1",
             user_id="user-1",
             character_id="character-1",
             chat_type=ChatType.LINE,
@@ -135,6 +145,7 @@ async def test_context_service_maps_memory_failure(mocker: Any) -> None:
     result = await service.assemble(
         AgentInferenceContextRequest(
             turn_context=_turn_context(),
+            message_id="message-1",
             user_id="user-1",
             character_id="character-1",
             chat_type=ChatType.DISCORD,

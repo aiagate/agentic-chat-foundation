@@ -1,10 +1,10 @@
 # agentic-chat-foundation
 
-`agentic-chat-foundation` は、Discord / LINE のチャネル入口と、周期記憶整理Workerを持つ
-agentic chat application foundation です。
+`agentic-chat-foundation` は、外部の会話チャネルからの入力を受け付け、対話相手との継続的な会話と
+長期記憶を扱う agentic chat application foundation です。
 
-単純な Discord Bot の雛形ではなく、チャット入力、AI 推論、tool 実行、返信送信、
-長期 memory、検索、DB 永続化をそれぞれ独立した境界で扱うための土台として作られています。
+単純な chatbot の雛形ではなく、会話の受付、応答作成、結果の通知、長期記憶の整理を
+それぞれの業務境界で扱うための土台として作られています。
 
 このプロジェクトは現在開発中です。実装、ドキュメント、移行計画は継続的に更新されています。
 
@@ -12,91 +12,65 @@ agentic chat application foundation です。
 
 このリポジトリは、次のようなアプリケーションを作るためのテンプレートです。
 
-- Discord DM と LINE webhook の入力を受ける1対1テキスト chatbot
-- LLM が提案した外部情報取得を応答作成中に同期実行する workflow
-- Web search や memory.read の結果を短期 context として再推論へ戻す応答生成
-- SQL raw chat log と Markdown long-term memory を分離した memory system
-- Discord / LINE のチャネル処理と、周期的な長期記憶整理を別プロセスとして運用できる構成
+- 外部の会話チャネルを通じた1対1のテキスト会話
+- 現在の会話、過去の交流から整理された長期記憶、必要な外部情報を用いた応答作成
+- 利用者のメッセージの受付、記録、応答、結果の通知
+- 会話から人物像、出来事、対象・関係を長期記憶として整理すること
+- 複数チャネル上の利用者識別子を一人の利用者へ結び付けること
 
-## 現在のプロセス構成
+## 主な能力
 
-Docker Compose では、主に次の process / service を起動します。
+- 外部の会話チャネルを通じた1対1のテキスト会話
+- 現在の会話、過去の交流から整理された長期記憶、必要な外部情報を用いた応答作成
+- 利用者のメッセージの受付、記録、応答、結果の通知
+- 会話から人物像、出来事、対象・関係を長期記憶として整理すること
+- 複数チャネル上の利用者識別子を一人の利用者へ結び付け、利用者の境界を守ること
+- 独立起動した複数のDiscord Botが、共有DBを使わず同じチャンネルで議論すること
 
-- `bot`: Discord Bot process
-- `line`: LINE webhook と LINE 返信 sender を持つ FastAPI process
-- `worker`: scheduled long-term memory organization を処理する Worker process
-- `migrate`: Alembic migration runner
-- `postgres`: application database
-
-チャットの返信は、受信したprocess内で受付→応答作成→配信を同期的に完了します。配信に成功した
-assistant応答だけをraw chat logへ保存し、次の応答とUC-04の記憶整理で利用します。
+会話の受付、応答作成、結果の通知は一つの要求に対する論理的な流れとして扱います。
+長期記憶の整理は、利用者の応答とは異なる定期的な契機から行います。
 
 ## 設計の中心
 
-このプロジェクトは Clean Architecture を基調にし、チャネル入口から共通の会話UseCaseを
-同期的に呼び出します。
-
-主な境界は次の通りです。
-
-- `src/app/presentation`: Discord、LINE、Worker の入口と送信処理
-- `src/app/usecases`: Command / Query / Handler による application flow
-- `src/app/application`: UseCaseから再利用する応答作成の補助サービス
-- `src/app/domain`: 会話・記憶に固有のvalue object、repository / query 契約
-- `src/app/contracts/ports`: AI、memory、tool、会話送信などの application boundary
-- `src/app/contracts/messages`: 会話・AI・memory のDTO
-- `src/app/infrastructure`: DB、ORM、AI provider、memory、store、query 実装
-
-アプリケーション境界の契約は `contracts/ports` と `contracts/messages` に置きます。
-Domain固有の不変条件に閉じる型は `domain` に置き、複数レイヤーの境界契約は `contracts` に置きます。
+このプロジェクトは、外部入口、業務ユースケース、ドメイン概念、技術アダプタを分離する
+アーキテクチャを基調にしています。依存方向と境界の詳細は
+[アーキテクチャ概要](docs/architecture/architecture-overview.md)で定義します。
 
 ## 応答作成
 
-受付済みメッセージについて、履歴・長期記憶・対話相手の設定を読み込み、必要なtool callを
-同期実行してから再推論します。応答作成、外部情報取得、配信のいずれかに失敗した場合は、
-自動retryや永続待機を行わず、その結果を利用者へ届けます。
+受付済みメッセージについて、会話履歴、長期記憶、対話相手の設定、必要な外部情報を用いて
+応答を作成します。応答を作成または届けられない場合は、応答不能の結果として扱います。
 
 ## Memory
 
-Memory は raw chat log と long-term memory を分けて扱います。
+Memory は会話履歴と長期記憶を分けて扱います。会話履歴は意味を変えない記録、長期記憶は
+将来の対話に有用な意味を整理した結果です。長期記憶には人物像、出来事、対象・関係を含め、
+それぞれに根拠と不確実性を持たせます。
 
-- SQL database: raw chat log の source of truth
-- Markdown memory: Profile、Timeline summary、Entity などの抽象 memory
-- Main SQL database: migration 管理された再構築可能な search projection
-- PostgreSQL: raw chat logと長期記憶の検索projection
-
-現行の read path は compact な memory manifest 方式です。応答作成では
-`memory_id + 1行概要` を system context に注入し、詳細が必要なときだけ本文を読み取ります。
-
-記憶の更新は周期的なUC-04に集約し、raw chatの正本はSQLです。全件rebuild、repair、backupなどの
-耐障害性専用処理は業務フローに含めません。
-
-## 技術要素
-
-- Python 3.13
-- `uv`
-- `discord.py`
-- FastAPI
-- LINE Bot SDK
-- `flow-med` / `flow-res`
-- `injector`
-- SQLModel / SQLAlchemy / Alembic
-- PostgreSQL / SQLite
-- Google Gemini / OpenAI
-- Ollama web search adapter
-- Ruff / Pyright / pytest
+外部情報は現在の応答の根拠として扱い、取得しただけで長期記憶へ加えません。
+複数チャネル上の識別子を同じ利用者へ結び付けた場合も、会話履歴と長期記憶は同じ利用者の境界で扱います。
 
 ## ドキュメント
 
-詳細は `docs/` 配下に分かれています。
+業務上の説明は `docs/product/` と `docs/architecture/`、技術リファレンスは
+`docs/infrastructure/` 配下に分かれています。
 
-- [アクター別ハイレベルユースケースとユースケース記述](docs/product/application-use-cases.md)
-- [ユースケース準拠の一括改修計画](docs/architecture/application-rebuild-plan.md)
+### 業務・設計
+
+- [ユースケース知識バンドル](docs/product/application-use-cases/index.md)
+- [ユビキタス言語バンドル](docs/product/ubiquitous-language/index.md)
+- [Discord公開議論バンドル](docs/product/discussion/index.md)
 - [アーキテクチャ概要](docs/architecture/architecture-overview.md)
-- [Agentic Chat Orchestration](docs/architecture/patterns/agentic-chat-orchestration.md)
-- [LLM Web Search Orchestration](docs/architecture/patterns/llm-web-search-orchestration.md)
+
+### 技術リファレンス
+
 - [Domain 実装ガイド](docs/domain/domain-implementation-guide.md)
-- [Memory Markdown Schema](docs/infrastructure/memory-markdown-schema.md)
+- [ドメイン図](docs/domain/domain-diagram.md)
+- [Memory Markdown Schema バンドル](docs/infrastructure/memory-markdown-schema/index.md)
+- [User Identity Mapping](docs/infrastructure/user-identity-mapping.md)
+- [Autonomous Discord Discussion](docs/infrastructure/discord-autonomous-discussion.md)
 - [Memory Write Flow](docs/infrastructure/memory-write-flow.md)
+- [Relationship System](docs/infrastructure/relationship-system.md)
 - [Database Migrations](docs/infrastructure/database-migrations.md)
 
 ## 開発時の前提

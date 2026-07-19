@@ -3,17 +3,26 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Protocol
 
 from flow_res import Result
 
 from app.domain.queries.chat_history_query import IChatHistoryQuery
 from app.domain.queries.raw_chat_log_query import IRawChatLogQuery
 from app.domain.repositories.interfaces import (
+    ICharacterRelationshipRepository,
     IChatRecordRepository,
     IMemoryConsolidatedChatSourceRepository,
     RepositoryError,
 )
+
+
+class IUnitOfWorkFactory(Protocol):
+    """Create an independent transaction boundary for one operation."""
+
+    def create(self) -> IUnitOfWork:
+        """Return a fresh, request-local unit of work."""
+        ...
 
 
 class IUnitOfWork(ABC):
@@ -39,6 +48,14 @@ class IUnitOfWork(ABC):
         self,
     ) -> IMemoryConsolidatedChatSourceRepository:
         """Return the memory projection writer for the transaction."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def GetCharacterRelationshipRepository(
+        self,
+    ) -> ICharacterRelationshipRepository:
+        """Return the character relationship writer for the transaction."""
+
         raise NotImplementedError
 
     @abstractmethod

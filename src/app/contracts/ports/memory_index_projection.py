@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 
 from flow_res import Result
 
@@ -22,10 +23,12 @@ class IMemoryIndexProjection(ABC):
     """Internal projection boundary used after a memory write."""
 
     @abstractmethod
-    async def refresh_for_user(
+    async def apply_changes(
         self,
         *,
         user_id: str,
+        upsert_paths: list[Path],
+        delete_paths: list[Path],
     ) -> Result[int, MemoryIndexError]:
-        """Synchronize one user's current Markdown documents into SQL."""
+        """Apply changed Markdown paths to one user's SQL projection."""
         raise NotImplementedError

@@ -15,7 +15,9 @@ from app.contracts.messages.conversation import (
 class ConversationHistory(Protocol):
     """Canonical raw conversation history store."""
 
-    async def append(self, message: IncomingMessage) -> AcceptedMessage:
+    async def append(
+        self, message: IncomingMessage, *, user_id: str
+    ) -> AcceptedMessage:
         """Record an incoming message and return its canonical identity."""
         ...
 

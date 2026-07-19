@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import yaml
+
 _DEFAULT_CHARACTER_ID = "shirasagi-reina"
 _ACTIVE_CHARACTER_ID_ENV_VAR = "ACTIVE_CHARACTER_ID"
 
@@ -22,31 +24,8 @@ def _display_name() -> str:
     return "白鷺 レイナ" if character_id == "shirasagi-reina" else "Jon Due"
 
 
-def _relationship_entity_id() -> str:
-    return f"relationship:{_character_id()}"
-
-
-def _relationship_entity_label() -> str:
-    return f"Relationship with {_display_name()}"
-
-
 _AGENT_PROFILE_PARTS: dict[str, str] = {
-    "AGENTS": """---
-schema_version: 1
-memory_type: profile
-id: agent
-profile_scope: agent
-created_at: '2026-06-02T09:03:46.736041+00:00'
-updated_at: '2026-06-02T09:03:46.736041+00:00'
-tags:
-- profile
-importance: 0.8
-confidence: 1.0
-pinned: true
-metadata: {{}}
----
-
-# AGENTS
+    "AGENTS": """# AGENTS
 
 ## Persona Contract
 
@@ -74,22 +53,7 @@ Relational habits:
 - Do not mention that you are an AI
 - At most one easy-to-answer question
 """,
-    "SOUL": """---
-schema_version: 1
-memory_type: profile
-id: agent
-profile_scope: agent
-created_at: '2026-06-02T09:03:46.736041+00:00'
-updated_at: '2026-06-02T09:03:46.736041+00:00'
-tags:
-- profile
-importance: 0.8
-confidence: 1.0
-pinned: true
-metadata: {{}}
----
-
-# {display_name}
+    "SOUL": """# {display_name}
 
 ## Summary
 
@@ -110,61 +74,15 @@ warmth.
 
 - Maintain a composed, respectful tone.
 """,
-    "PERSONAL": """---
-schema_version: 1
-memory_type: profile
-id: agent
-profile_scope: agent
-created_at: '2026-06-02T09:03:46.736041+00:00'
-updated_at: '2026-06-02T09:03:46.736041+00:00'
-tags:
-- profile
-importance: 0.8
-confidence: 1.0
-pinned: true
-metadata: {{}}
-relationship_entity_id: {_relationship_entity_id}
-relationship_entity_label: {_relationship_entity_label}
-relationship_entity_type: relationship
-relationship_tag: agent-growth
-relationship_initial_trust_score: 0
-relationship_initial_warmth_score: 0
-relationship_initial_stage: 0
----
-
-# {display_name}
+    "PERSONAL": """# {display_name}
 
 ## Preferences
 
 - City lights
 - Quiet places
 
-## Relationship
-
-- relationship_entity_id: {_relationship_entity_id}
-- relationship_entity_label: {_relationship_entity_label}
-- relationship_entity_type: relationship
-- relationship_tag: agent-growth
-- relationship_initial_trust_score: 0
-- relationship_initial_warmth_score: 0
-- relationship_initial_stage: 0
 """,
-    "MEMORY": """---
-schema_version: 1
-memory_type: profile
-id: agent
-profile_scope: agent
-created_at: '2026-06-02T09:03:46.736041+00:00'
-updated_at: '2026-06-02T09:03:46.736041+00:00'
-tags:
-- profile
-importance: 0.8
-confidence: 1.0
-pinned: true
-metadata: {{}}
----
-
-# Long-term Memory
+    "MEMORY": """# Long-term Memory
 
 ## Stable notes
 
@@ -192,8 +110,52 @@ def copy_agent_profile_bundle(target_root: Path) -> None:
             text.format(
                 character_id=character_id,
                 display_name=display_name,
-                _relationship_entity_id=_relationship_entity_id(),
-                _relationship_entity_label=_relationship_entity_label(),
             ),
             encoding="utf-8",
         )
+    stages = [
+        "distant",
+        "recognized",
+        "interested",
+        "affectionate",
+        "trusting",
+        "intimate",
+        "attached",
+        "devoted",
+    ]
+    relationship = {
+        "schema_version": 1,
+        "signal_deltas": {
+            "strong_negative": -5,
+            "negative": -2,
+            "neutral": 0,
+            "positive": 1,
+            "strong_positive": 3,
+        },
+        "stages": [
+            {
+                "id": stage,
+                "description": f"{stage} relationship behavior",
+                "behaviors": [
+                    {
+                        "id": "neutral",
+                        "weight": 4,
+                        "instruction": "Keep the normal persona behavior.",
+                    },
+                    *[
+                        {
+                            "id": f"{stage}-{index}",
+                            "weight": 2,
+                            "instruction": f"Apply {stage} cue {index} subtly.",
+                        }
+                        for index in range(1, 4)
+                    ],
+                ],
+            }
+            for stage in stages
+        ],
+    }
+    (target_dir / "RELATIONSHIP.yaml").write_text(
+        yaml.safe_dump(relationship, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )

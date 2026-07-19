@@ -5,7 +5,6 @@ import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from pprint import pformat
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
@@ -23,7 +22,7 @@ from linebot.v3.webhook import WebhookParser
 
 from app import container
 from app.contracts.messages.conversation import IncomingMessage
-from app.infrastructure.database import init_db
+from app.infrastructure.database import init_db, sqlalchemy_echo_enabled
 from app.presentation.conversation_flow import ConversationFlow
 from app.presentation.line.line_conversation_sender import LineConversationResultSender
 from app.usecases.conversation.accept_incoming_message import (
@@ -78,7 +77,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     async_api_client = AsyncApiClient(configuration)
     app.state.line_bot_api = AsyncMessagingApi(async_api_client)
     db_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./bot.db")
-    init_db(db_url, echo=True)
+    init_db(db_url, echo=sqlalchemy_echo_enabled())
 
     injector = Injector([container.configure])
     app.state.conversation_flow = injector.get(ConversationFlow)
@@ -119,12 +118,18 @@ async def handle_callback(request: Request):
             raw_event.get("type"),
             raw_source.get("type"),
         )
-        logger.info("LINE raw event payload: %s", pformat(raw_event))
         logger.info(
-            "LINE event source inspection: event_index=%s source_type=%s source=%s",
+            "LINE event details: event_index=%s event_type=%s source_type=%s "
+            "message_type=%s webhook_event_id=%s",
             index,
+            raw_event.get("type"),
             raw_source.get("type"),
-            pformat(raw_source),
+            (
+                raw_event.get("message", {}).get("type")
+                if isinstance(raw_event.get("message"), dict)
+                else None
+            ),
+            raw_event.get("webhookEventId"),
         )
 
         if raw_event.get("type") != "message":
@@ -202,9 +207,12 @@ async def handle_callback(request: Request):
             )
         if result is not None and is_err(result):
             logger.error(
-                "Failed to process LINE message: event_index=%s source_type=%s",
+                "Failed to process LINE message: event_index=%s source_type=%s "
+                "external_message_id=%s error=%s",
                 index,
                 raw_source.get("type"),
+                incoming.external_message_id,
+                result.error.message,
             )
 
     return "OK"

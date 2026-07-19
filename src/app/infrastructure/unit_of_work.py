@@ -1,12 +1,12 @@
 """SQLAlchemy Unit of Work implementation."""
 
-
 from flow_res import Err, Ok, Result
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.contracts.ports.unit_of_work import IUnitOfWork
+from app.contracts.ports.unit_of_work import IUnitOfWork, IUnitOfWorkFactory
 from app.domain.repositories import (
+    ICharacterRelationshipRepository,
     IChatRecordRepository,
     IMemoryConsolidatedChatSourceRepository,
     RepositoryError,
@@ -17,6 +17,9 @@ from app.infrastructure.queries.chat_history_query import (
 )
 from app.infrastructure.queries.raw_chat_log_query import (
     SQLAlchemyRawChatLogQuery,
+)
+from app.infrastructure.repositories.character_relationship_repository import (
+    CharacterRelationshipRepository,
 )
 from app.infrastructure.repositories.chat_record_repository import (
     ChatRecordRepository,
@@ -35,6 +38,9 @@ class SQLAlchemyUnitOfWork(IUnitOfWork):
         self._chat_history_query: SQLAlchemyChatHistoryQuery | None = None
         self._raw_chat_log_query: SQLAlchemyRawChatLogQuery | None = None
         self._chat_record_repository: ChatRecordRepository | None = None
+        self._character_relationship_repository: (
+            CharacterRelationshipRepository | None
+        ) = None
         self._memory_consolidated_chat_source_repository: (
             MemoryConsolidatedChatSourceRepository | None
         ) = None
@@ -90,6 +96,21 @@ class SQLAlchemyUnitOfWork(IUnitOfWork):
             )
         return self._memory_consolidated_chat_source_repository
 
+    def GetCharacterRelationshipRepository(
+        self,
+    ) -> ICharacterRelationshipRepository:
+        """Get the character relationship repository."""
+
+        if self._session is None:
+            raise RuntimeError(
+                "UnitOfWork session not initialized. Use 'async with' context."
+            )
+        if self._character_relationship_repository is None:
+            self._character_relationship_repository = CharacterRelationshipRepository(
+                self._session
+            )
+        return self._character_relationship_repository
+
     async def commit(self) -> Result[None, RepositoryError]:
         """Commit the transaction."""
         if self._session is None:
@@ -134,4 +155,15 @@ class SQLAlchemyUnitOfWork(IUnitOfWork):
             self._chat_history_query = None
             self._raw_chat_log_query = None
             self._chat_record_repository = None
+            self._character_relationship_repository = None
             self._memory_consolidated_chat_source_repository = None
+
+
+class SQLAlchemyUnitOfWorkFactory(IUnitOfWorkFactory):
+    """Factory for independent SQLAlchemy transaction boundaries."""
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory = session_factory
+
+    def create(self) -> IUnitOfWork:
+        return SQLAlchemyUnitOfWork(self._session_factory)

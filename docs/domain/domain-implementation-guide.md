@@ -4,7 +4,8 @@
 
 このプロジェクトのDomain層は、会話と長期記憶に固有の値・不変条件・読み取り契約を表す。
 利用者・チーム管理や、耐障害性のための実行状態は業務スコープ外であり、Domain層にも持ち込まない。
-業務ユースケースの正本は[アクター別ユースケース](../product/application-use-cases.md)である。
+業務ユースケースの正本は[ユースケース知識バンドル](../product/application-use-cases/index.md)である。
+概念間の関係は[ドメイン図](./domain-diagram.md)にまとめている。
 
 ## Domain層の責務
 
@@ -20,9 +21,11 @@ Domain層は、外部要求を受けるUseCaseではない。受信→応答→�
 
 ```
 src/app/domain/
+├── aggregates/     # 会話所有者・関係状態の集約
+├── services/       # I/Oを持たないDomain policy
 ├── queries/        # 履歴・記憶の読み取り契約
 ├── repositories/   # Domain固有のrepository契約
-└── value_objects/  # ID、メッセージ内容などの値
+└── value_objects/  # 会話スコープ、メッセージ内容などの値
 ```
 
 アプリケーション境界は次の場所に集約する。
@@ -35,6 +38,14 @@ src/app/contracts/
 
 `contracts/ports`は外部実装へ差し替え可能な境界、`contracts/messages`はレイヤー間で渡すデータを表す。
 これらをDomainの汎用インターフェース置き場として重複定義しない。
+
+関係シグナルの全履歴再計算や日次上限のようなI/Oを伴わない業務規則は
+`domain/services`の純粋なpolicyで計算する。Repositoryはイベントの置換、保存、楽観ロック、
+トランザクションを担い、policyの計算結果を永続化する。
+
+`domain/aggregates/user.py`の`User`は会話・memoryのcanonical ownerであり、Discord/LINEの生IDを
+`UserChannelIdentity`として所有する。外部IDからUserを引く境界契約はユースケースから利用するため
+`contracts/ports/user_identity_query.py`に置き、SQL実装はinfrastructureに置く。
 
 ## 値オブジェクト
 
@@ -56,6 +67,22 @@ class MessageContent:
 
 値オブジェクトへORMや外部SDKの型を渡さない。チャネル固有のIDは会話メッセージの外部識別子として
 `contracts/messages/conversation.py`で扱い、内部利用者IDと混同しない。
+
+### 永続化するテキストメッセージ
+
+`MessageContent` の `TEXT` は、単一テキストでも複数テキストでも同じ形式で永続化する。
+
+```json
+{
+  "type": "TEXT",
+  "payload": {
+    "texts": ["hello", "follow-up"]
+  }
+}
+```
+
+`payload.text` は廃止済みであり、新規書き込み・読み取りのどちらでも使用しない。
+既存行は `202607141500_normalize_message_content_texts.py` で `payload.texts` に変換される。
 
 ## Query・Repository契約
 

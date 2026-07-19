@@ -1,13 +1,13 @@
 """Memory use cases."""
 
-from app.usecases.memory.organize_long_term_memory import (
-    OrganizeLongTermMemoryCommand,
-    OrganizeLongTermMemoryHandler,
-    OrganizeLongTermMemoryResult,
+from app.usecases.memory.consolidate_conversation_history import (
+    ConsolidateConversationHistoryCommand,
+    ConsolidateConversationHistoryHandler,
+    ConsolidateConversationHistoryResult,
 )
 
 __all__ = [
-    "OrganizeLongTermMemoryCommand",
-    "OrganizeLongTermMemoryHandler",
-    "OrganizeLongTermMemoryResult",
+    "ConsolidateConversationHistoryCommand",
+    "ConsolidateConversationHistoryHandler",
+    "ConsolidateConversationHistoryResult",
 ]

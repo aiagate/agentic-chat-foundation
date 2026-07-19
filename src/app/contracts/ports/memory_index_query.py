@@ -28,8 +28,6 @@ class IMemoryIndexQuery(ABC):
         self,
         *,
         user_id: str,
-        character_id: str,
-        relationship_entity_id: str,
     ) -> Result[list[MemoryIndexDocument], MemoryIndexQueryError]:
-        """Return projected documents visible to one user and character."""
+        """Return projected non-relationship documents visible to one user."""
         raise NotImplementedError

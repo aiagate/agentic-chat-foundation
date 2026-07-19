@@ -1,8 +1,11 @@
 """Tests for the filesystem memory service adapter."""
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 from flow_res import Ok, Result, is_err
 
 from app.contracts.messages.memory_context import (
@@ -11,6 +14,7 @@ from app.contracts.messages.memory_context import (
     MemoryProfile,
 )
 from app.contracts.messages.memory_index import MemoryIndexDocument
+from app.contracts.ports.agent_profile_service import AgentProfileServiceError
 from app.contracts.ports.memory_index_query import (
     IMemoryIndexQuery,
     MemoryIndexQueryError,
@@ -30,9 +34,6 @@ from app.infrastructure.services.agent_profile_service import (
     FilesystemAgentProfileService,
 )
 from app.infrastructure.services.memory_service import FilesystemMemoryService
-from app.infrastructure.services.memory_write_service import (
-    FilesystemMemoryWriteService,
-)
 from tests._agent_profile_fixture import (
     _character_id,
     copy_agent_profile_bundle,
@@ -49,15 +50,11 @@ class _FilesystemProjectionQuery(IMemoryIndexQuery):
         self,
         *,
         user_id: str,
-        character_id: str,
-        relationship_entity_id: str,
     ) -> Result[list[MemoryIndexDocument], MemoryIndexQueryError]:
         return Ok(
             read_index_documents(
                 self._store,
                 user_id,
-                character_id=character_id,
-                relationship_entity_id=relationship_entity_id,
             )
         )
 
@@ -71,25 +68,86 @@ def _memory_service(
     resolved_store = store or FilesystemMemoryStore(default_memory_root())
     return FilesystemMemoryService(
         index_query=_FilesystemProjectionQuery(resolved_store),
-        agent_profile_service=agent_profile_service,
-        character_id=character_id,
     )
 
 
-def test_filesystem_agent_profile_service_loads_localized_bundle() -> None:
+@pytest.mark.parametrize("character_id", ["shirasagi-reina", "kurose-marina"])
+def test_filesystem_agent_profile_service_loads_localized_bundle(
+    character_id: str,
+) -> None:
     """The bundled agent profile should load from localized front matter."""
     service = FilesystemAgentProfileService(
         store=FilesystemMemoryStore(Path("memory")),
-        character_id="shirasagi-reina",
+        character_id=character_id,
     )
 
     bundle = service.load_agent_profile_bundle()
 
-    assert bundle.relationship_entity_id == "relationship:shirasagi-reina"
-    assert bundle.relationship_entity_label == "白鷺レイナとの関係"
-    assert bundle.relationship_entity_type == "relationship"
-    assert bundle.relationship_tag == "agent-growth"
-    assert bundle.relationship_defaults.stage == 0
+    assert bundle.character.character_id == character_id
+    assert bundle.relationship.schema_version == 1
+    assert len(bundle.relationship.stages) == 8
+
+
+def _remove_relationship_stage(payload: dict[str, Any]) -> None:
+    payload["stages"].pop()
+
+
+def _duplicate_relationship_stage(payload: dict[str, Any]) -> None:
+    payload["stages"].append(payload["stages"][0])
+
+
+def _add_unknown_relationship_key(payload: dict[str, Any]) -> None:
+    payload["unknown"] = True
+
+
+def _invalidate_relationship_weight(payload: dict[str, Any]) -> None:
+    payload["stages"][0]["behaviors"][0]["weight"] = 0
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        _remove_relationship_stage,
+        _duplicate_relationship_stage,
+        _add_unknown_relationship_key,
+        _invalidate_relationship_weight,
+    ],
+    ids=("missing-stage", "duplicate-stage", "unknown-key", "invalid-weight"),
+)
+def test_agent_profile_rejects_invalid_relationship_definition(
+    tmp_path: Path, mutate: Callable[[dict[str, Any]], object]
+) -> None:
+    copy_agent_profile_bundle(tmp_path / "memory")
+    store = FilesystemMemoryStore(tmp_path / "memory")
+    path = store.agent_relationship_definition_path(_character_id())
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    mutate(payload)
+    path.write_text(
+        yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AgentProfileServiceError):
+        FilesystemAgentProfileService(
+            store=store,
+            character_id=_character_id(),
+        ).ensure_agent_profile_bundle()
+
+
+def test_agent_profile_rejects_unused_metadata(tmp_path: Path) -> None:
+    """Agent profile fields must affect loading instead of being silently ignored."""
+
+    copy_agent_profile_bundle(tmp_path / "memory")
+    store = FilesystemMemoryStore(tmp_path / "memory")
+    soul_path = store.agent_profile_part_path("SOUL", character_id=_character_id())
+    soul_path.write_text("---\nunused: true\n---\n\n# Soul\n", encoding="utf-8")
+    service = FilesystemAgentProfileService(
+        store=store,
+        character_id=_character_id(),
+    )
+
+    with pytest.raises(AgentProfileServiceError, match="must not have metadata"):
+        service.load_agent_profile_bundle()
 
 
 @pytest.mark.anyio
@@ -114,14 +172,11 @@ async def test_filesystem_memory_service_build_context_returns_manifest_pack(
     pack = result.value
     assert isinstance(pack, MemoryContextPack)
     assert pack.user_id == "u1"
-    assert pack.profile is not None
-    assert pack.profile.user_id == "ai"
-    assert pack.profile.display_name is None
+    assert pack.profile is None
     assert pack.timelines == []
     assert pack.entities == []
-    assert pack.manifest_items
     assert "Memory manifest:" in (pack.assembled_context or "")
-    assert any(item.memory_id == "agent_profile:soul" for item in pack.manifest_items)
+    assert pack.manifest_items == []
 
     profile_dir = tmp_path / "memory" / "profiles" / "agent" / character_id
     assert (profile_dir / "AGENTS.md").exists()
@@ -135,18 +190,19 @@ async def test_filesystem_memory_service_writes_profile_and_entities(
     tmp_path: Path,
 ) -> None:
     """Profile and entity memories should persist as Markdown files."""
-    write_service = FilesystemMemoryWriteService(tmp_path / "memory")
-
-    write_service.write_profile(
+    store = FilesystemMemoryStore(tmp_path / "memory")
+    _write_profile(
+        store,
         MemoryProfile(
             user_id="u1",
             display_name="ユーザーA",
             summary="落ち着いて記録を残す。",
             traits=["丁寧"],
             preferences=["quiet places"],
-        )
+        ),
     )
-    write_service.write_entity(
+    _write_entity(
+        store,
         MemoryEntity(
             id="ENT-001",
             user_id="u1",
@@ -154,9 +210,9 @@ async def test_filesystem_memory_service_writes_profile_and_entities(
             entity_type="object",
             status="active",
             aliases=["desk"],
-            attributes={"color": "gray"},
+            properties={"color": "gray"},
             confidence=0.9,
-        )
+        ),
     )
     service = _memory_service(
         store=FilesystemMemoryStore(tmp_path / "memory"),
@@ -214,7 +270,6 @@ async def test_filesystem_memory_service_reads_entity_by_memory_id(
                     "ports": ["ai_service", "memory_service"],
                     "nullable": None,
                 },
-                "attributes": {"legacy": "kept"},
                 "missing_attributes": ["repository"],
                 "created_at": "2026-05-18T00:00:00+00:00",
                 "updated_at": "2026-05-18T00:00:00+00:00",
@@ -235,15 +290,16 @@ async def test_filesystem_memory_service_reads_entity_by_memory_id(
 
 
 @pytest.mark.anyio
-async def test_filesystem_memory_service_filters_non_selected_relationship_entity(
+async def test_filesystem_memory_service_filters_all_legacy_relationship_entities(
     tmp_path: Path,
 ) -> None:
-    """Only the selected relationship entity should appear in memory context."""
+    """Legacy relationship entities should never appear in memory context."""
 
     character_id = _character_id()
     copy_agent_profile_bundle(tmp_path / "memory")
-    write_service = FilesystemMemoryWriteService(tmp_path / "memory")
-    write_service.write_entity(
+    store = FilesystemMemoryStore(tmp_path / "memory")
+    _write_entity(
+        store,
         MemoryEntity(
             id=f"relationship:{character_id}",
             user_id="u1",
@@ -251,9 +307,10 @@ async def test_filesystem_memory_service_filters_non_selected_relationship_entit
             entity_type="relationship",
             status="active",
             confidence=1.0,
-        )
+        ),
     )
-    write_service.write_entity(
+    _write_entity(
+        store,
         MemoryEntity(
             id="relationship:someone-else",
             user_id="u1",
@@ -261,7 +318,7 @@ async def test_filesystem_memory_service_filters_non_selected_relationship_entit
             entity_type="relationship",
             status="active",
             confidence=1.0,
-        )
+        ),
     )
     service = _memory_service(
         store=FilesystemMemoryStore(tmp_path / "memory"),
@@ -278,54 +335,69 @@ async def test_filesystem_memory_service_filters_non_selected_relationship_entit
     manifest_ids = {item.memory_id for item in result.value.manifest_items}
     entity_labels = [entity.label for entity in result.value.entities]
     assert "entity:relationship:someone-else" not in manifest_ids
-    assert entity_labels == ["Selected relationship"]
+    assert entity_labels == []
 
 
-@pytest.mark.anyio
-async def test_filesystem_memory_service_writes_timeline_markdown(
-    tmp_path: Path,
+def _write_profile(
+    store: FilesystemMemoryStore,
+    profile: MemoryProfile,
 ) -> None:
-    """Chat logs should persist as timeline Markdown files."""
-    write_service = FilesystemMemoryWriteService(tmp_path / "memory")
-
-    await write_service.add_log(
-        user_id="u1",
-        role="user",
-        content="remember this",
-        metadata={"chat_type": "DISCORD"},
-    )
-    service = _memory_service(
-        store=FilesystemMemoryStore(tmp_path / "memory"),
-        character_id=_character_id(),
-    )
-
-    result = await service.build_context("u1")
-
-    assert not is_err(result)
-    assert len(result.value.timelines) == 1
-    assert result.value.timelines[0].content == "remember this"
-    timeline_manifest = [
-        item for item in result.value.manifest_items if item.memory_type == "timeline"
-    ]
-    assert timeline_manifest
-    assert timeline_manifest[0].memory_id.startswith("timeline:202")
-    assert timeline_manifest[0].when is not None
-    assert timeline_manifest[0].title == "remember this"
-    assert timeline_manifest[0].summary == "remember this"
-    assert f"{timeline_manifest[0].memory_id} | when={timeline_manifest[0].when}" in (
-        result.value.assembled_context or ""
+    timestamp = "2026-05-18T00:00:00+00:00"
+    store.write_document(
+        store.user_profile_path(profile.user_id),
+        front_matter={
+            "schema_version": 1,
+            "memory_type": "profile",
+            "id": f"profile:{profile.user_id}",
+            "user_id": profile.user_id,
+            "profile_scope": "user",
+            "display_name": profile.display_name,
+            "summary": profile.summary,
+            "traits": profile.traits,
+            "preferences": profile.preferences,
+            "communication_style": [],
+            "known_constraints": [],
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "tags": ["profile"],
+            "importance": 0.8,
+            "confidence": 1.0,
+            "pinned": False,
+            "metadata": {},
+        },
+        body=f"# {profile.display_name or profile.user_id}\n\n{profile.summary}",
     )
 
-    files = sorted((tmp_path / "memory" / "timeline" / "u1" / "raw").rglob("*.md"))
-    assert len(files) == 1
-    timeline_text = files[0].read_text(encoding="utf-8")
-    assert timeline_text.startswith("---\n")
-    assert "schema_version: 1" in timeline_text
-    assert "memory_type: timeline" in timeline_text
-    assert "timeline_type: raw" in timeline_text
-    assert "memory_id: timeline:" in timeline_text
-    assert "manifest_title: remember this" in timeline_text
-    assert "manifest_summary: remember this" in timeline_text
+
+def _write_entity(
+    store: FilesystemMemoryStore,
+    entity: MemoryEntity,
+) -> None:
+    timestamp = "2026-05-18T00:00:00+00:00"
+    store.write_document(
+        store.entity_path(entity.user_id, entity.id),
+        front_matter={
+            "schema_version": 1,
+            "memory_type": "entity",
+            "id": entity.id,
+            "user_id": entity.user_id,
+            "label": entity.label,
+            "entity_type": entity.entity_type,
+            "status": entity.status,
+            "aliases": entity.aliases,
+            "properties": dict(entity.properties),
+            "missing_attributes": entity.missing_attributes,
+            "referenced_in": [],
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "tags": [],
+            "importance": 0.6,
+            "confidence": entity.confidence,
+            "pinned": False,
+            "metadata": {},
+        },
+        body=f"# {entity.label}\n\n- type: {entity.entity_type}",
+    )
 
 
 def test_memory_markdown_round_trips_unicode_front_matter() -> None:
@@ -481,4 +553,4 @@ async def test_filesystem_memory_service_accepts_projection_query(
     result = await service.build_context("u1")
 
     assert not is_err(result)
-    assert result.value.profile is not None
+    assert result.value.profile is None

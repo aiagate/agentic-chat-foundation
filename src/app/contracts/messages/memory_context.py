@@ -61,10 +61,6 @@ class MemoryEntity(BaseModel):
         default_factory=list,
         description="Known aliases.",
     )
-    attributes: dict[str, str] = Field(
-        default_factory=dict,
-        description="Entity attributes.",
-    )
     properties: dict[str, MemoryPropertyValue] = Field(
         default_factory=dict,
         description="Normalized entity properties.",
@@ -87,10 +83,7 @@ class MemorySource(BaseModel):
         default=None,
         description="Human-readable source title.",
     )
-    user_id: str | None = Field(
-        default=None,
-        description="Owning user identifier, if user scoped.",
-    )
+    user_id: str = Field(description="Owning user identifier.")
     reference: str | None = Field(
         default=None,
         description="Opaque source reference for attribution.",

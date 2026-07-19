@@ -1,6 +1,7 @@
 """Database configuration and session management."""
 
 import json
+import os
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,17 @@ def _json_serializer(obj: Any) -> str:
     """Serialize JSON values without ASCII escaping."""
 
     return json.dumps(obj, ensure_ascii=False)
+
+
+def sqlalchemy_echo_enabled() -> bool:
+    """Return whether SQLAlchemy statement logging was explicitly enabled."""
+
+    return os.getenv("SQLALCHEMY_ECHO", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def init_db(database_url: str, **engine_kwargs: Any) -> None:

@@ -1,9 +1,9 @@
-"""Tests for the request-local UC-01 to UC-03 orchestration."""
+"""Tests for request-local conversation intake, response, and delivery."""
 
 from datetime import UTC, datetime
 
 import pytest
-from flow_res import is_err
+from flow_res import Ok, Result, is_err
 
 from app.contracts.messages.conversation import (
     AcceptedMessage,
@@ -11,6 +11,10 @@ from app.contracts.messages.conversation import (
     DeliveryResult,
     IncomingMessage,
 )
+from app.contracts.ports.relationship import IRelationshipInteractionProcessor
+from app.contracts.ports.user_identity_query import IUserIdentityQuery
+from app.domain.aggregates.user import User, UserChannelIdentity
+from app.domain.repositories.interfaces import RepositoryError
 from app.presentation.conversation_flow import ConversationFlow
 
 
@@ -18,11 +22,15 @@ class _History:
     def __init__(self) -> None:
         self.assistant: list[ConversationResult] = []
 
-    async def append(self, message: IncomingMessage) -> AcceptedMessage:
+    async def append(
+        self, message: IncomingMessage, *, user_id: str
+    ) -> AcceptedMessage:
         return AcceptedMessage(
             message_id="chat-1",
-            conversation_id=message.external_conversation_id,
-            participant_id=message.external_participant_id,
+            character_id="shirasagi-reina",
+            user_id=user_id,
+            external_conversation_id=message.external_conversation_id,
+            external_participant_id=message.external_participant_id,
             text=message.text,
             channel=message.channel,
             occurred_at=message.occurred_at,
@@ -46,7 +54,7 @@ class _Generator:
     ) -> ConversationResult:
         return ConversationResult(
             message_id=message.message_id,
-            conversation_id=message.conversation_id,
+            external_conversation_id=message.external_conversation_id,
             channel=message.channel,
             contents=("hello",),
         )
@@ -57,10 +65,28 @@ class _Sender:
         return DeliveryResult(message_id=result.message_id, delivered=True)
 
 
+class _IdentityQuery(IUserIdentityQuery):
+    async def find_user(
+        self, identity: UserChannelIdentity
+    ) -> Result[User | None, RepositoryError]:
+        return Ok(User(id="01J00000000000000000000000", identities=(identity,)))
+
+
+class _RelationshipProcessor(IRelationshipInteractionProcessor):
+    async def process(self, message: AcceptedMessage) -> None:
+        del message
+
+
 @pytest.mark.anyio
 async def test_flow_delivers_then_persists_assistant() -> None:
     history = _History()
-    result = await ConversationFlow(history, _Context(), _Generator()).process(
+    result = await ConversationFlow(
+        history,
+        _Context(),
+        _Generator(),
+        _IdentityQuery(),
+        _RelationshipProcessor(),
+    ).process(
         IncomingMessage(
             channel="discord",
             external_conversation_id="channel-1",

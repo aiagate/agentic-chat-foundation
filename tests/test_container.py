@@ -10,14 +10,14 @@ from app.contracts.ports.agent_inference_context import IAgentInferenceContextSe
 from app.contracts.ports.memory_consolidation import IMemoryConsolidationService
 from app.contracts.ports.memory_service import IMemoryService
 from app.contracts.ports.memory_store import IMemoryStore
-from app.contracts.ports.unit_of_work import IUnitOfWork
+from app.contracts.ports.unit_of_work import IUnitOfWorkFactory
 from app.infrastructure.memory.store import FilesystemMemoryStore
 from app.infrastructure.services.agent_inference_context import (
     AgentInferenceContextService,
 )
 from app.infrastructure.services.memory_consolidation import MemoryConsolidationService
 from app.infrastructure.services.memory_service import FilesystemMemoryService
-from app.infrastructure.unit_of_work import SQLAlchemyUnitOfWork
+from app.infrastructure.unit_of_work import SQLAlchemyUnitOfWorkFactory
 from tests._agent_profile_fixture import copy_agent_profile_bundle
 
 
@@ -32,7 +32,7 @@ async def test_di_container_binds_conversation_components(
     copy_agent_profile_bundle(memory_root)
     injector = Injector([container.configure])
 
-    assert isinstance(injector.get(IUnitOfWork), SQLAlchemyUnitOfWork)
+    assert isinstance(injector.get(IUnitOfWorkFactory), SQLAlchemyUnitOfWorkFactory)
     assert isinstance(injector.get(IMemoryStore), FilesystemMemoryStore)
     assert isinstance(injector.get(IMemoryService), FilesystemMemoryService)
     assert isinstance(

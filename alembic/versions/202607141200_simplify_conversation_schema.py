@@ -54,21 +54,15 @@ def upgrade() -> None:
     with op.batch_alter_table("chats", schema=None) as batch_op:
         batch_op.add_column(sa.Column("channel", sa.String(length=20), nullable=True))
         batch_op.add_column(
-            sa.Column(
-                "external_conversation_id", sa.String(length=255), nullable=True
-            )
+            sa.Column("external_conversation_id", sa.String(length=255), nullable=True)
         )
         batch_op.add_column(
-            sa.Column(
-                "external_participant_id", sa.String(length=255), nullable=True
-            )
+            sa.Column("external_participant_id", sa.String(length=255), nullable=True)
         )
         batch_op.add_column(
             sa.Column("external_message_id", sa.String(length=255), nullable=True)
         )
-        batch_op.add_column(
-            sa.Column("channel_metadata", sa.JSON(), nullable=True)
-        )
+        batch_op.add_column(sa.Column("channel_metadata", sa.JSON(), nullable=True))
 
     # Legacy records did not have an external message id.  Keep it NULL so a
     # later webhook id can be recorded without fabricating provider identifiers.
@@ -145,8 +139,12 @@ def upgrade() -> None:
             "line_room_id",
         ):
             batch_op.drop_column(column_name)
-        batch_op.create_index("ix_chats_external_conversation_id", ["external_conversation_id"])
-        batch_op.create_index("ix_chats_external_participant_id", ["external_participant_id"])
+        batch_op.create_index(
+            "ix_chats_external_conversation_id", ["external_conversation_id"]
+        )
+        batch_op.create_index(
+            "ix_chats_external_participant_id", ["external_participant_id"]
+        )
         batch_op.create_index("ix_chats_external_message_id", ["external_message_id"])
         batch_op.create_unique_constraint(
             "uq_chats_channel_external_message_id",
@@ -163,9 +161,7 @@ def downgrade() -> None:
         if index.get("name")
     }
     with op.batch_alter_table("chats", schema=None) as batch_op:
-        batch_op.drop_constraint(
-            "uq_chats_channel_external_message_id", type_="unique"
-        )
+        batch_op.drop_constraint("uq_chats_channel_external_message_id", type_="unique")
         for index_name in (
             "ix_chats_external_message_id",
             "ix_chats_external_participant_id",
@@ -176,11 +172,21 @@ def downgrade() -> None:
         batch_op.add_column(sa.Column("type", sa.String(length=20), nullable=True))
         batch_op.add_column(sa.Column("user_id", sa.String(length=255), nullable=True))
         batch_op.add_column(sa.Column("version", sa.Integer(), nullable=True))
-        batch_op.add_column(sa.Column("discord_guild_id", sa.String(length=255), nullable=True))
-        batch_op.add_column(sa.Column("discord_channel_id", sa.String(length=255), nullable=True))
-        batch_op.add_column(sa.Column("line_user_id", sa.String(length=255), nullable=True))
-        batch_op.add_column(sa.Column("line_group_id", sa.String(length=255), nullable=True))
-        batch_op.add_column(sa.Column("line_room_id", sa.String(length=255), nullable=True))
+        batch_op.add_column(
+            sa.Column("discord_guild_id", sa.String(length=255), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("discord_channel_id", sa.String(length=255), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("line_user_id", sa.String(length=255), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("line_group_id", sa.String(length=255), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("line_room_id", sa.String(length=255), nullable=True)
+        )
         batch_op.drop_column("channel")
         batch_op.drop_column("external_conversation_id")
         batch_op.drop_column("external_participant_id")

@@ -13,17 +13,11 @@ class MessageContentType(StrEnum):
     """対応するメッセージ種別。"""
 
     TEXT = "TEXT"
-    IMAGE = "IMAGE"
-    STICKER = "STICKER"
-    EMOJI = "EMOJI"
 
 
 @dataclass(frozen=True, slots=True)
 class MessageContent:
-    """単一メッセージの内容を表す。
-
-    画像やスタンプのように、配信元ごとに異なるメタデータをそのまま保持する。
-    """
+    """テキストメッセージの内容を表す。"""
 
     _type: MessageContentType
     _payload: dict[str, Any]
@@ -31,34 +25,15 @@ class MessageContent:
     @classmethod
     def text(cls, text: str) -> MessageContent:
         """テキストメッセージを生成する。"""
-        return cls(_type=MessageContentType.TEXT, _payload={"text": text})
+        return cls.texts([text])
 
     @classmethod
     def texts(cls, texts: list[str]) -> MessageContent:
         """複数テキストメッセージを生成する。"""
-        normalized_texts = [text for text in texts if text]
+        normalized_texts = [text.strip() for text in texts if text.strip()]
+        if not normalized_texts:
+            raise ValueError("Message content cannot be empty")
         return cls(_type=MessageContentType.TEXT, _payload={"texts": normalized_texts})
-
-    @classmethod
-    def image(cls, image_id: str, url: str | None = None) -> MessageContent:
-        """画像メッセージを生成する。"""
-        payload: dict[str, Any] = {"image_id": image_id}
-        if url is not None:
-            payload["url"] = url
-        return cls(_type=MessageContentType.IMAGE, _payload=payload)
-
-    @classmethod
-    def sticker(cls, sticker_id: str, package_id: str | None = None) -> MessageContent:
-        """スタンプメッセージを生成する。"""
-        payload: dict[str, Any] = {"sticker_id": sticker_id}
-        if package_id is not None:
-            payload["package_id"] = package_id
-        return cls(_type=MessageContentType.STICKER, _payload=payload)
-
-    @classmethod
-    def emoji(cls, emoji: str) -> MessageContent:
-        """絵文字メッセージを生成する。"""
-        return cls(_type=MessageContentType.EMOJI, _payload={"emoji": emoji})
 
     @property
     def type(self) -> MessageContentType:
@@ -84,24 +59,18 @@ class MessageContent:
         if not isinstance(payload, dict):
             return Err(ValueError("Message content payload must be a dictionary."))
 
-        try:
-            normalized_type = MessageContentType(content_type.upper())
-        except ValueError:
+        if content_type.upper() != MessageContentType.TEXT.value:
             return Err(ValueError(f"Invalid message content type: {content_type}"))
-
-        if normalized_type is MessageContentType.TEXT:
-            texts = payload.get("texts")
-            if isinstance(texts, list):
-                normalized_texts = _normalize_texts_payload(payload)
-                if normalized_texts is not None:
-                    return Ok(
-                        cls(
-                            _type=normalized_type,
-                            _payload={"texts": normalized_texts},
-                        )
-                    )
-
-        return Ok(cls(_type=normalized_type, _payload=payload.copy()))
+        normalized_texts = _normalize_texts_payload(payload)
+        if not normalized_texts:
+            return Err(
+                ValueError(
+                    "Text message content payload must contain a non-empty texts list."
+                )
+            )
+        return Ok(
+            cls(_type=MessageContentType.TEXT, _payload={"texts": normalized_texts})
+        )
 
     def to_primitive(self) -> dict[str, Any]:
         """永続化向けの辞書に変換する。"""
@@ -111,19 +80,13 @@ class MessageContent:
         }
 
 
-MassageContent = MessageContent
-
-
 def _normalize_texts_payload(payload: dict[str, Any]) -> list[str] | None:
     texts = payload.get("texts")
     if isinstance(texts, list):
-        normalized_texts = [item for item in texts if isinstance(item, str) and item]
+        normalized_texts = [
+            item.strip() for item in texts if isinstance(item, str) and item.strip()
+        ]
         return normalized_texts
-
-    text = payload.get("text")
-    if isinstance(text, str) and text:
-        return [text]
-
     return None
 
 

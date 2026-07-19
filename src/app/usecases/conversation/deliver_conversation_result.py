@@ -1,4 +1,4 @@
-"""UC-03: deliver a logical conversation result."""
+"""Deliver a logical conversation result."""
 
 from dataclasses import dataclass
 
@@ -18,9 +18,7 @@ from app.contracts.ports.conversation import (
 
 
 @dataclass(frozen=True, slots=True)
-class DeliverConversationResultCommand(
-    Request[Result[DeliveryResult, UseCaseError]]
-):
+class DeliverConversationResultCommand(Request[Result[DeliveryResult, UseCaseError]]):
     result: ConversationResult
     message: AcceptedMessage
 

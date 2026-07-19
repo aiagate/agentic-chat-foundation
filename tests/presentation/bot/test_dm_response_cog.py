@@ -47,7 +47,9 @@ async def test_dm_response_cog_saves_text_message(
     """A non-empty DM should be forwarded to the save use case."""
 
     send_async = AsyncMock(return_value=Ok(None))
-    mocker.patch("app.presentation.bot.cogs.dm_response_cog.Mediator.send_async", send_async)
+    mocker.patch(
+        "app.presentation.bot.cogs.dm_response_cog.Mediator.send_async", send_async
+    )
     monkeypatch.setattr(
         "app.presentation.bot.cogs.dm_response_cog.discord.DMChannel",
         _FakeDMChannel,
@@ -83,7 +85,9 @@ async def test_dm_response_cog_skips_blank_text_message(
     """Blank DM content should not enter the save flow."""
 
     send_async = AsyncMock(return_value=Ok(None))
-    mocker.patch("app.presentation.bot.cogs.dm_response_cog.Mediator.send_async", send_async)
+    mocker.patch(
+        "app.presentation.bot.cogs.dm_response_cog.Mediator.send_async", send_async
+    )
     monkeypatch.setattr(
         "app.presentation.bot.cogs.dm_response_cog.discord.DMChannel",
         _FakeDMChannel,

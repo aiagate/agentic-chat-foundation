@@ -47,9 +47,7 @@ def test_presentation_support_modules_do_not_depend_on_infrastructure() -> None:
     """Presentation support modules must stay independent of runtime layers."""
 
     support_modules = [
-        path
-        for path in _iter_presentation_files()
-        if path.name != "__main__.py"
+        path for path in _iter_presentation_files() if path.name != "__main__.py"
     ]
     violations = _find_forbidden_imports(
         support_modules,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from flow_res import Err, Ok, Result, is_err
 
-from app.contracts.messages.agent_profile import AgentProfileBundle
 from app.contracts.messages.memory_context import (
     MemoryContextPack,
     MemoryEntity,
@@ -13,7 +12,6 @@ from app.contracts.messages.memory_context import (
     MemoryTimelineEntry,
 )
 from app.contracts.messages.memory_index import MemoryIndexDocument
-from app.contracts.ports.agent_profile_service import IAgentProfileService
 from app.contracts.ports.memory_index_query import IMemoryIndexQuery
 from app.contracts.ports.memory_service import IMemoryService, MemoryServiceError
 from app.infrastructure.memory.context_formatter import (
@@ -36,13 +34,8 @@ class FilesystemMemoryService(IMemoryService):
     def __init__(
         self,
         index_query: IMemoryIndexQuery,
-        agent_profile_service: IAgentProfileService | None = None,
-        *,
-        character_id: str,
     ) -> None:
         self._index_query = index_query
-        self._agent_profile_service = agent_profile_service
-        self._character_id = character_id
 
     async def build_context(
         self,
@@ -51,12 +44,8 @@ class FilesystemMemoryService(IMemoryService):
         """Return a prompt-ready compact manifest for the user scope."""
 
         try:
-            profile_bundle = self._load_profile_bundle()
-            relationship_entity_id = self._relationship_entity_id(profile_bundle)
             documents_result = await self._index_query.list_documents(
                 user_id=user_id,
-                character_id=self._character_id,
-                relationship_entity_id=relationship_entity_id,
             )
             if is_err(documents_result):
                 return Err(MemoryServiceError(str(documents_result.error)))
@@ -69,11 +58,7 @@ class FilesystemMemoryService(IMemoryService):
                     user_id=user_id,
                     assembled_context=render_manifest_context(manifest_items),
                     manifest_items=manifest_items,
-                    profile=(
-                        profile_bundle.profile
-                        if profile_bundle is not None
-                        else _user_profile(index_documents, user_id=user_id)
-                    ),
+                    profile=_user_profile(index_documents, user_id=user_id),
                     timelines=_timelines(index_documents),
                     entities=_entities(index_documents),
                 )
@@ -89,13 +74,8 @@ class FilesystemMemoryService(IMemoryService):
         """Resolve one detailed memory payload addressed by memory_id."""
 
         try:
-            relationship_entity_id = self._relationship_entity_id(
-                self._load_profile_bundle()
-            )
             documents_result = await self._index_query.list_documents(
                 user_id=user_id,
-                character_id=self._character_id,
-                relationship_entity_id=relationship_entity_id,
             )
             if is_err(documents_result):
                 return Err(MemoryServiceError(str(documents_result.error)))
@@ -108,19 +88,6 @@ class FilesystemMemoryService(IMemoryService):
             return Err(MemoryServiceError(f"Memory not found: {memory_id}"))
         except (MemoryMarkdownError, MemoryStoreError, OSError, ValueError) as exc:
             return Err(MemoryServiceError(str(exc)))
-
-    def _load_profile_bundle(self) -> AgentProfileBundle | None:
-        if self._agent_profile_service is None:
-            return None
-        return self._agent_profile_service.load_agent_profile_bundle()
-
-    def _relationship_entity_id(
-        self,
-        profile_bundle: AgentProfileBundle | None,
-    ) -> str:
-        if profile_bundle is None:
-            return f"relationship:{self._character_id}"
-        return profile_bundle.relationship_entity_id
 
 
 def _user_profile(

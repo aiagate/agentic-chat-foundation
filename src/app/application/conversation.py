@@ -11,6 +11,7 @@ from app.contracts.messages.conversation import (
     ConversationResult,
 )
 from app.contracts.messages.llm_request_context import compose_system_instruction
+from app.contracts.messages.tool_contracts import ToolCall, normalize_reply_contents
 from app.contracts.messages.tool_result_context import ToolResultContext
 from app.contracts.ports.agent_inference_context import (
     AgentInferenceContextRequest,
@@ -37,7 +38,7 @@ class ConversationGenerationContext:
     channel_id: str
 
 
-class SQLAlchemyConversationContext(ConversationContext):
+class ConversationContextService(ConversationContext):
     """Load recent history and conversation metadata for response generation."""
 
     def __init__(
@@ -52,21 +53,24 @@ class SQLAlchemyConversationContext(ConversationContext):
         chat_type = ChatType.from_primitive(message.channel).unwrap()
         guild_id = message.metadata.get("guild_id", "DM")
         channel_id = message.metadata.get(
-            "channel_id", message.conversation_id
+            "channel_id", message.external_conversation_id
         )
         result = await self._query.load(
             chat_id=message.message_id,
             provided_prompt=message.text,
             chat_type=chat_type,
-            user_id=message.participant_id,
+            character_id=self._character_id,
+            user_id=message.user_id,
             guild_id=guild_id,
             channel_id=channel_id,
+            external_conversation_id=message.external_conversation_id,
+            before_order_key=message.order_key or None,
         )
         if is_err(result):
             raise RuntimeError(result.error.message)
         return ConversationGenerationContext(
             turn_context=result.value,
-            user_id=message.participant_id,
+            user_id=message.user_id,
             character_id=self._character_id,
             chat_type=chat_type,
             guild_id=guild_id,
@@ -98,6 +102,7 @@ class AIConversationResponseGenerator(ResponseGenerator):
         assembled = await self._inference_context.assemble(
             AgentInferenceContextRequest(
                 turn_context=context.turn_context,
+                message_id=message.message_id,
                 user_id=context.user_id,
                 character_id=context.character_id,
                 chat_type=context.chat_type,
@@ -107,7 +112,7 @@ class AIConversationResponseGenerator(ResponseGenerator):
         if is_err(assembled):
             return ConversationResult(
                 message_id=message.message_id,
-                conversation_id=message.conversation_id,
+                external_conversation_id=message.external_conversation_id,
                 channel=message.channel,
                 unavailable=True,
                 failure_reason=assembled.error.message,
@@ -122,11 +127,20 @@ class AIConversationResponseGenerator(ResponseGenerator):
         if is_err(generated):
             return ConversationResult(
                 message_id=message.message_id,
-                conversation_id=message.conversation_id,
+                external_conversation_id=message.external_conversation_id,
                 channel=message.channel,
                 unavailable=True,
                 failure_reason=generated.error.message,
             )
+
+        terminal_result = _terminal_result(
+            message,
+            context.chat_type,
+            generated.value.tool_calls,
+        )
+        if terminal_result is not None:
+            return terminal_result
+
         for tool_call in generated.value.tool_calls[:3]:
             execution = await self._tool_executor.execute(
                 ToolExecutionContext(
@@ -142,7 +156,7 @@ class AIConversationResponseGenerator(ResponseGenerator):
             if is_err(execution):
                 return ConversationResult(
                     message_id=message.message_id,
-                    conversation_id=message.conversation_id,
+                    external_conversation_id=message.external_conversation_id,
                     channel=message.channel,
                     unavailable=True,
                     failure_reason=execution.error.message,
@@ -163,6 +177,7 @@ class AIConversationResponseGenerator(ResponseGenerator):
             assembled = await self._inference_context.assemble(
                 AgentInferenceContextRequest(
                     turn_context=context.turn_context,
+                    message_id=message.message_id,
                     user_id=context.user_id,
                     character_id=context.character_id,
                     chat_type=context.chat_type,
@@ -172,7 +187,7 @@ class AIConversationResponseGenerator(ResponseGenerator):
             if is_err(assembled):
                 return ConversationResult(
                     message_id=message.message_id,
-                    conversation_id=message.conversation_id,
+                    external_conversation_id=message.external_conversation_id,
                     channel=message.channel,
                     unavailable=True,
                     failure_reason=assembled.error.message,
@@ -184,17 +199,86 @@ class AIConversationResponseGenerator(ResponseGenerator):
                 tool_definitions=assembled.value.tool_definitions,
                 tool_results=list(tool_results),
             )
-            if is_err(generated) or generated.value.tool_calls:
+            if is_err(generated):
                 return ConversationResult(
                     message_id=message.message_id,
-                    conversation_id=message.conversation_id,
+                    external_conversation_id=message.external_conversation_id,
+                    channel=message.channel,
+                    unavailable=True,
+                    failure_reason="応答を確定できませんでした。",
+                )
+            terminal_result = _terminal_result(
+                message,
+                context.chat_type,
+                generated.value.tool_calls,
+            )
+            if terminal_result is not None:
+                return terminal_result
+            if generated.value.tool_calls:
+                return ConversationResult(
+                    message_id=message.message_id,
+                    external_conversation_id=message.external_conversation_id,
                     channel=message.channel,
                     unavailable=True,
                     failure_reason="応答を確定できませんでした。",
                 )
         return ConversationResult(
             message_id=message.message_id,
-            conversation_id=message.conversation_id,
+            external_conversation_id=message.external_conversation_id,
             channel=message.channel,
             contents=tuple(generated.value.contents),
         )
+
+
+def _terminal_result(
+    message: AcceptedMessage,
+    chat_type: ChatType,
+    tool_calls: list[ToolCall],
+) -> ConversationResult | None:
+    """Interpret a channel send tool as the terminal conversation output.
+
+    Channel delivery remains the responsibility of ``DeliverConversationResult``.
+    This keeps model-facing send tools useful without allowing the generic tool
+    executor to perform an external side effect.
+    """
+
+    if not tool_calls:
+        return None
+
+    expected_tool_name = "line.send" if chat_type is ChatType.LINE else "discord.send"
+    terminal_calls = [
+        tool_call
+        for tool_call in tool_calls
+        if tool_call.tool_name in {"line.send", "discord.send"}
+    ]
+    if not terminal_calls:
+        return None
+
+    if len(tool_calls) != 1 or terminal_calls[0].tool_name != expected_tool_name:
+        return _unavailable_result(
+            message,
+            "送信toolは応答の終端で単独使用する必要があります。",
+        )
+
+    contents = normalize_reply_contents(terminal_calls[0].arguments)
+    if contents is None:
+        return _unavailable_result(
+            message,
+            "送信toolのcontentsが空です。",
+        )
+    return ConversationResult(
+        message_id=message.message_id,
+        external_conversation_id=message.external_conversation_id,
+        channel=message.channel,
+        contents=tuple(contents),
+    )
+
+
+def _unavailable_result(message: AcceptedMessage, reason: str) -> ConversationResult:
+    return ConversationResult(
+        message_id=message.message_id,
+        external_conversation_id=message.external_conversation_id,
+        channel=message.channel,
+        unavailable=True,
+        failure_reason=reason,
+    )

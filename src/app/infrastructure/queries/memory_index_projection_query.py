@@ -13,13 +13,8 @@ from app.contracts.ports.memory_index_query import (
     IMemoryIndexQuery,
     MemoryIndexQueryError,
 )
-from app.infrastructure.memory.context_loader import entity_is_selected_relationship
 from app.infrastructure.memory.markdown import MemoryMarkdownError
-from app.infrastructure.memory.store import (
-    FilesystemMemoryStore,
-    MemoryStoreError,
-    encode_path_segment,
-)
+from app.infrastructure.memory.store import FilesystemMemoryStore, MemoryStoreError
 from app.infrastructure.repositories.memory_index_repository import (
     MemoryIndexRepository,
 )
@@ -40,29 +35,17 @@ class SQLAlchemyMemoryIndexQuery(IMemoryIndexQuery):
         self,
         *,
         user_id: str,
-        character_id: str,
-        relationship_entity_id: str,
     ) -> Result[list[MemoryIndexDocument], MemoryIndexQueryError]:
-        """Load the projected user records and active agent-profile records."""
+        """Load the projected records for one exact user scope."""
 
         try:
             async with self._session_factory() as session:
                 repository = MemoryIndexRepository(session)
                 user_records = await repository.list_by_user_id(user_id)
-                agent_records = await repository.list_by_source_path_prefix(
-                    f"profiles/agent/{encode_path_segment(character_id)}/"
-                )
-            records = _deduplicate_records([*agent_records, *user_records])
+            records = _deduplicate_records(user_records)
             documents = [self._load_document(record) for record in records]
             return Ok(
-                [
-                    document
-                    for document in documents
-                    if _is_visible_document(
-                        document,
-                        relationship_entity_id=relationship_entity_id,
-                    )
-                ]
+                [document for document in documents if _is_visible_document(document)]
             )
         except (
             MemoryMarkdownError,
@@ -80,11 +63,6 @@ class SQLAlchemyMemoryIndexQuery(IMemoryIndexQuery):
             expected_memory_type=record.memory_type,
             expected_user_id=record.user_id,
         )
-        if record.user_id is None and document.front_matter.get("user_id") is not None:
-            raise ValueError(
-                "Global memory projection row points to a user-scoped document: "
-                f"{record.source_path!r}"
-            )
         return MemoryIndexDocument(
             path=path,
             reference=record.source_path,
@@ -112,12 +90,7 @@ def _resolve_projected_path(root: Path, source_path: str) -> Path:
 
 def _is_visible_document(
     document: MemoryIndexDocument,
-    *,
-    relationship_entity_id: str,
 ) -> bool:
     if document.document.front_matter.get("memory_type") != "entity":
         return True
-    return entity_is_selected_relationship(
-        document.document,
-        relationship_entity_id=relationship_entity_id,
-    )
+    return document.document.front_matter.get("entity_type") != "relationship"

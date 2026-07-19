@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from flow_res import Result
 
 from app.contracts.messages.agentic import AgentEnvelope
+from app.contracts.messages.chat_type import ChatType
 from app.contracts.messages.tool_contracts import ToolCall, ToolExecutionResult
-from app.domain.value_objects.chat_type import ChatType
 
 
 @dataclass

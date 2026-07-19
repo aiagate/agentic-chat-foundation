@@ -8,7 +8,16 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from injector import Injector
 
-from app.infrastructure.database import init_db
+from app.bootstrap.character_selection import resolve_active_character_id
+from app.infrastructure.database import init_db, sqlalchemy_echo_enabled
+from app.presentation.bot.cogs.autonomous_topic_cog import (
+    AutonomousTopicCog,
+    AutonomousTopicCogSettings,
+)
+from app.presentation.bot.cogs.discussion_cog import (
+    DiscordDiscussionCog,
+    DiscussionCogSettings,
+)
 from app.presentation.bot.cogs.dm_response_cog import DirectMessageResponseCog
 
 
@@ -16,8 +25,10 @@ class MyBot(commands.Bot):
     injector: Injector
 
     def __init__(self, command_prefix: str = "!") -> None:
+        intents = discord.Intents.default()
+        intents.message_content = True
         super().__init__(
-            intents=discord.Intents.all(),
+            intents=intents,
             command_prefix=command_prefix,
         )
 
@@ -30,13 +41,55 @@ class MyBot(commands.Bot):
         from app import container
 
         db_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./bot.db")
-        init_db(db_url, echo=True)
+        init_db(db_url, echo=sqlalchemy_echo_enabled())
 
         injector = Injector([container.configure])
         self.injector = injector
 
     async def load_cogs(self) -> None:
         await self.add_cog(DirectMessageResponseCog(self))
+        await self.add_cog(
+            DiscordDiscussionCog(
+                self,
+                DiscussionCogSettings(
+                    channel_ids=_discussion_channel_ids(),
+                    character_id=resolve_active_character_id(),
+                    backfill_limit=_positive_int_env(
+                        "DISCORD_DISCUSSION_BACKFILL_LIMIT", 50
+                    ),
+                    response_delay_min_seconds=_nonnegative_float_env(
+                        "DISCORD_RESPONSE_DELAY_MIN_SECONDS", 2.0
+                    ),
+                    response_delay_max_seconds=_nonnegative_float_env(
+                        "DISCORD_RESPONSE_DELAY_MAX_SECONDS", 8.0
+                    ),
+                ),
+            )
+        )
+        await self.add_cog(
+            AutonomousTopicCog(
+                self,
+                AutonomousTopicCogSettings(
+                    enabled=_boolean_env("DISCORD_AUTONOMOUS_TOPICS_ENABLED", False),
+                    channel_ids=_discussion_channel_ids(),
+                    character_id=resolve_active_character_id(),
+                    initial_delay_seconds=_nonnegative_float_env(
+                        "DISCORD_AUTONOMOUS_TOPIC_INITIAL_DELAY_SECONDS", 300.0
+                    ),
+                    interval_seconds=float(
+                        _positive_int_env(
+                            "DISCORD_AUTONOMOUS_TOPIC_INTERVAL_SECONDS", 900
+                        )
+                    ),
+                    publication_delay_min_seconds=_nonnegative_float_env(
+                        "DISCORD_RESPONSE_DELAY_MIN_SECONDS", 2.0
+                    ),
+                    publication_delay_max_seconds=_nonnegative_float_env(
+                        "DISCORD_RESPONSE_DELAY_MAX_SECONDS", 8.0
+                    ),
+                ),
+            )
+        )
 
     async def close(self) -> None:
         await super().close()
@@ -81,6 +134,51 @@ def main() -> None:
 
     bot = MyBot()
     bot.run(token)
+
+
+def _discussion_channel_ids() -> frozenset[int]:
+    raw_value = os.getenv("DISCORD_DISCUSSION_CHANNEL_IDS", "")
+    channel_ids: set[int] = set()
+    for item in raw_value.split(","):
+        normalized = item.strip()
+        if not normalized:
+            continue
+        try:
+            channel_ids.add(int(normalized))
+        except ValueError:
+            logging.warning(
+                "Ignoring invalid Discord discussion channel id: %r", normalized
+            )
+    return frozenset(channel_ids)
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _nonnegative_float_env(name: str, default: float) -> float:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        value = float(raw_value)
+    except ValueError:
+        return default
+    return value if value >= 0 else default
+
+
+def _boolean_env(name: str, default: bool) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 if __name__ == "__main__":

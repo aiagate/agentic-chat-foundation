@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -11,10 +11,6 @@ class IMemoryStore(Protocol):
     """Interface for filesystem-backed memory document storage."""
 
     root: Path
-
-    def agent_profile_dir(self, character_id: str) -> Path:
-        """Return the agent profile bundle directory."""
-        ...
 
     def agent_profile_part_path(
         self,
@@ -25,12 +21,21 @@ class IMemoryStore(Protocol):
         """Return one agent profile bundle file path."""
         ...
 
-    def agent_profile_bundle_paths(
+    def read_agent_profile_part(
         self,
+        part: str,
         *,
         character_id: str,
-    ) -> dict[str, Path]:
-        """Return all agent profile bundle paths keyed by part name."""
+    ) -> str:
+        """Read one raw agent profile bundle part."""
+        ...
+
+    def agent_relationship_definition_path(self, character_id: str) -> Path:
+        """Return the character relationship YAML path."""
+        ...
+
+    def read_agent_relationship_definition(self, character_id: str) -> str:
+        """Read one character relationship YAML definition."""
         ...
 
     def user_profile_path(self, user_id: str) -> Path:
@@ -39,20 +44,6 @@ class IMemoryStore(Protocol):
 
     def entity_path(self, user_id: str, entity_id: str) -> Path:
         """Return a user-scoped entity path."""
-        ...
-
-    def raw_timeline_path(
-        self,
-        *,
-        user_id: str,
-        occurred_at: datetime,
-        role: str,
-    ) -> Path:
-        """Return a new user-scoped raw timeline path."""
-        ...
-
-    def daily_timeline_path(self, *, user_id: str, day: date) -> Path:
-        """Return the user-scoped daily summary path."""
         ...
 
     def section_timeline_path(

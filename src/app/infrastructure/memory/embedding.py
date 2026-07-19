@@ -19,6 +19,8 @@ from app.contracts.ports.embedding_service import (
 
 _TERM_PATTERN = re.compile(r"[\w一-龯ぁ-んァ-ヶー]+", re.UNICODE)
 _DEFAULT_DIMENSION = 16
+_DEFAULT_GEMINI_EMBEDDING_MODEL = "gemini-embedding-2"
+_GEMINI_EMBEDDING_TASK_PREFIX = "task: sentence similarity | query: "
 
 
 class DeterministicEmbeddingService(IEmbeddingService):
@@ -53,7 +55,7 @@ class GeminiEmbeddingService(IEmbeddingService):
         self._client = genai.Client(api_key=api_key) if api_key else None
         self._model = model or os.getenv(
             "GEMINI_EMBEDDING_MODEL",
-            "gemini-embedding-001",
+            _DEFAULT_GEMINI_EMBEDDING_MODEL,
         )
         self._output_dimensionality = output_dimensionality
 
@@ -61,27 +63,40 @@ class GeminiEmbeddingService(IEmbeddingService):
         self,
         texts: list[str],
     ) -> Result[list[list[float]], EmbeddingServiceError]:
-        """Generate embeddings for a batch of texts."""
+        """Generate one Gemini Embedding 2 vector for each supplied text."""
 
         if self._client is None:
             return Err(EmbeddingServiceError("Gemini API key not configured."))
+        if not texts:
+            return Ok([])
 
         try:
-            response = await self._client.aio.models.embed_content(
-                model=self._model,
-                contents=texts,
-                config=types.EmbedContentConfig(
-                    task_type="SEMANTIC_SIMILARITY",
-                    output_dimensionality=self._output_dimensionality,
-                ),
-            )
-            embeddings = [
-                list(cast(list[float], embedding.values))
-                for embedding in (response.embeddings or [])
-            ]
+            embeddings: list[list[float]] = []
+            for text in texts:
+                response = await self._client.aio.models.embed_content(
+                    model=self._model,
+                    contents=_prepare_gemini_embedding_text(text),
+                    config=types.EmbedContentConfig(
+                        output_dimensionality=self._output_dimensionality,
+                    ),
+                )
+                response_embeddings = response.embeddings or []
+                if len(response_embeddings) != 1:
+                    raise ValueError(
+                        "Gemini Embedding 2 returned an unexpected number of vectors"
+                    )
+                embeddings.append(
+                    list(cast(list[float], response_embeddings[0].values))
+                )
             return Ok(embeddings)
         except Exception as exc:
             return Err(EmbeddingServiceError(f"Gemini embedding error: {exc}"))
+
+
+def _prepare_gemini_embedding_text(text: str) -> str:
+    """Add the symmetric similarity task instruction required by Embedding 2."""
+
+    return f"{_GEMINI_EMBEDDING_TASK_PREFIX}{text}"
 
 
 def embed_text_deterministically(

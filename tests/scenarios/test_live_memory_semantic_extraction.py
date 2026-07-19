@@ -11,19 +11,19 @@ from flow_res import is_err
 
 from app.contracts.messages.agent_profile import AgentProfileBundle
 from app.contracts.messages.character_definition import CharacterDefinition
-from app.contracts.messages.memory_context import MemoryProfile
+from app.contracts.messages.chat_type import ChatType
 from app.contracts.messages.memory_semantic_extraction import (
     LongTermMemoryChatLog,
     MemorySemanticExtractionRequest,
 )
 from app.contracts.ports.agent_profile_service import IAgentProfileService
 from app.contracts.ports.ai_service import IAIService
-from app.domain.value_objects.chat_type import ChatType
 from app.infrastructure.services.gemini_service import GeminiService
 from app.infrastructure.services.gpt_service import GptService
 from app.infrastructure.services.memory_semantic_extraction import (
     MemorySemanticExtractionService,
 )
+from tests._relationship_fixture import relationship_definition
 
 pytestmark = pytest.mark.scenario
 
@@ -36,17 +36,9 @@ class _ScenarioAgentProfileService(IAgentProfileService):
 
     def load_agent_profile_bundle(self) -> AgentProfileBundle:
         return AgentProfileBundle(
-            profile=MemoryProfile(user_id="ai"),
-            character=CharacterDefinition(
-                character_id="jondue",
-                relationship_entity_id="relationship:jondue",
-                relationship_entity_label="Relationship with Jon Due",
-            ),
+            character=CharacterDefinition(character_id="jondue"),
             persona_context="Persona Contract:\n- test persona",
-            relationship_entity_id="relationship:jondue",
-            relationship_entity_label="Relationship with Jon Due",
-            relationship_entity_type="relationship",
-            relationship_tag="agent-growth",
+            relationship=relationship_definition(),
         )
 
 
@@ -66,6 +58,7 @@ async def test_live_ai_provider_extracts_memory_sections() -> None:
             LongTermMemoryChatLog(
                 id="raw-1",
                 user_id="u1",
+                character_id="shirasagi-reina",
                 role="user",
                 chat_type=ChatType.LINE,
                 content="明日の新幹線に乗る前に、お風呂と荷物の準備をどう進めるか相談したい。",
@@ -74,6 +67,7 @@ async def test_live_ai_provider_extracts_memory_sections() -> None:
             LongTermMemoryChatLog(
                 id="raw-2",
                 user_id="u1",
+                character_id="shirasagi-reina",
                 role="assistant",
                 chat_type=ChatType.LINE,
                 content="まずお風呂に入ってから、充電器とお土産をまとめる流れがよさそう。",

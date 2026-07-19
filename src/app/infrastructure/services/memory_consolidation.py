@@ -2,36 +2,38 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from flow_res import is_err
 
 from app.contracts.messages.agent_profile import AgentProfileBundle
-from app.contracts.messages.character_definition import RelationshipDefaults
+from app.contracts.messages.memory_consolidation import (
+    MemoryChangeSet,
+    MemoryConsolidationResult,
+)
 from app.contracts.messages.memory_semantic_extraction import (
     LongTermMemoryChatLog,
     MemoryEntityPatch,
+    MemoryProfilePatch,
     MemorySectionSummary,
     MemorySemanticExtractionRequest,
-    MemoryTimelinePatch,
+    MemorySemanticExtractionResult,
     MemoryTimelineSectionPatch,
 )
-from app.contracts.messages.relationship_growth import (
-    MAX_DAILY_SCORE_INCREASE,
-    clamp_relationship_score_increase,
-    resolve_relationship_stage,
-)
+from app.contracts.messages.relationship import RelationshipSignalCandidate
 from app.contracts.ports.agent_profile_service import IAgentProfileService
 from app.contracts.ports.memory_index_projection import IMemoryIndexProjection
 from app.contracts.ports.memory_semantic_extraction import (
     IMemorySemanticExtractionService,
 )
 from app.contracts.ports.memory_store import IMemoryStore
-from app.domain.queries.raw_chat_log_query import RawChatLog
+from app.domain.queries.raw_chat_log_query import LongTermMemorySourceItem
 from app.domain.value_objects.message_content import render_message_content_text
 from app.infrastructure.memory.markdown import (
     MemoryMarkdownDocument,
@@ -51,6 +53,16 @@ class SectionConsolidationResult:
     processed_raw_ids: list[str]
     compressed_raw_ids: list[str]
     entity_ids: list[str]
+
+
+@dataclass(frozen=True, slots=True)
+class _AppliedMemoryBatch:
+    sections: list[SectionConsolidationResult]
+    entity_paths: list[Path]
+    profile_path: Path | None
+    evaluated_chat_ids: list[str]
+    deferred_chat_ids: list[str]
+    relationship_signals: list[RelationshipSignalCandidate]
 
 
 class _MissingAgentProfileService(IAgentProfileService):
@@ -75,26 +87,26 @@ class MemoryConsolidationService:
     completion marking stay in the organizing use case.
     """
 
+    store: IMemoryStore
     semantic_extraction_service: IMemorySemanticExtractionService | None = None
     memory_index_projection: IMemoryIndexProjection | None = None
     agent_profile_service: IAgentProfileService | None = None
 
     async def consolidate_chat_logs(
         self,
-        store: IMemoryStore,
         *,
         user_id: str,
         day: date,
-        raw_logs: list[RawChatLog],
+        raw_logs: list[LongTermMemorySourceItem],
         reference_time: datetime,
-    ) -> int:
+    ) -> MemoryConsolidationResult:
         """Consolidate one user/day raw chat log batch into Markdown memory."""
 
         if self.semantic_extraction_service is None:
             raise RuntimeError("semantic_extraction_service is required")
 
-        results, wrote_entity_patches = await _consolidate_chat_logs_into_sections(
-            store,
+        applied = await _consolidate_chat_logs_into_sections(
+            self.store,
             raw_logs,
             user_id=user_id,
             day=day,
@@ -103,28 +115,41 @@ class MemoryConsolidationService:
             agent_profile_service=self.agent_profile_service
             or _missing_agent_profile_service(),
         )
-        if (
-            results or wrote_entity_patches
-        ) and self.memory_index_projection is not None:
-            refresh_result = await self.memory_index_projection.refresh_for_user(
-                user_id=user_id
+        entity_paths = list(dict.fromkeys(applied.entity_paths))
+        upsert_paths = [
+            *(result.section_path for result in applied.sections),
+            *entity_paths,
+            *([applied.profile_path] if applied.profile_path is not None else []),
+        ]
+        if upsert_paths and self.memory_index_projection is not None:
+            refresh_result = await self.memory_index_projection.apply_changes(
+                user_id=user_id,
+                upsert_paths=upsert_paths,
+                delete_paths=[],
             )
             if is_err(refresh_result):
                 raise RuntimeError(str(refresh_result.error))
-        return len(results)
+        return MemoryConsolidationResult(
+            evaluated_chat_ids=tuple(applied.evaluated_chat_ids),
+            deferred_chat_ids=tuple(applied.deferred_chat_ids),
+            profile_updated=applied.profile_path is not None,
+            episode_upserted_count=len(applied.sections),
+            entity_upserted_count=len(entity_paths),
+            relationship_signals=tuple(applied.relationship_signals),
+        )
 
 
 async def _consolidate_chat_logs_into_sections(
     store: IMemoryStore,
-    raw_logs: list[RawChatLog],
+    raw_logs: list[LongTermMemorySourceItem],
     *,
     user_id: str,
     day: date,
     reference_time: datetime,
     semantic_extraction_service: IMemorySemanticExtractionService,
     agent_profile_service: IAgentProfileService,
-) -> tuple[list[SectionConsolidationResult], bool]:
-    profile_bundle = agent_profile_service.load_agent_profile_bundle()
+) -> _AppliedMemoryBatch:
+    agent_profile_service.load_agent_profile_bundle()
     request = _build_extraction_request(
         store,
         raw_logs,
@@ -140,60 +165,139 @@ async def _consolidate_chat_logs_into_sections(
 
     result = extraction_result.value
     raw_log_ids = _unique_strings(raw_log.id for raw_log in request.raw_logs)
-    section_patches = result.sections
-    if not section_patches and result.timeline_patch is not None:
-        section_patches = [
-            _timeline_patch_to_section_patch(
-                result.timeline_patch,
-                fallback_slug="summary",
-                source_chat_ids=raw_log_ids,
-            )
-        ]
-    _validate_section_source_chat_ids(
-        section_patches,
-        available_source_chat_ids=raw_log_ids,
+    _validate_relationship_signals(result.relationship_signals, raw_log_ids)
+    change_set = _build_memory_change_set(
+        result,
+        user_id=user_id,
+        day=day,
+        raw_log_ids=raw_log_ids,
     )
-
     results: list[SectionConsolidationResult] = []
-    wrote_entity_patches = False
-    for entity_patch in result.entity_patches:
-        _write_entity_patch(
-            store,
-            entity_patch=entity_patch,
-            source_chat_ids=raw_log_ids,
-            reference_time=reference_time,
-            profile_bundle=profile_bundle,
+    entity_paths: list[Path] = []
+    for entity_patch in change_set.entities:
+        entity_paths.append(
+            _write_entity_patch(
+                store,
+                entity_patch=entity_patch,
+                source_chat_ids=entity_patch.source_chat_ids,
+                reference_time=reference_time,
+            )
         )
-        wrote_entity_patches = True
 
-    if not section_patches:
-        return results, wrote_entity_patches
+    profile_path: Path | None = None
+    if change_set.profile is not None:
+        profile_path = _write_profile_patch(
+            store,
+            user_id=user_id,
+            profile_patch=change_set.profile,
+            reference_time=reference_time,
+        )
+
+    if not change_set.sections:
+        return _AppliedMemoryBatch(
+            sections=results,
+            entity_paths=entity_paths,
+            profile_path=profile_path,
+            evaluated_chat_ids=list(change_set.evaluated_chat_ids),
+            deferred_chat_ids=list(change_set.deferred_chat_ids),
+            relationship_signals=list(result.relationship_signals),
+        )
 
     existing_timeline_paths = set(store.iter_timeline_paths(user_id))
     observed_at = _latest_raw_chat_log_observed_at(raw_logs)
     updated_at = reference_time.isoformat()
-    for section_patch in section_patches:
+    for section_patch in change_set.sections:
         section_result = _write_section_timeline(
             store,
             section_patch=section_patch,
             reference_time=reference_time,
             existing_timeline_paths=existing_timeline_paths,
         )
-        _update_entity_references(
-            store,
-            user_id=user_id,
-            entity_ids=section_result.entity_ids,
-            timeline_id=section_patch.id,
-            observed_at=observed_at,
-            updated_at=updated_at,
+        entity_paths.extend(
+            _update_entity_references(
+                store,
+                user_id=user_id,
+                entity_ids=section_result.entity_ids,
+                timeline_id=section_patch.id,
+                observed_at=observed_at,
+                updated_at=updated_at,
+            )
         )
         results.append(section_result)
-    return results, wrote_entity_patches
+    return _AppliedMemoryBatch(
+        sections=results,
+        entity_paths=entity_paths,
+        profile_path=profile_path,
+        evaluated_chat_ids=list(change_set.evaluated_chat_ids),
+        deferred_chat_ids=list(change_set.deferred_chat_ids),
+        relationship_signals=list(result.relationship_signals),
+    )
+
+
+def _validate_relationship_signals(
+    signals: list[RelationshipSignalCandidate],
+    raw_log_ids: list[str],
+) -> None:
+    available = set(raw_log_ids)
+    for signal in signals:
+        if not signal.source_chat_ids:
+            raise ValueError("relationship signal must cite at least one raw chat")
+        if not set(signal.source_chat_ids) <= available:
+            raise ValueError("relationship signal cites an unknown raw chat")
+
+
+def _build_memory_change_set(
+    result: MemorySemanticExtractionResult,
+    *,
+    user_id: str,
+    day: date,
+    raw_log_ids: list[str],
+) -> MemoryChangeSet:
+    """Validate and normalize extraction output without touching storage."""
+
+    _validate_extraction_result(
+        result, user_id=user_id, day=day, raw_log_ids=raw_log_ids
+    )
+    entity_patches: list[MemoryEntityPatch] = []
+    entity_id_map: dict[str, str] = {}
+    for patch in result.entity_patches:
+        if patch.update_mode == "defer" or patch.entity_type == "relationship":
+            continue
+        scoped_patch = _server_scoped_entity_patch(patch, user_id=user_id)
+        entity_id_map[patch.id] = scoped_patch.id
+        entity_patches.append(scoped_patch)
+
+    section_patches = [
+        _server_scoped_section_patch(patch, user_id=user_id, day=day).model_copy(
+            update={
+                "entity_ids": [
+                    entity_id_map.get(entity_id, entity_id)
+                    for entity_id in patch.entity_ids
+                ]
+            }
+        )
+        for patch in result.sections
+    ]
+    _validate_section_source_chat_ids(
+        section_patches,
+        available_source_chat_ids=raw_log_ids,
+    )
+    profile = result.profile_patch
+    if profile is not None and profile.update_mode == "defer":
+        profile = None
+    evaluated, deferred = _source_dispositions(result, raw_log_ids=raw_log_ids)
+    return MemoryChangeSet(
+        sections=tuple(section_patches),
+        entities=tuple(entity_patches),
+        profile=profile,
+        evaluated_chat_ids=tuple(evaluated),
+        deferred_chat_ids=tuple(deferred),
+    )
 
 
 def _build_extraction_request(
     store: IMemoryStore,
-    raw_logs: list[RawChatLog],
+    raw_logs: list[LongTermMemorySourceItem],
     *,
     user_id: str,
     day: date,
@@ -203,19 +307,20 @@ def _build_extraction_request(
         LongTermMemoryChatLog(
             id=raw_log.id,
             user_id=raw_log.user_id,
+            character_id=raw_log.character_id,
             role=raw_log.role,
             chat_type=raw_log.chat_type,
             content=_raw_chat_log_text(raw_log),
             occurred_at=_raw_chat_log_observed_at(raw_log) or reference_time,
         )
         for raw_log in raw_logs
-        if raw_log.created_at is not None and _as_utc(raw_log.created_at).date() == day
+        if raw_log.created_at is not None and _as_jst(raw_log.created_at).date() == day
     ]
     return MemorySemanticExtractionRequest(
         user_id=user_id,
         day=day.isoformat(),
         raw_logs=filtered_raw_logs,
-        existing_profile_summary=None,
+        existing_profile_summary=_existing_profile_summary(store, user_id=user_id),
         existing_entity_labels=_existing_entity_labels(store, user_id=user_id),
         existing_timeline_summaries=_recent_timeline_summaries(
             store,
@@ -226,14 +331,220 @@ def _build_extraction_request(
     )
 
 
+def _existing_profile_summary(store: IMemoryStore, *, user_id: str) -> str | None:
+    path = store.user_profile_path(user_id)
+    if not path.exists():
+        return None
+    document = store.read_document(
+        path,
+        expected_memory_type="profile",
+        expected_user_id=user_id,
+    )
+    front_matter = document.front_matter
+    values = [
+        f"summary={front_matter_string(front_matter.get('summary'))}",
+        "traits=" + ", ".join(front_matter_string_list(front_matter.get("traits"))),
+        "preferences="
+        + ", ".join(front_matter_string_list(front_matter.get("preferences"))),
+    ]
+    return "; ".join(values)
+
+
+def _validate_extraction_result(
+    result: MemorySemanticExtractionResult,
+    *,
+    user_id: str,
+    day: date,
+    raw_log_ids: list[str],
+) -> None:
+    available = set(raw_log_ids)
+    referenced: set[str] = set()
+    for section in result.sections:
+        if section.user_id != user_id or section.day != day.isoformat():
+            raise ValueError("Memory section scope does not match the requested batch")
+        _validate_confidence(section.confidence)
+        referenced.update(section.source_chat_ids)
+    for entity in result.entity_patches:
+        if entity.user_id != user_id:
+            raise ValueError("Memory entity scope does not match the requested user")
+        _validate_confidence(entity.confidence)
+        if entity.update_mode != "defer" and not entity.source_chat_ids:
+            raise ValueError("Memory entity patch requires source_chat_ids")
+        referenced.update(entity.source_chat_ids)
+    if result.profile_patch is not None:
+        profile = result.profile_patch
+        if profile.user_id != user_id:
+            raise ValueError("Memory profile scope does not match the requested user")
+        _validate_confidence(profile.confidence)
+        if profile.update_mode != "defer" and not profile.source_chat_ids:
+            raise ValueError("Memory profile patch requires source_chat_ids")
+        referenced.update(profile.source_chat_ids)
+    for signal in result.relationship_signals:
+        _validate_confidence(signal.confidence)
+        if not signal.source_chat_ids:
+            raise ValueError("Relationship signal requires source_chat_ids")
+        referenced.update(signal.source_chat_ids)
+    if not referenced.issubset(available):
+        unknown = sorted(referenced - available)
+        raise ValueError(f"Memory patches reference unknown source chat ids: {unknown}")
+    if raw_log_ids and not result.source_evaluations:
+        raise ValueError("Source evaluations must cover the entire input batch")
+    if result.source_evaluations:
+        evaluation_ids = [item.chat_id for item in result.source_evaluations]
+        if len(evaluation_ids) != len(set(evaluation_ids)):
+            raise ValueError("Each source chat must have one evaluation")
+        if set(evaluation_ids) != available:
+            raise ValueError("Source evaluations must cover the entire input batch")
+        used_ids = {
+            item.chat_id
+            for item in result.source_evaluations
+            if item.disposition == "used"
+        }
+        if used_ids != referenced:
+            raise ValueError("Used source evaluations must match patch evidence")
+
+
+def _validate_confidence(value: float) -> None:
+    if not 0.0 <= value <= 1.0:
+        raise ValueError("Memory confidence must be between 0 and 1")
+
+
+def _source_dispositions(
+    result: MemorySemanticExtractionResult,
+    *,
+    raw_log_ids: list[str],
+) -> tuple[list[str], list[str]]:
+    evaluated = [
+        item.chat_id
+        for item in result.source_evaluations
+        if item.disposition in {"used", "not_memorable"}
+    ]
+    deferred = [
+        item.chat_id
+        for item in result.source_evaluations
+        if item.disposition == "deferred"
+    ]
+    return evaluated, deferred
+
+
+def _server_scoped_section_patch(
+    patch: MemoryTimelineSectionPatch,
+    *,
+    user_id: str,
+    day: date,
+) -> MemoryTimelineSectionPatch:
+    source_key = "\x1f".join(sorted(set(patch.source_chat_ids)))
+    digest = hashlib.sha256(source_key.encode("utf-8")).hexdigest()[:16]
+    return patch.model_copy(
+        update={
+            "id": f"episode-{day.isoformat()}-{digest}",
+            "user_id": user_id,
+            "day": day.isoformat(),
+            "section_slug": digest,
+        }
+    )
+
+
+def _server_scoped_entity_patch(
+    patch: MemoryEntityPatch,
+    *,
+    user_id: str,
+) -> MemoryEntityPatch:
+    identity = f"{patch.entity_type.strip().lower()}\x1f{patch.label.strip().lower()}"
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
+    return patch.model_copy(update={"id": f"entity-{digest}", "user_id": user_id})
+
+
+def _write_profile_patch(
+    store: IMemoryStore,
+    *,
+    user_id: str,
+    profile_patch: MemoryProfilePatch,
+    reference_time: datetime,
+) -> Path:
+    path = store.user_profile_path(user_id)
+    existing = (
+        store.read_document(
+            path,
+            expected_memory_type="profile",
+            expected_user_id=user_id,
+        )
+        if path.exists()
+        else None
+    )
+    current = dict(existing.front_matter) if existing is not None else {}
+    current_traits = front_matter_string_list(current.get("traits", []))
+    current_preferences = front_matter_string_list(current.get("preferences", []))
+    if profile_patch.update_mode == "replace":
+        traits = _unique_strings(profile_patch.traits)
+        preferences = _unique_strings(profile_patch.preferences)
+    else:
+        traits = _unique_strings([*current_traits, *profile_patch.traits])
+        preferences = _unique_strings(
+            [*current_preferences, *profile_patch.preferences]
+        )
+    summary = profile_patch.summary
+    if summary is None:
+        summary = front_matter_string(current.get("summary"))
+    display_name = profile_patch.display_name
+    if display_name is None:
+        display_name = front_matter_string_or_none(current.get("display_name"))
+    observed_at = (profile_patch.observed_at or reference_time).isoformat()
+    source_ids = _unique_strings(
+        [
+            *front_matter_string_list(current.get("source_chat_ids", [])),
+            *profile_patch.source_chat_ids,
+        ]
+    )
+    front_matter: dict[str, object] = {
+        "schema_version": 1,
+        "memory_type": "profile",
+        "id": f"profile:{user_id}",
+        "memory_id": f"profile:{user_id}",
+        "user_id": user_id,
+        "profile_scope": "user",
+        "display_name": display_name,
+        "summary": summary,
+        "traits": traits,
+        "preferences": preferences,
+        "source_chat_ids": source_ids,
+        "observed_at": observed_at,
+        "created_at": front_matter_string(
+            current.get("created_at"), default=reference_time.isoformat()
+        ),
+        "updated_at": reference_time.isoformat(),
+        "tags": ["profile"],
+        "importance": 0.8,
+        "confidence": profile_patch.confidence,
+        "pinned": False,
+        "metadata": {"update_mode": profile_patch.update_mode},
+    }
+    body_lines = [
+        f"# {display_name or user_id}",
+        "",
+        "## Summary",
+        "",
+        summary or "",
+        "",
+        "## Traits",
+        "",
+        *(f"- {value}" for value in traits),
+        "",
+        "## Preferences",
+        "",
+        *(f"- {value}" for value in preferences),
+    ]
+    store.write_document(path, front_matter=front_matter, body="\n".join(body_lines))
+    return path
+
+
 def _write_entity_patch(
     store: IMemoryStore,
     *,
     entity_patch: MemoryEntityPatch,
     source_chat_ids: list[str],
     reference_time: datetime,
-    profile_bundle: AgentProfileBundle,
-) -> None:
+) -> Path:
     entity_path = store.entity_path(entity_patch.user_id, entity_patch.id)
     existing_document = _read_existing_entity(
         store,
@@ -243,38 +554,35 @@ def _write_entity_patch(
     existing_front_matter = (
         dict(existing_document.front_matter) if existing_document is not None else {}
     )
-    existing_properties = _property_dict(
-        existing_front_matter.get("properties")
-        or existing_front_matter.get("attributes")
-        or {}
-    )
+    existing_properties = _property_dict(existing_front_matter.get("properties") or {})
     patch_properties = _property_dict(entity_patch.properties)
-    if entity_patch.id == profile_bundle.relationship_entity_id:
-        properties = _relationship_properties(
-            existing_properties,
-            patch_properties,
-            reference_time=reference_time,
-            defaults=profile_bundle.relationship_defaults,
-        )
-        entity_type = profile_bundle.relationship_entity_type
-        label = entity_patch.label or profile_bundle.relationship_entity_label
-        tags = _unique_strings(
-            [
-                *front_matter_string_list(existing_front_matter.get("tags", [])),
-                "relationship",
-                profile_bundle.relationship_tag,
-            ]
-        )
-        importance = 0.75
+    property_history = _mapping_list(existing_front_matter.get("property_history"))
+    if entity_patch.update_mode == "replace":
+        properties = patch_properties
     else:
         properties = {**existing_properties, **patch_properties}
-        entity_type = entity_patch.entity_type
-        label = entity_patch.label
-        tags = front_matter_string_list(existing_front_matter.get("tags", []))
-        importance = max(
-            _float_value(existing_front_matter.get("importance"), default=0.0),
-            0.6,
-        )
+    if entity_patch.update_mode == "transition":
+        observed_at = (entity_patch.observed_at or reference_time).isoformat()
+        for key, value in patch_properties.items():
+            previous = existing_properties.get(key)
+            if previous is not None and previous != value:
+                property_history.append(
+                    {
+                        "key": key,
+                        "value": previous,
+                        "valid_to": observed_at,
+                        "source_chat_ids": front_matter_string_list(
+                            existing_front_matter.get("source_chat_ids", [])
+                        ),
+                    }
+                )
+    entity_type = entity_patch.entity_type
+    label = entity_patch.label
+    tags = front_matter_string_list(existing_front_matter.get("tags", []))
+    importance = max(
+        _float_value(existing_front_matter.get("importance"), default=0.0),
+        0.6,
+    )
 
     aliases = _unique_strings(
         [
@@ -295,7 +603,7 @@ def _write_entity_patch(
         "status": entity_patch.status or "active",
         "aliases": aliases,
         "properties": properties,
-        "attributes": properties,
+        "property_history": property_history,
         "missing_attributes": entity_patch.missing_attributes,
         "referenced_in": front_matter_string_list(
             existing_front_matter.get("referenced_in", [])
@@ -316,6 +624,8 @@ def _write_entity_patch(
         ),
         "pinned": bool(existing_front_matter.get("pinned")),
         "metadata": existing_front_matter.get("metadata", {}),
+        "observed_at": (entity_patch.observed_at or reference_time).isoformat(),
+        "update_mode": entity_patch.update_mode,
     }
     store.write_document(
         entity_path,
@@ -327,71 +637,7 @@ def _write_entity_patch(
             properties=properties,
         ),
     )
-
-
-def _relationship_properties(
-    existing_properties: dict[str, object],
-    patch_properties: dict[str, object],
-    *,
-    reference_time: datetime,
-    defaults: RelationshipDefaults,
-) -> dict[str, object]:
-    current_trust = _float_value(
-        existing_properties.get("trust_score"),
-        default=defaults.trust_score,
-    )
-    current_warmth = _float_value(
-        existing_properties.get("warmth_score"),
-        default=defaults.warmth_score,
-    )
-    proposed_trust = _float_value(
-        patch_properties.get("trust_score"),
-        default=current_trust,
-    )
-    proposed_warmth = _float_value(
-        patch_properties.get("warmth_score"),
-        default=current_warmth,
-    )
-    trust_score = clamp_relationship_score_increase(
-        current_score=current_trust,
-        proposed_score=proposed_trust,
-    )
-    warmth_score = clamp_relationship_score_increase(
-        current_score=current_warmth,
-        proposed_score=proposed_warmth,
-    )
-    stage = resolve_relationship_stage(
-        trust_score=trust_score,
-        warmth_score=warmth_score,
-    )
-    current_stage = _int_value(existing_properties.get("stage"), default=defaults.stage)
-    last_stage_changed_at = front_matter_string(
-        existing_properties.get("last_stage_changed_at")
-    )
-    if stage.stage != current_stage:
-        last_stage_changed_at = reference_time.isoformat()
-    evidence_count = max(
-        _int_value(existing_properties.get("evidence_count"), default=0),
-        _int_value(patch_properties.get("evidence_count"), default=0),
-    )
-    recent_signal = front_matter_string(
-        patch_properties.get("recent_signal")
-        or existing_properties.get("recent_signal")
-        or ""
-    )
-    return {
-        **existing_properties,
-        **patch_properties,
-        "stage": stage.stage,
-        "stage_name": stage.name,
-        "stage_behavior": stage.behavior,
-        "trust_score": trust_score,
-        "warmth_score": warmth_score,
-        "max_daily_score_increase": MAX_DAILY_SCORE_INCREASE,
-        "last_stage_changed_at": last_stage_changed_at or None,
-        "evidence_count": evidence_count,
-        "recent_signal": recent_signal,
-    }
+    return entity_path
 
 
 def _write_section_timeline(
@@ -504,9 +750,15 @@ def _existing_entity_labels(
             )
         except MemoryMarkdownError:
             continue
-        label = front_matter_string(document.front_matter.get("label"))
+        front_matter = document.front_matter
+        label = front_matter_string(front_matter.get("label"))
         if label:
-            labels.append(label)
+            labels.append(
+                f"id={front_matter_string(front_matter.get('id'))}; "
+                f"label={label}; "
+                f"type={front_matter_string(front_matter.get('entity_type'))}; "
+                f"properties={front_matter.get('properties', {})}"
+            )
     return labels
 
 
@@ -523,43 +775,11 @@ def _build_entity_body(
         f"- type: {entity_type}",
         f"- status: {status}",
     ]
-    if entity_type == "relationship":
-        lines.extend(
-            [
-                "",
-                "## Relationship Stage",
-                "",
-                f"- stage: {_format_property(properties.get('stage'))}",
-                f"- stage_name: {_format_property(properties.get('stage_name'))}",
-                f"- trust_score: {_format_property(properties.get('trust_score'))}",
-                f"- warmth_score: {_format_property(properties.get('warmth_score'))}",
-                f"- recent_signal: {_format_property(properties.get('recent_signal'))}",
-            ]
-        )
-    elif properties:
+    if properties:
         lines.extend(["", "## Known Facts", ""])
         for key, value in sorted(properties.items()):
             lines.append(f"- {key}: {_format_property(value)}")
     return "\n".join(lines)
-
-
-def _timeline_patch_to_section_patch(
-    timeline_patch: MemoryTimelinePatch,
-    *,
-    fallback_slug: str,
-    source_chat_ids: list[str],
-) -> MemoryTimelineSectionPatch:
-    return MemoryTimelineSectionPatch(
-        id=timeline_patch.id,
-        user_id=timeline_patch.user_id,
-        day=timeline_patch.day,
-        section_slug=fallback_slug,
-        title="要約",
-        source_chat_ids=source_chat_ids,
-        summary=timeline_patch.summary,
-        entity_ids=list(timeline_patch.entity_ids),
-        confidence=float(timeline_patch.confidence),
-    )
 
 
 def _validate_section_source_chat_ids(
@@ -634,10 +854,7 @@ def _recent_timeline_summaries(
         except MemoryMarkdownError:
             continue
         front_matter = document.front_matter
-        if front_matter.get("timeline_type") not in {
-            "daily_summary",
-            "section_summary",
-        }:
+        if front_matter.get("timeline_type") != "section_summary":
             continue
         occurred_at = _front_matter_day(front_matter.get("occurred_at"))
         if occurred_at is None or occurred_at >= before_day:
@@ -816,7 +1033,8 @@ def _update_entity_references(
     timeline_id: str,
     observed_at: str | None,
     updated_at: str,
-) -> None:
+) -> list[Path]:
+    updated_paths: list[Path] = []
     for entity_id in entity_ids:
         entity_path = store.entity_path(user_id, entity_id)
         if not entity_path.exists():
@@ -842,9 +1060,13 @@ def _update_entity_references(
             front_matter=front_matter,
             body=document.body,
         )
+        updated_paths.append(entity_path)
+    return updated_paths
 
 
-def _latest_raw_chat_log_observed_at(raw_logs: list[RawChatLog]) -> str | None:
+def _latest_raw_chat_log_observed_at(
+    raw_logs: list[LongTermMemorySourceItem],
+) -> str | None:
     occurred_values = [_raw_chat_log_observed_at(raw_log) for raw_log in raw_logs]
     observed_values = [value for value in occurred_values if value is not None]
     if not observed_values:
@@ -852,13 +1074,15 @@ def _latest_raw_chat_log_observed_at(raw_logs: list[RawChatLog]) -> str | None:
     return max(observed_values).isoformat()
 
 
-def _raw_chat_log_observed_at(raw_log: RawChatLog) -> datetime | None:
+def _raw_chat_log_observed_at(
+    raw_log: LongTermMemorySourceItem,
+) -> datetime | None:
     if raw_log.created_at is None:
         return None
     return _as_utc(raw_log.created_at)
 
 
-def _raw_chat_log_text(raw_log: RawChatLog) -> str:
+def _raw_chat_log_text(raw_log: LongTermMemorySourceItem) -> str:
     payload = raw_log.message_content.get("payload")
     if isinstance(payload, dict):
         text = render_message_content_text(payload)
@@ -893,6 +1117,12 @@ def _property_dict(value: object) -> dict[str, object]:
     return properties
 
 
+def _mapping_list(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
 def _format_property(value: object) -> str:
     if value is None:
         return "null"
@@ -912,20 +1142,12 @@ def _float_value(value: object, *, default: float) -> float:
     return default
 
 
-def _int_value(value: object, *, default: int) -> int:
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str):
-        try:
-            return int(float(value))
-        except ValueError:
-            return default
-    return default
-
-
 def _as_utc(value: datetime) -> datetime:
     return (
         value.astimezone(UTC) if value.tzinfo is not None else value.replace(tzinfo=UTC)
     )
+
+
+def _as_jst(value: datetime) -> datetime:
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return aware.astimezone(ZoneInfo("Asia/Tokyo"))

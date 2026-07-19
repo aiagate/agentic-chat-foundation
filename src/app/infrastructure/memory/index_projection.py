@@ -6,17 +6,11 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from urllib.parse import unquote
 
 from flow_res import is_err
 
 from app.contracts.messages.memory_index import MemoryIndexDocument, MemoryIndexRecord
 from app.contracts.ports.embedding_service import IEmbeddingService
-from app.infrastructure.memory.context_loader import (
-    agent_profile_paths,
-    index_document_from_stored,
-    read_index_documents,
-)
 from app.infrastructure.memory.decay import calculate_decay_score
 from app.infrastructure.memory.embedding import embed_text_deterministically
 from app.infrastructure.memory.markdown import (
@@ -26,44 +20,6 @@ from app.infrastructure.memory.markdown import (
     front_matter_string_or_none,
     render_memory_markdown,
 )
-from app.infrastructure.memory.store import FilesystemMemoryStore, StoredMemoryDocument
-
-
-def collect_memory_index_documents(
-    store: FilesystemMemoryStore,
-    *,
-    user_id: str | None,
-    character_id: str,
-) -> list[MemoryIndexDocument]:
-    """Collect source documents for one user projection refresh."""
-
-    if user_id is not None:
-        return read_index_documents(
-            store,
-            user_id,
-            character_id=character_id,
-            relationship_entity_id="",
-        )
-
-    documents: dict[str, MemoryIndexDocument] = {}
-    for path in agent_profile_paths(store, character_id=character_id):
-        document = index_document_from_stored(
-            StoredMemoryDocument(
-                path=path,
-                document=store.read_document(path, expected_memory_type="profile"),
-            ),
-            root=store.root,
-        )
-        documents[document.reference] = document
-    for scoped_user_id in _all_user_ids(store):
-        for document in read_index_documents(
-            store,
-            scoped_user_id,
-            character_id=character_id,
-            relationship_entity_id="",
-        ):
-            documents[document.reference] = document
-    return [documents[reference] for reference in sorted(documents)]
 
 
 async def embed_memory_index_records(
@@ -98,9 +54,7 @@ def record_from_memory_index_document(
         body,
         location=index_document.reference,
     )
-    user_id = front_matter.get("user_id")
-    if not isinstance(user_id, str):
-        user_id = None
+    user_id = front_matter_string(front_matter["user_id"])
     return MemoryIndexRecord(
         source_path=index_document.reference,
         source_id=front_matter_string(front_matter.get("id")),
@@ -143,7 +97,6 @@ def indexed_text(front_matter: Mapping[str, object], body: str) -> str:
             "status",
             "aliases",
             "properties",
-            "attributes",
             "missing_attributes",
             "referenced_in",
             "tags",
@@ -155,18 +108,6 @@ def indexed_text(front_matter: Mapping[str, object], body: str) -> str:
     if body:
         indexed.append(body)
     return "\n".join(part for part in indexed if part).strip()
-
-
-def _all_user_ids(store: FilesystemMemoryStore) -> list[str]:
-    encoded_ids: set[str] = set()
-    profiles_root = store.root / "profiles" / "users"
-    if profiles_root.exists():
-        encoded_ids.update(path.stem for path in profiles_root.glob("*.md"))
-    for relative_root in ("timeline", "entities"):
-        root = store.root / relative_root
-        if root.exists():
-            encoded_ids.update(path.name for path in root.iterdir() if path.is_dir())
-    return sorted(unquote(encoded_id) for encoded_id in encoded_ids)
 
 
 def _title(

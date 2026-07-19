@@ -25,7 +25,6 @@ class MemorySearchFilters:
     retention_state: str | None = None
     entity_type: str | None = None
     consolidation_state: str | None = None
-    relationship_entity_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +43,7 @@ class MemoryIndexRecord:
 
     source_path: str
     source_id: str
-    user_id: str | None
+    user_id: str
     memory_type: str
     title: str | None
     content_hash: str

@@ -18,6 +18,7 @@ class AgentInferenceContextRequest:
     """Inputs required to assemble one LLM request context."""
 
     turn_context: AgentTurnContext
+    message_id: str
     user_id: str
     character_id: str
     chat_type: ChatType

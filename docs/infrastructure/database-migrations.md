@@ -1,10 +1,13 @@
 # データベースマイグレーションガイド
 
-> このガイドには過去のUser/Team管理用migration例が含まれる。現在の対象はraw chat logと
-> 長期memory（profile、episode、entity/relationship）であり、実際に適用する列・テーブルは
-> Alembicの最新headと [一括改修計画](../architecture/application-rebuild-plan.md) を正本とする。
+> 本書はデータベース変更を扱う技術 runbook であり、業務上の概念やユースケースの正本ではない。
+> スキーマの現在状態は、実行時のマイグレーション履歴とリポジトリ内の migration を確認する。
+> 以下の `uv run` コマンドは開発コンテナ内で実行する。ホスト上でアプリケーションを単体起動しない。
 
-最終更新日: 2025-12-05
+> 本文中のコード例はマイグレーションの手順を説明するための一般例であり、現在のスキーマを表さない。
+> 実際に適用する差分は、リポジトリ内の migration と実行時の Alembic 履歴を正本とする。
+
+最終更新日: 2026-07-16
 
 このドキュメントは、Alembicを使用したデータベースマイグレーションの作成・管理方法を説明します。
 
@@ -47,6 +50,10 @@
 - **開発環境**: SQLite (`bot.db`)
 - **本番環境**: 環境変数 `DATABASE_URL` で指定
 - **非同期対応**: `aiosqlite` / `asyncpg` を使用
+- **現行のmigration head**: 実行時に `uv run --frozen alembic heads` で確認する。
+- 利用者とチャネル上の利用者識別子の初期登録は、[User Identity Mapping](user-identity-mapping.md)を参照する。
+- 会話 `TEXT` payload の正規化は `202607141500_normalize_message_content_texts.py` で実施する。
+- chatのキャラクター境界と関係状態・シグナル表は `202607151500_add_character_relationships.py` で追加する。既存chatは`shirasagi-reina`へ割り当て、旧関係scoreは移行しない。
 
 ---
 

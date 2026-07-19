@@ -38,7 +38,10 @@ class SQLAlchemyAgentTurnContextQuery(IAgentTurnContextQuery):
         chat_id: str,
         provided_prompt: str | None,
         chat_type: ChatType,
+        character_id: str,
         user_id: str,
+        external_conversation_id: str,
+        before_order_key: int | None = None,
         guild_id: str,
         channel_id: str,
     ) -> Result[AgentTurnContext, AgentTurnContextQueryError]:
@@ -56,9 +59,10 @@ class SQLAlchemyAgentTurnContextQuery(IAgentTurnContextQuery):
                     session
                 ).get_recent_history(
                     chat_type,
+                    character_id=character_id,
                     user_id=user_id,
-                    guild_id=guild_id if chat_type is ChatType.DISCORD else None,
-                    channel_id=channel_id if chat_type is ChatType.DISCORD else None,
+                    external_conversation_id=external_conversation_id,
+                    before_order_key=before_order_key,
                     limit=20,
                 )
                 if is_err(history_result):

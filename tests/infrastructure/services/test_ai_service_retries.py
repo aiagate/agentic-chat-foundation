@@ -12,8 +12,8 @@ import pytest
 from flow_res import is_err
 
 from app.contracts.messages.chat_history import ChatHistoryItem
+from app.contracts.messages.chat_type import ChatType
 from app.contracts.messages.tool_contracts import ToolDefinition
-from app.domain.value_objects.chat_type import ChatType
 from app.infrastructure.services.gemini_service import GeminiService
 from app.infrastructure.services.gpt_service import GptService
 
@@ -113,7 +113,6 @@ async def test_gemini_service_wraps_direct_structured_payload(
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     direct_payload = {
         "sections": [],
-        "timeline_patch": None,
         "entity_patches": [],
         "profile_patch": None,
         "evidence": {"notes": ["ok"]},
@@ -140,143 +139,6 @@ async def test_gemini_service_wraps_direct_structured_payload(
 
     assert not is_err(result)
     assert result.value.contents == [json.dumps(direct_payload, ensure_ascii=False)]
-
-
-@pytest.mark.anyio
-async def test_gemini_service_normalizes_scalar_contents(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test that Gemini scalar contents are normalized into a list."""
-
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    response = SimpleNamespace(
-        parsed=None,
-        text=json.dumps(
-            {
-                "contents": "ええ、よくわかります。夕暮れ時は一日の疲れが出始める頃です。",
-            }
-        ),
-    )
-    generate_mock = AsyncMock(return_value=response)
-
-    class FakeClient:
-        def __init__(self, api_key: str | None) -> None:
-            self.aio = SimpleNamespace(
-                models=SimpleNamespace(generate_content=generate_mock)
-            )
-
-    monkeypatch.setattr(
-        "app.infrastructure.services.gemini_service.genai.Client",
-        FakeClient,
-    )
-
-    service = GeminiService()
-    result = await service.generate_content(
-        prompt="hello",
-        history=[],
-    )
-
-    assert not is_err(result)
-    assert result.value.contents == [
-        "ええ、よくわかります。夕暮れ時は一日の疲れが出始める頃です。"
-    ]
-
-
-@pytest.mark.anyio
-async def test_gemini_service_normalizes_legacy_tool_call_arrays(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test that Gemini tool-call arrays are converted into canonical tool calls."""
-
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    response = SimpleNamespace(
-        parsed=None,
-        text=json.dumps(
-            [
-                {
-                    "id": "call_1",
-                    "name": "line.send",
-                    "arguments": {"contents": ["こんにちは。"]},
-                }
-            ]
-        ),
-    )
-    generate_mock = AsyncMock(return_value=response)
-
-    class FakeClient:
-        def __init__(self, api_key: str | None) -> None:
-            self.aio = SimpleNamespace(
-                models=SimpleNamespace(generate_content=generate_mock)
-            )
-
-    monkeypatch.setattr(
-        "app.infrastructure.services.gemini_service.genai.Client",
-        FakeClient,
-    )
-
-    service = GeminiService()
-    result = await service.generate_content(
-        prompt="hello",
-        history=[],
-    )
-
-    assert not is_err(result)
-    assert result.value.contents == []
-    assert len(result.value.tool_calls) == 1
-    assert result.value.tool_calls[0].tool_call_id == "call_1"
-    assert result.value.tool_calls[0].tool_name == "line.send"
-
-
-@pytest.mark.anyio
-async def test_gemini_service_normalizes_single_item_wrappers_with_tool_calls(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test that Gemini wrapper arrays with tool calls are normalized."""
-
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    response = SimpleNamespace(
-        parsed=None,
-        text=json.dumps(
-            [
-                {
-                    "contents": [],
-                    "tool_calls": [
-                        {
-                            "id": "call_1",
-                            "name": "memory.read",
-                            "arguments": {
-                                "memory_id": "entity:memory-lookup",
-                            },
-                        }
-                    ],
-                }
-            ]
-        ),
-    )
-    generate_mock = AsyncMock(return_value=response)
-
-    class FakeClient:
-        def __init__(self, api_key: str | None) -> None:
-            self.aio = SimpleNamespace(
-                models=SimpleNamespace(generate_content=generate_mock)
-            )
-
-    monkeypatch.setattr(
-        "app.infrastructure.services.gemini_service.genai.Client",
-        FakeClient,
-    )
-
-    service = GeminiService()
-    result = await service.generate_content(
-        prompt="hello",
-        history=[],
-    )
-
-    assert not is_err(result)
-    assert result.value.contents == []
-    assert len(result.value.tool_calls) == 1
-    assert result.value.tool_calls[0].tool_call_id == "call_1"
-    assert result.value.tool_calls[0].tool_name == "memory.read"
 
 
 @pytest.mark.anyio
@@ -490,7 +352,9 @@ async def test_gpt_service_normalizes_native_function_calls(
     assert openai_call is not None
     request = openai_call.kwargs
     assert request["tools"][0]["name"] == "tool_0"
-    assert "text" not in request
+    assert request["reasoning"] == {"effort": "low"}
+    assert request["text"] == {"verbosity": "low"}
+    assert request["max_output_tokens"] == 1024
 
 
 @pytest.mark.anyio

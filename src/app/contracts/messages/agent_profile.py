@@ -4,25 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.contracts.messages.character_definition import (
-    CharacterDefinition,
-    RelationshipDefaults,
-)
-from app.contracts.messages.memory_context import MemoryProfile
+from app.contracts.messages.character_definition import CharacterDefinition
+from app.contracts.messages.relationship import CharacterRelationshipDefinition
 
 
 @dataclass(frozen=True, slots=True)
 class AgentProfileBundle:
     """Fully parsed built-in agent profile bundle."""
 
-    profile: MemoryProfile
     character: CharacterDefinition
     persona_context: str
-    relationship_entity_id: str
-    relationship_entity_label: str
-    relationship_entity_type: str
-    relationship_tag: str
-    relationship_defaults: RelationshipDefaults = RelationshipDefaults()
+    relationship: CharacterRelationshipDefinition
 
 
 def render_agent_persona_context(bundle: AgentProfileBundle) -> str:

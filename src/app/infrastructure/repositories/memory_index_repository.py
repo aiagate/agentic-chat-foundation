@@ -39,20 +39,6 @@ class MemoryIndexRepository:
         )
         return [self._to_record(orm) for orm in result.scalars().all()]
 
-    async def list_by_source_path_prefix(
-        self,
-        source_path_prefix: str,
-    ) -> list[MemoryIndexRecord]:
-        """Return rows below one persisted source-path prefix."""
-
-        escaped_prefix = _escape_like(source_path_prefix)
-        result = await self._session.execute(
-            select(MemoryIndexDocumentORM)
-            .where(_source_path.like(f"{escaped_prefix}%", escape="\\"))
-            .order_by(_source_path)
-        )
-        return [self._to_record(orm) for orm in result.scalars().all()]
-
     async def upsert_records(
         self,
         records: Sequence[MemoryIndexRecord],
@@ -79,6 +65,18 @@ class MemoryIndexRepository:
         """Delete rows whose persisted user ID exactly matches the input."""
 
         statement = delete(MemoryIndexDocumentORM).where(_user_id == user_id)
+        result = await self._session.execute(statement)
+        await self._session.flush()
+        return int(cast(Any, result).rowcount or 0)
+
+    async def delete_by_source_paths(self, source_paths: Sequence[str]) -> int:
+        """Delete projection rows for the exact source paths."""
+
+        if not source_paths:
+            return 0
+        statement = delete(MemoryIndexDocumentORM).where(
+            _source_path.in_(list(source_paths))
+        )
         result = await self._session.execute(statement)
         await self._session.flush()
         return int(cast(Any, result).rowcount or 0)
@@ -124,7 +122,3 @@ class MemoryIndexRepository:
             decay_score=float(orm.decay_score),
             embedding=list(orm.embedding or []),
         )
-
-
-def _escape_like(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

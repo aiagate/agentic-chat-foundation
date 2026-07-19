@@ -70,35 +70,6 @@ class StaticToolCatalog(IToolCatalog):
                 timeout_seconds=20,
                 max_calls_per_run=4,
             ),
-            "memory.write_candidate": ToolDefinition(
-                name="memory.write_candidate",
-                description="Record a candidate memory log for later consolidation.",
-                arguments_schema={
-                    "type": "object",
-                    "properties": {
-                        "content": {"type": "string"},
-                        "role": {
-                            "type": "string",
-                            "enum": ["user", "assistant", "system"],
-                        },
-                        "metadata": {"type": "object"},
-                    },
-                    "required": ["content"],
-                    "additionalProperties": False,
-                },
-                result_schema={
-                    "type": "object",
-                    "properties": {
-                        "written": {"type": "boolean"},
-                    },
-                    "required": ["written"],
-                    "additionalProperties": True,
-                },
-                capability_scope=["memory:write"],
-                side_effect="write",
-                timeout_seconds=20,
-                max_calls_per_run=2,
-            ),
             "line.send": ToolDefinition(
                 name="line.send",
                 description="Send messages to the current LINE conversation.",

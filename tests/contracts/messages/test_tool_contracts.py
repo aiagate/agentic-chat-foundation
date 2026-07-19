@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from app.contracts.messages import (
     GeneratedContent,
     SearchToolArguments,
@@ -77,58 +80,16 @@ def test_generated_content_uses_tool_calls_as_the_only_tool_request_shape() -> N
     assert content.tool_calls[1].tool_name == "memory.read"
 
 
-def test_generated_content_normalizes_legacy_tool_call_arrays() -> None:
-    payload = [
-        {
-            "id": "call_1",
-            "name": "line.send",
-            "arguments": {
-                "contents": ["こんにちは。"],
-            },
-        }
-    ]
-
-    content = GeneratedContent.model_validate(payload)
-
-    assert content.contents == []
-    assert len(content.tool_calls) == 1
-    assert content.tool_calls[0].tool_call_id == "call_1"
-    assert content.tool_calls[0].tool_name == "line.send"
-    assert content.tool_calls[0].arguments == {"contents": ["こんにちは。"]}
-
-
-def test_generated_content_normalizes_single_item_wrapper_with_tool_calls() -> None:
-    payload = [
-        {
-            "contents": [],
-            "tool_calls": [
-                {
-                    "id": "call_1",
-                    "name": "memory.read",
-                    "arguments": {
-                        "memory_id": "entity:memory-lookup",
-                    },
-                }
-            ],
-        }
-    ]
-
-    content = GeneratedContent.model_validate(payload)
-
-    assert content.contents == []
-    assert len(content.tool_calls) == 1
-    assert content.tool_calls[0].tool_call_id == "call_1"
-    assert content.tool_calls[0].tool_name == "memory.read"
-
-
-def test_generated_content_normalizes_scalar_contents_into_a_list() -> None:
-    payload = {
-        "contents": "ええ、よくわかります。夕暮れ時は一日の疲れが出始める頃です。",
-    }
-
-    content = GeneratedContent.model_validate(payload)
-
-    assert content.contents == [
-        "ええ、よくわかります。夕暮れ時は一日の疲れが出始める頃です。"
-    ]
-    assert content.tool_calls == []
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [{"id": "call_1", "name": "line.send", "arguments": {}}],
+        [{"contents": [], "tool_calls": []}],
+        {"contents": "single string"},
+    ],
+)
+def test_generated_content_rejects_noncanonical_payloads(
+    payload: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        GeneratedContent.model_validate(payload)

@@ -89,14 +89,15 @@
 
 ただし、UseCase 固有で共有価値が低い型は `usecases` に残す。
 
-## このリポジトリでの具体例
+## 判断例
 
-- `memory_index_documents` は main DB の projection として migration 管理する。
-- `MemoryIndexRepository` は `src/app/infrastructure/repositories/memory_index_repository.py` に置き、スキーマ詳細を知らない永続化境界にする。
-- `SQLAlchemyMemoryIndexQuery` は main DB projection から候補を取得し、`MemoryIndexSearch` は渡された候補のランキングに集中する。
-- `LongTermMemoryQueryService` は `src/app/infrastructure/queries/long_term_memory_query_service.py` に置き、整理対象の選定に限定する。
-- `InMemoryToolResultStore` と `InMemoryToolCallStore` は短期保存に限定する。
-- `FilesystemMemoryStore` は `src/app/infrastructure/memory/store.py` に置き、Markdown memory の低レベル I/O に限定する。
+- 検索用の派生情報は、会話履歴や長期記憶を正本とせず、検索を支える projection として扱う。
+- 派生情報の更新は、変更された記憶だけを対象にできる境界へ分離する。
+- 利用者の識別子から業務上の利用者を特定する処理は、業務ユースケースから利用する境界契約として扱う。
+- 一時的な外部情報や応答作成中の補助情報は、永続化する実行状態とは別に扱う。
+- Markdownなどの保存形式に対する低レベルの読み書きは `Store` に限定し、検索や業務上の選定を持たせない。
+- 好感度スナップショットと関係シグナルはSQL Repositoryの正本とし、Markdown Storeやmemory projectionを正本にしない。
+- 関係状態の読み取りはQuery、シグナルの置換と全履歴再計算はRepository、重み付き行動選択は純粋なapplication policyに分離する。
 
 ## レビュー基準
 

@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time
+from zoneinfo import ZoneInfo
 
 from flow_res import Result, is_err
 
+from app.contracts.messages.chat_type import ChatType
 from app.domain.queries.long_term_memory_query import (
     ILongTermMemoryQuery,
     LongTermMemoryTarget,
 )
-from app.domain.queries.raw_chat_log_query import IRawChatLogQuery, RawChatLog
-from app.domain.value_objects.chat_type import ChatType
+from app.domain.queries.raw_chat_log_query import (
+    IRawChatLogQuery,
+    LongTermMemorySourceItem,
+)
 
 
 class LongTermMemoryQueryService(ILongTermMemoryQuery):
@@ -21,14 +25,18 @@ class LongTermMemoryQueryService(ILongTermMemoryQuery):
         self,
         query: IRawChatLogQuery,
         *,
+        character_id: str,
         reference_time: datetime,
     ) -> list[LongTermMemoryTarget]:
         """Return user/day batches that should be consolidated."""
 
-        cutoff_day = _as_utc(reference_time).date()
-        cutoff_start = datetime.combine(cutoff_day, time.min, tzinfo=UTC)
+        jst = ZoneInfo("Asia/Tokyo")
+        cutoff_day = _as_utc(reference_time).astimezone(jst).date()
+        cutoff_start_jst = datetime.combine(cutoff_day, time.min, tzinfo=jst)
+        cutoff_start = cutoff_start_jst.astimezone(UTC)
         user_ids = _require_repository_result(
             await query.list_pending_memory_user_ids(
+                character_id,
                 until=cutoff_start,
                 limit=10000,
             )
@@ -38,14 +46,15 @@ class LongTermMemoryQueryService(ILongTermMemoryQuery):
         for user_id in user_ids:
             raw_logs = await self._load_user_raw_chat_logs(
                 query,
+                character_id=character_id,
                 user_id=user_id,
                 until=cutoff_start,
             )
-            grouped: dict[date, list[RawChatLog]] = {}
+            grouped: dict[date, list[LongTermMemorySourceItem]] = {}
             for raw_log in raw_logs:
                 if raw_log.created_at is None:
                     continue
-                occurred_at = _as_utc(raw_log.created_at)
+                occurred_at = _as_utc(raw_log.created_at).astimezone(jst)
                 if occurred_at.date() >= cutoff_day:
                     continue
                 grouped.setdefault(occurred_at.date(), []).append(raw_log)
@@ -54,6 +63,7 @@ class LongTermMemoryQueryService(ILongTermMemoryQuery):
                 grouped[day].sort(key=_raw_chat_log_sort_key)
                 targets.append(
                     LongTermMemoryTarget(
+                        character_id=character_id,
                         user_id=user_id,
                         day=day,
                         raw_logs=grouped[day],
@@ -65,12 +75,14 @@ class LongTermMemoryQueryService(ILongTermMemoryQuery):
         self,
         query: IRawChatLogQuery,
         *,
+        character_id: str,
         user_id: str,
         until: datetime,
-    ) -> list[RawChatLog]:
-        raw_logs: list[RawChatLog] = []
+    ) -> list[LongTermMemorySourceItem]:
+        raw_logs: list[LongTermMemorySourceItem] = []
         for chat_type in (ChatType.DISCORD, ChatType.LINE):
             result = await query.get_pending_memory_source_items(
+                character_id,
                 user_id,
                 chat_type,
                 until=until,
@@ -80,7 +92,7 @@ class LongTermMemoryQueryService(ILongTermMemoryQuery):
         return sorted(raw_logs, key=_raw_chat_log_sort_key)
 
 
-def _raw_chat_log_sort_key(raw_log: RawChatLog) -> tuple[str, str]:
+def _raw_chat_log_sort_key(raw_log: LongTermMemorySourceItem) -> tuple[str, str]:
     occurred_at = raw_log.created_at
     occurred_key = _as_utc(occurred_at).isoformat() if occurred_at is not None else ""
     return occurred_key, raw_log.id

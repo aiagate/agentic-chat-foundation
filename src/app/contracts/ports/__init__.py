@@ -16,6 +16,15 @@ from app.contracts.ports.conversation import (
     ConversationResultSender,
     ResponseGenerator,
 )
+from app.contracts.ports.discussion import (
+    IAgentTurnEvaluator,
+    IAutonomousTopicEvaluator,
+    IAutonomousTopicGuard,
+    IAutonomousTopicRepository,
+    IDiscussionMessageSender,
+    IDiscussionRepository,
+    ILocalSpeechGuard,
+)
 from app.contracts.ports.embedding_service import (
     EmbeddingServiceError,
     IEmbeddingService,
@@ -35,17 +44,14 @@ from app.contracts.ports.memory_semantic_extraction import (
 )
 from app.contracts.ports.memory_service import IMemoryService, MemoryServiceError
 from app.contracts.ports.memory_store import IMemoryStore
-from app.contracts.ports.memory_write_service import (
-    IMemoryWriteService,
-    MemoryWriteServiceError,
-)
 from app.contracts.ports.tool_catalog import IToolCatalog
 from app.contracts.ports.tool_executor import (
     IToolExecutor,
     ToolExecutionContext,
     ToolExecutorError,
 )
-from app.contracts.ports.unit_of_work import IUnitOfWork
+from app.contracts.ports.unit_of_work import IUnitOfWork, IUnitOfWorkFactory
+from app.contracts.ports.user_identity_query import IUserIdentityQuery
 from app.contracts.ports.web_search_service import (
     IWebSearchService,
     WebSearchServiceError,
@@ -65,23 +71,30 @@ __all__ = [
     "IAgentInferenceContextService",
     "IAgentTurnContextQuery",
     "IEmbeddingService",
+    "IAgentTurnEvaluator",
+    "IAutonomousTopicEvaluator",
+    "IAutonomousTopicGuard",
+    "IAutonomousTopicRepository",
+    "IDiscussionMessageSender",
+    "IDiscussionRepository",
+    "ILocalSpeechGuard",
     "IMemoryConsolidationService",
     "IMemoryIndexQuery",
     "IMemoryIndexProjection",
     "IMemoryService",
     "IMemorySemanticExtractionService",
     "IMemoryStore",
-    "IMemoryWriteService",
     "MemoryIndexQueryError",
     "MemoryIndexError",
     "MemoryServiceError",
     "MemorySemanticExtractionError",
-    "MemoryWriteServiceError",
     "IToolCatalog",
     "IToolExecutor",
     "ToolExecutionContext",
     "ToolExecutorError",
     "IUnitOfWork",
+    "IUnitOfWorkFactory",
+    "IUserIdentityQuery",
     "IWebSearchService",
     "WebSearchServiceError",
 ]

@@ -9,9 +9,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.contracts.messages.chat_history import ChatHistoryItem, ChatHistoryWindow
+from app.contracts.messages.chat_type import ChatType
 from app.domain.queries.chat_history_query import IChatHistoryQuery
 from app.domain.repositories.interfaces import RepositoryError, RepositoryErrorType
-from app.domain.value_objects.chat_type import ChatType
+from app.domain.value_objects.conversation_scope import ConversationScope
 from app.domain.value_objects.message_content import render_message_content_text
 from app.infrastructure.orm_models.chat_orm import ChatORM
 from app.infrastructure.orm_models.memory_consolidated_chat_source_orm import (
@@ -30,21 +31,32 @@ class SQLAlchemyChatHistoryQuery(IChatHistoryQuery):
     async def get_recent_history(
         self,
         chat_type: ChatType,
-        user_id: str | None = None,
-        guild_id: str | None = None,
-        channel_id: str | None = None,
+        *,
+        character_id: str,
+        user_id: str,
+        external_conversation_id: str,
+        before_order_key: int | None = None,
         limit: int = 20,
     ) -> Result[ChatHistoryWindow, RepositoryError]:
         """Get recent chat history for the given platform."""
         try:
+            scope = ConversationScope(
+                user_id=user_id,
+                character_id=character_id,
+                channel=chat_type.to_primitive(),
+                external_conversation_id=external_conversation_id,
+            )
             table = cast(Any, ChatORM).__table__
             conditions: list[Any] = [
-                table.c.channel == chat_type.to_primitive().lower()
+                table.c.channel == scope.channel,
+                table.c.character_id == scope.character_id,
+                table.c.user_id == scope.user_id,
+                table.c.external_conversation_id == scope.external_conversation_id,
             ]
-            if user_id is not None:
-                conditions.append(table.c.external_participant_id == user_id)
-            if channel_id is not None:
-                conditions.append(table.c.external_conversation_id == channel_id)
+            if before_order_key is not None:
+                # This key is allocated by the database at acceptance time,
+                # so a later webhook cannot enter an earlier turn's window.
+                conditions.append(table.c.accepted_sequence <= before_order_key)
 
             statement = (
                 select(ChatORM)
@@ -105,7 +117,7 @@ def _to_history_item(item: ChatORM) -> ChatHistoryItem:
             content = text
     return ChatHistoryItem(
         id=item.id or "",
-        user_id=item.external_participant_id,
+        user_id=item.user_id,
         chat_type=ChatType.from_primitive(item.channel).unwrap(),
         role=_normalize_role(item.role),
         content=content,

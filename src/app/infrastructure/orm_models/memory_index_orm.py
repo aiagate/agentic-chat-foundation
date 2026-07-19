@@ -12,7 +12,7 @@ class MemoryIndexDocumentORM(SQLModel, table=True):
     __tablename__ = "memory_index_documents"  # type: ignore[reportAssignmentType]
 
     source_path: str = Field(primary_key=True, max_length=512)
-    user_id: str | None = Field(default=None, max_length=255, index=True)
+    user_id: str = Field(max_length=255, index=True)
     memory_type: str = Field(max_length=32, index=True)
     source_id: str = Field(max_length=255, index=True)
     title: str | None = Field(default=None, max_length=255)
