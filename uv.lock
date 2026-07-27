@@ -1,6 +1,10 @@
 version = 1
 revision = 3
 requires-python = ">=3.13"
+resolution-markers = [
+    "python_full_version >= '3.14'",
+    "python_full_version < '3.14'",
+]
 
 [[package]]
 name = "aenum"
@@ -55,7 +59,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.124.4" },
     { name = "flow-med", specifier = ">=0.1.1" },
     { name = "flow-res", specifier = "==0.1.1" },
-    { name = "google-genai", specifier = ">=2.11.0" },
+    { name = "google-genai", specifier = ">=2.13.0" },
     { name = "injector", specifier = ">=0.22.0" },
     { name = "line-bot-sdk", specifier = ">=3.23.0" },
     { name = "openai", specifier = ">=2.36.0" },
@@ -649,15 +653,15 @@ wheels = [
 
 [[package]]
 name = "google-auth"
-version = "2.52.0"
+version = "2.56.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
     { name = "pyasn1-modules" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d4/f8/80d2493cbedece1c623dc3e3cb1883300871af0dcdae254409522985ac23/google_auth-2.52.0.tar.gz", hash = "sha256:01f30e1a9e3638698d89464f5e603ce29d18e1c0e63ec31ac570aba4e164aaf5", size = 335027, upload-time = "2026-05-07T19:45:24.033Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c7/33/dbc946a407401b975f0719658f18e664ece2109f79ffd1ff3bf226c205f4/google_auth-2.56.2.tar.gz", hash = "sha256:e28f103ca8091fb7012b99c44243d7366c29863713b8e34a220c3322b7a07051", size = 365820, upload-time = "2026-07-21T21:53:28.188Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ee/fc/2cdc74252746f547f81ff3f02d4d4234a3f411b5de5b61af97e633a060b9/google_auth-2.52.0-py3-none-any.whl", hash = "sha256:aee92803ba0ff93a70a3b8a35c7b4797837751cd6380b63ff38372b98f3ed627", size = 245614, upload-time = "2026-05-07T19:45:21.914Z" },
+    { url = "https://files.pythonhosted.org/packages/88/63/50636aae68c9bf17c891c7eb18b49baa9bd6b31d2a97b8de4813a9fc8d1c/google_auth-2.56.2-py3-none-any.whl", hash = "sha256:c8270ea95b2697b74e3d8438ae9c5b898e38b623b915c7b5c5635921e7de68a6", size = 258588, upload-time = "2026-07-21T21:53:26.399Z" },
 ]
 
 [package.optional-dependencies]
@@ -667,7 +671,7 @@ requests = [
 
 [[package]]
 name = "google-genai"
-version = "2.11.0"
+version = "2.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -681,9 +685,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a6/01/e7b5f3aac89200c78318ed7643401e7f5ed3131b0cd353c07483606b1e61/google_genai-2.11.0.tar.gz", hash = "sha256:4c5e524d24b145c96be327f9a7f8f04b0fe4efee0533877795e9848afed01749", size = 622366, upload-time = "2026-07-09T17:49:43.862Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/84/a0/d715f4ea9720d4b8aaca39077cbfa0da1cc90ee252cd88db8495065b0cbd/google_genai-2.13.0.tar.gz", hash = "sha256:94f0763a023e686041376210d5a7cafc9d3bc40c2d623d8839be0dc6bb3cab19", size = 639454, upload-time = "2026-07-21T17:13:15.568Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/93/ef/d296c23390160a8b0b1dafb36dd3cb36a39ed40c81cd27e04e6233334186/google_genai-2.11.0-py3-none-any.whl", hash = "sha256:5bc8186100e1d34d691fbe0cba392b7e04e98d286ca952323a6672d054accf95", size = 984162, upload-time = "2026-07-09T17:49:42.15Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/74/b44d2db006bbf2d6e506b1478f16f60ed828b5f360ffc7622859029dfbad/google_genai-2.13.0-py3-none-any.whl", hash = "sha256:e1fd408db6864ac12f23eb7634df670934020c918112f4f886e5609d26dd92d3", size = 1027855, upload-time = "2026-07-21T17:13:13.767Z" },
 ]
 
 [[package]]

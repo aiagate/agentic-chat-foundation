@@ -10,12 +10,36 @@ from unittest.mock import AsyncMock
 
 import pytest
 from flow_res import is_err
+from google.genai import types
 
+from app.contracts.messages.ai_continuation import AIContinuation
 from app.contracts.messages.chat_history import ChatHistoryItem
 from app.contracts.messages.chat_type import ChatType
 from app.contracts.messages.tool_contracts import ToolDefinition
+from app.contracts.messages.tool_result_context import ToolResultContext
 from app.infrastructure.services.gemini_service import GeminiService
 from app.infrastructure.services.gpt_service import GptService
+
+
+def _gemini_response(
+    text: str,
+    *,
+    parsed: object | None = None,
+    finish_reason: types.FinishReason = types.FinishReason.STOP,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        parsed=parsed,
+        response_id="response-1",
+        candidates=[
+            SimpleNamespace(
+                finish_reason=finish_reason,
+                content=types.Content(
+                    role="model",
+                    parts=[types.Part(text=text)],
+                ),
+            )
+        ],
+    )
 
 
 @pytest.mark.anyio
@@ -25,7 +49,10 @@ async def test_gemini_service_retries_with_exponential_backoff_then_succeeds(
     """Test that Gemini retries transient failures with backoff."""
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    response = SimpleNamespace(parsed={"contents": ["retry ok"]}, text=None)
+    response = _gemini_response(
+        json.dumps({"contents": ["retry ok"]}),
+        parsed={"contents": ["retry ok"]},
+    )
     sleep_mock = AsyncMock(return_value=None)
     generate_mock = AsyncMock(
         side_effect=[
@@ -76,9 +103,9 @@ async def test_gemini_service_falls_back_to_raw_text_when_structured_output_is_e
     """Test that Gemini uses raw text when parsed structured output is empty."""
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    response = SimpleNamespace(
+    response = _gemini_response(
+        json.dumps({"contents": ["retry ok"]}),
         parsed={"contents": []},
-        text=json.dumps({"contents": ["retry ok"]}),
     )
     generate_mock = AsyncMock(return_value=response)
 
@@ -117,7 +144,7 @@ async def test_gemini_service_wraps_direct_structured_payload(
         "profile_patch": None,
         "evidence": {"notes": ["ok"]},
     }
-    response = SimpleNamespace(parsed=None, text=json.dumps(direct_payload))
+    response = _gemini_response(json.dumps(direct_payload))
     generate_mock = AsyncMock(return_value=response)
 
     class FakeClient:
@@ -142,15 +169,18 @@ async def test_gemini_service_wraps_direct_structured_payload(
 
 
 @pytest.mark.anyio
-async def test_gemini_service_uses_gemini_3_5_flash_by_default(
+async def test_gemini_service_uses_gemini_3_6_flash_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that the default Gemini model and thinking level match Gemini 3.5."""
+    """Test the default Gemini 3.6 model and configured thinking level."""
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
     recorded: dict[str, object] = {}
-    response = SimpleNamespace(parsed={"contents": ["retry ok"]}, text=None)
+    response = _gemini_response(
+        json.dumps({"contents": ["retry ok"]}),
+        parsed={"contents": ["retry ok"]},
+    )
 
     async def generate_mock(*args: object, **kwargs: object) -> object:
         recorded["kwargs"] = kwargs
@@ -175,9 +205,9 @@ async def test_gemini_service_uses_gemini_3_5_flash_by_default(
 
     assert not is_err(result)
     kwargs = cast(dict[str, object], recorded["kwargs"])
-    assert kwargs["model"] == "gemini-3.5-flash"
+    assert kwargs["model"] == "gemini-3.6-flash"
     config = cast(Any, kwargs["config"])
-    assert config.thinking_config.thinking_level.value.lower() == "low"
+    assert config.thinking_config.thinking_level.value.lower() == "medium"
 
 
 @pytest.mark.anyio
@@ -188,7 +218,7 @@ async def test_gemini_service_logs_full_request_context(
     """Test that Gemini logs the full request context before the API call."""
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    response = SimpleNamespace(parsed={"contents": ["retry ok"]}, text=None)
+    response = _gemini_response("retry ok")
     generate_mock = AsyncMock(return_value=response)
 
     class FakeClient:
@@ -245,7 +275,7 @@ async def test_gemini_service_logs_full_request_context(
     assert any("base system instruction" in record.message for record in caplog.records)
     assert any('"name": "memory.read"' in record.message for record in caplog.records)
     assert any(
-        "Gemini response accepted:" in record.message for record in caplog.records
+        "Gemini response completed:" in record.message for record in caplog.records
     )
 
 
@@ -310,7 +340,7 @@ async def test_gpt_service_normalizes_native_function_calls(
         output=[
             SimpleNamespace(
                 type="function_call",
-                name="tool_0",
+                name="memory_read",
                 arguments=json.dumps({"memory_id": "entity:example"}),
             )
         ],
@@ -351,7 +381,7 @@ async def test_gpt_service_normalizes_native_function_calls(
     openai_call = create_mock.await_args
     assert openai_call is not None
     request = openai_call.kwargs
-    assert request["tools"][0]["name"] == "tool_0"
+    assert request["tools"][0]["name"] == "memory_read"
     assert request["reasoning"] == {"effort": "low"}
     assert request["text"] == {"verbosity": "low"}
     assert request["max_output_tokens"] == 1024
@@ -364,11 +394,28 @@ async def test_gemini_service_normalizes_native_function_calls(
     """Gemini function calls should normalize to canonical application tools."""
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    model_content = types.Content(
+        role="model",
+        parts=[
+            types.Part(text="Wait, calling memory.read"),
+            types.Part(
+                function_call=types.FunctionCall(
+                    id="call-1",
+                    name="memory_read",
+                    args={"memory_id": "entity:example"},
+                ),
+                thought_signature=b"signed-thought",
+            ),
+        ],
+    )
     response = SimpleNamespace(
         parsed=None,
-        text=None,
-        function_calls=[
-            SimpleNamespace(name="tool_0", args={"memory_id": "entity:example"})
+        response_id="response-1",
+        candidates=[
+            SimpleNamespace(
+                finish_reason=types.FinishReason.STOP,
+                content=model_content,
+            )
         ],
     )
     generate_mock = AsyncMock(return_value=response)
@@ -403,12 +450,203 @@ async def test_gemini_service_normalizes_native_function_calls(
     )
 
     assert not is_err(result)
+    assert result.value.contents == []
+    assert result.value.tool_calls[0].tool_call_id == "call-1"
     assert result.value.tool_calls[0].tool_name == "memory.read"
+    assert result.value.continuation is not None
+    restored = types.Content.model_validate_json(result.value.continuation.payload)
+    assert restored.parts is not None
+    assert restored.parts[1].thought_signature == b"signed-thought"
     gemini_call = generate_mock.await_args
     assert gemini_call is not None
     config = gemini_call.kwargs["config"]
     assert config.automatic_function_calling.disable is True
     assert config.response_mime_type is None
+
+
+@pytest.mark.anyio
+async def test_gemini_service_continues_with_signed_content_and_function_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    previous_content = types.Content(
+        role="model",
+        parts=[
+            types.Part(
+                function_call=types.FunctionCall(
+                    id="call-1",
+                    name="web_search",
+                    args={"query": "latest"},
+                ),
+                thought_signature=b"signed-thought",
+            )
+        ],
+    )
+    generate_mock = AsyncMock(return_value=_gemini_response("調査結果です。"))
+
+    class FakeClient:
+        def __init__(self, api_key: str | None) -> None:
+            self.aio = SimpleNamespace(
+                models=SimpleNamespace(generate_content=generate_mock)
+            )
+
+    monkeypatch.setattr(
+        "app.infrastructure.services.gemini_service.genai.Client",
+        FakeClient,
+    )
+
+    service = GeminiService()
+    result = await service.generate_content(
+        prompt="調べて",
+        history=[],
+        tool_definitions=[
+            ToolDefinition(
+                name="web_search",
+                description="Search the web.",
+                arguments_schema={"type": "object"},
+            )
+        ],
+        tool_results=[
+            ToolResultContext(
+                tool_call_id="call-1",
+                character_id="character-1",
+                tool_name="web_search",
+                status="ok",
+                result={"result_count": 1},
+                rendered_text="retrieved result",
+            )
+        ],
+        continuation=AIContinuation(
+            provider="gemini",
+            payload=previous_content.model_dump_json(
+                by_alias=True,
+                exclude_none=True,
+            ),
+        ),
+    )
+
+    assert not is_err(result)
+    assert result.value.contents == ["調査結果です。"]
+    request = generate_mock.await_args
+    assert request is not None
+    contents = request.kwargs["contents"]
+    assert contents[1].parts[0].thought_signature == b"signed-thought"
+    function_response = contents[2].parts[0].function_response
+    assert function_response.id == "call-1"
+    assert function_response.name == "web_search"
+    assert function_response.response == {
+        "output": {
+            "result": {"result_count": 1},
+            "rendered_text": "retrieved result",
+        }
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "finish_reason",
+    [
+        types.FinishReason.MALFORMED_FUNCTION_CALL,
+        types.FinishReason.MAX_TOKENS,
+    ],
+)
+async def test_gemini_service_rejects_incomplete_response_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    finish_reason: types.FinishReason,
+) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    generate_mock = AsyncMock(
+        return_value=_gemini_response(
+            'Wait, calling "web_search"',
+            finish_reason=finish_reason,
+        )
+    )
+
+    class FakeClient:
+        def __init__(self, api_key: str | None) -> None:
+            self.aio = SimpleNamespace(
+                models=SimpleNamespace(generate_content=generate_mock)
+            )
+
+    monkeypatch.setattr(
+        "app.infrastructure.services.gemini_service.genai.Client",
+        FakeClient,
+    )
+
+    result = await GeminiService().generate_content(
+        prompt="search",
+        history=[],
+        tool_definitions=[
+            ToolDefinition(
+                name="web_search",
+                description="Search the web.",
+                arguments_schema={"type": "object"},
+            )
+        ],
+    )
+
+    assert is_err(result)
+    assert result.error.code == "gemini_invalid_response"
+    assert result.error.retryable is False
+    assert generate_mock.await_count == 1
+
+
+@pytest.mark.anyio
+async def test_gemini_service_rejects_unknown_provider_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    content = types.Content(
+        role="model",
+        parts=[
+            types.Part(
+                function_call=types.FunctionCall(
+                    id="call-1",
+                    name="unknown_tool",
+                    args={},
+                )
+            )
+        ],
+    )
+    generate_mock = AsyncMock(
+        return_value=SimpleNamespace(
+            parsed=None,
+            response_id="response-1",
+            candidates=[
+                SimpleNamespace(
+                    finish_reason=types.FinishReason.STOP,
+                    content=content,
+                )
+            ],
+        )
+    )
+
+    class FakeClient:
+        def __init__(self, api_key: str | None) -> None:
+            self.aio = SimpleNamespace(
+                models=SimpleNamespace(generate_content=generate_mock)
+            )
+
+    monkeypatch.setattr(
+        "app.infrastructure.services.gemini_service.genai.Client",
+        FakeClient,
+    )
+
+    result = await GeminiService().generate_content(
+        prompt="search",
+        history=[],
+        tool_definitions=[
+            ToolDefinition(
+                name="web_search",
+                description="Search the web.",
+                arguments_schema={"type": "object"},
+            )
+        ],
+    )
+
+    assert is_err(result)
+    assert result.error.code == "gemini_invalid_response"
+    assert result.error.retryable is False
 
 
 @pytest.mark.anyio

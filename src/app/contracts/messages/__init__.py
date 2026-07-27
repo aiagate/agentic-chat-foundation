@@ -8,6 +8,7 @@ from app.contracts.messages.agent_turn_context import AgentTurnContext
 from app.contracts.messages.agentic import (
     AgentEnvelope,
 )
+from app.contracts.messages.ai_continuation import AIContinuation
 from app.contracts.messages.character_definition import (
     CharacterDefinition,
 )
@@ -92,7 +93,6 @@ from app.contracts.messages.tool_contracts import (
     ToolExecutionResult,
     ToolExecutionStatus,
     ToolSideEffect,
-    normalize_reply_contents,
 )
 from app.contracts.messages.tool_result_context import ToolResultContext
 from app.contracts.messages.web_search_result import (
@@ -102,6 +102,7 @@ from app.contracts.messages.web_search_result import (
 
 __all__ = [
     "AgentEnvelope",
+    "AIContinuation",
     "AgentTurnDecision",
     "AgentTurnDisposition",
     "AgentTurnRecord",
@@ -172,5 +173,4 @@ __all__ = [
     "build_agent_system_prompt",
     "compose_system_instruction",
     "render_agent_prompt",
-    "normalize_reply_contents",
 ]

@@ -9,6 +9,7 @@ from flow_res import Err, Ok, Result
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 from openai.types.responses import FunctionToolParam, ResponseInputItemParam
 
+from app.contracts.messages.ai_continuation import AIContinuation
 from app.contracts.messages.chat_history import ChatHistoryItem
 from app.contracts.messages.generated_content import GeneratedContent
 from app.contracts.messages.llm_request_context import render_agent_prompt
@@ -86,10 +87,7 @@ def _openai_tools(
         FunctionToolParam(
             type="function",
             name=binding.alias,
-            description=(
-                f"Canonical tool: {binding.definition.name}. "
-                f"{binding.definition.description}"
-            ),
+            description=binding.definition.description,
             parameters=binding.definition.arguments_schema,
             strict=False,
         )
@@ -136,6 +134,7 @@ class GptService(IAIService):
         system_instruction: str | None = None,
         tool_definitions: list[ToolDefinition] | None = None,
         tool_results: list[ToolResultContext] | None = None,
+        continuation: AIContinuation | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
         """Generate structured content with OpenAI."""
         if self._client is None:
@@ -143,6 +142,8 @@ class GptService(IAIService):
         client = self._client
 
         try:
+            if continuation is not None:
+                raise ValueError("OpenAI continuation state is not supported")
             instructions = _compose_instructions(
                 system_instruction=system_instruction,
             )

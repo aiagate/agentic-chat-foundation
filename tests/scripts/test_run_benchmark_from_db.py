@@ -159,3 +159,15 @@ async def test_call_gemini_uses_app_budget_and_records_finish_metadata() -> None
     assert usage["finish_reason"] == "MAX_TOKENS"
     assert usage["finish_message"] == "maximum output reached"
     assert usage["model_version"] == "gemini-test-version"
+
+
+def test_gemini_3_6_flash_uses_supported_medium_thinking_level() -> None:
+    """Gemini 3.6 Flash requires a medium or high thinking level."""
+
+    assert (
+        benchmark._gemini_thinking_level(
+            benchmark._STYLE_PROFILES["human-sns"],
+            "gemini-3.6-flash",
+        )
+        == benchmark.types.ThinkingLevel.MEDIUM
+    )

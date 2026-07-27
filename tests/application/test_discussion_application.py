@@ -15,6 +15,7 @@ from app.application.discussion import (
     StructuredAutonomousTopicEvaluator,
 )
 from app.contracts.messages.agent_profile import AgentProfileBundle
+from app.contracts.messages.ai_continuation import AIContinuation
 from app.contracts.messages.character_definition import CharacterDefinition
 from app.contracts.messages.chat_history import ChatHistoryItem
 from app.contracts.messages.discussion import (
@@ -58,11 +59,12 @@ class _DecisionAI(IAIService):
         system_instruction: str | None = None,
         tool_definitions: list[ToolDefinition] | None = None,
         tool_results: list[ToolResultContext] | None = None,
+        continuation: AIContinuation | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
         self.prompt = prompt
         self.history = history
         self.system_instruction = system_instruction
-        del tool_definitions, tool_results
+        del tool_definitions, tool_results, continuation
         return Ok(
             GeneratedContent(
                 contents=[

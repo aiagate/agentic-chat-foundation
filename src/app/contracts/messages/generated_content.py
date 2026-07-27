@@ -5,6 +5,7 @@ from __future__ import annotations
 from pydantic import ConfigDict, Field
 
 from app.contracts.messages.agentic import AgentEnvelope
+from app.contracts.messages.ai_continuation import AIContinuation
 from app.contracts.messages.tool_contracts import ToolCall
 
 
@@ -20,4 +21,8 @@ class GeneratedContent(AgentEnvelope):
     tool_calls: list[ToolCall] = Field(
         default_factory=list,
         description="Canonical tool calls requested by the model.",
+    )
+    continuation: AIContinuation | None = Field(
+        default=None,
+        description="Short-lived opaque state for continuing a provider tool turn.",
     )

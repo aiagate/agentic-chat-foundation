@@ -98,7 +98,6 @@ async def test_context_service_assembles_line_tools_and_memory(mocker: Any) -> N
     assert {tool.name for tool in result.value.tool_definitions} == {
         "web_search",
         "memory.read",
-        "line.send",
     }
 
 

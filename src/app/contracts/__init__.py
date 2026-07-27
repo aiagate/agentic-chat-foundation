@@ -1,6 +1,7 @@
 """Application contracts shared across layers."""
 
 from app.contracts.messages import (
+    AIContinuation,
     GeneratedContent,
     MemoryContextPack,
     MemoryEntity,
@@ -16,6 +17,7 @@ from app.contracts.ports import (
 
 __all__ = [
     "AIServiceError",
+    "AIContinuation",
     "GeneratedContent",
     "MemoryContextPack",
     "MemoryEntity",

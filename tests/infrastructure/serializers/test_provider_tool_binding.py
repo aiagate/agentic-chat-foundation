@@ -10,12 +10,23 @@ from app.infrastructure.serializers.provider_tool_binding import (
 def test_bind_provider_tools_uses_safe_request_local_aliases() -> None:
     definitions = [
         ToolDefinition(name="memory.read", description="Read memory."),
-        ToolDefinition(name="line.send", description="Send a LINE reply."),
+        ToolDefinition(name="web.search", description="Search the web."),
     ]
 
     bindings = bind_provider_tools(definitions)
 
-    assert [binding.alias for binding in bindings] == ["tool_0", "tool_1"]
-    assert canonical_tool_name("tool_0", bindings) == "memory.read"
-    assert canonical_tool_name("tool_1", bindings) == "line.send"
+    assert [binding.alias for binding in bindings] == ["memory_read", "web_search"]
+    assert canonical_tool_name("memory_read", bindings) == "memory.read"
+    assert canonical_tool_name("web_search", bindings) == "web.search"
     assert canonical_tool_name("unknown", bindings) is None
+
+
+def test_bind_provider_tools_resolves_normalized_name_collisions() -> None:
+    definitions = [
+        ToolDefinition(name="memory.read", description="Read memory."),
+        ToolDefinition(name="memory-read", description="Read other memory."),
+    ]
+
+    bindings = bind_provider_tools(definitions)
+
+    assert [binding.alias for binding in bindings] == ["memory_read", "memory_read_2"]

@@ -67,7 +67,7 @@ _OPENAI_MODELS = (
     "gpt-5.6-luna",
 )
 _GEMINI_MODELS = (
-    "gemini-3.5-flash",
+    "gemini-3.6-flash",
     "gemini-3.1-pro-preview",
     "gemini-3.1-flash-lite",
 )
@@ -87,7 +87,6 @@ class BenchmarkStyleProfile:
     openai_text_verbosity: str | None
     gemini_pro_thinking_level: types.ThinkingLevel
     gemini_flash_thinking_level: types.ThinkingLevel
-    gemini_temperature: float | None
 
 
 _HUMAN_SNS_SYSTEM_SUFFIX = (
@@ -121,7 +120,6 @@ _STYLE_PROFILES: dict[str, BenchmarkStyleProfile] = {
         openai_text_verbosity=None,
         gemini_pro_thinking_level=types.ThinkingLevel.LOW,
         gemini_flash_thinking_level=types.ThinkingLevel.LOW,
-        gemini_temperature=None,
     ),
     "human-sns": BenchmarkStyleProfile(
         name="human-sns",
@@ -130,7 +128,6 @@ _STYLE_PROFILES: dict[str, BenchmarkStyleProfile] = {
         openai_text_verbosity="low",
         gemini_pro_thinking_level=types.ThinkingLevel.LOW,
         gemini_flash_thinking_level=types.ThinkingLevel.MINIMAL,
-        gemini_temperature=None,
     ),
     "human-sns-reasoned": BenchmarkStyleProfile(
         name="human-sns-reasoned",
@@ -139,7 +136,6 @@ _STYLE_PROFILES: dict[str, BenchmarkStyleProfile] = {
         openai_text_verbosity="low",
         gemini_pro_thinking_level=types.ThinkingLevel.LOW,
         gemini_flash_thinking_level=types.ThinkingLevel.LOW,
-        gemini_temperature=None,
     ),
 }
 
@@ -716,11 +712,6 @@ async def _run_gemini_record(
             "style_profile": style_profile.name,
             "max_output_tokens": _DEFAULT_GEMINI_MAX_OUTPUT_TOKENS,
             "thinking_level": _gemini_thinking_level(style_profile, model_id).value,
-            **(
-                {"temperature": style_profile.gemini_temperature}
-                if style_profile.gemini_temperature is not None
-                else {}
-            ),
             "tool_definitions_in_request": [
                 definition.name for definition in tool_definitions
             ],
@@ -795,8 +786,6 @@ async def _call_gemini(
                 thinking_level=thinking_level,
             ),
         }
-        if style_profile.gemini_temperature is not None:
-            config_kwargs["temperature"] = style_profile.gemini_temperature
         config = types.GenerateContentConfig(**config_kwargs)
         provider_tools = _gemini_tools(bind_provider_tools(list(tool_definitions)))
         if provider_tools:
@@ -826,6 +815,8 @@ def _gemini_thinking_level(
 ) -> types.ThinkingLevel:
     """Select the supported thinking level for a Gemini model family."""
 
+    if model_id == "gemini-3.6-flash":
+        return types.ThinkingLevel.MEDIUM
     if "pro" in model_id:
         return style_profile.gemini_pro_thinking_level
     return style_profile.gemini_flash_thinking_level

@@ -8,7 +8,6 @@ from app.application.relationship import (
     render_relationship_behavior,
     select_relationship_behavior,
 )
-from app.contracts.messages.chat_type import ChatType
 from app.contracts.messages.llm_request_context import (
     LLMRequestContext,
     build_agent_system_prompt,
@@ -64,10 +63,6 @@ class AgentInferenceContextService(IAgentInferenceContextService):
             message_id=request.message_id,
         )
         allowed_tool_names = {"memory.read", "web_search"}
-        if request.chat_type is ChatType.LINE:
-            allowed_tool_names.add("line.send")
-        else:
-            allowed_tool_names.add("discord.send")
         tool_definitions = [
             definition
             for definition in self._tool_catalog.list_tools()

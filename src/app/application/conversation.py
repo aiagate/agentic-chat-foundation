@@ -11,7 +11,6 @@ from app.contracts.messages.conversation import (
     ConversationResult,
 )
 from app.contracts.messages.llm_request_context import compose_system_instruction
-from app.contracts.messages.tool_contracts import ToolCall, normalize_reply_contents
 from app.contracts.messages.tool_result_context import ToolResultContext
 from app.contracts.ports.agent_inference_context import (
     AgentInferenceContextRequest,
@@ -130,17 +129,10 @@ class AIConversationResponseGenerator(ResponseGenerator):
                 external_conversation_id=message.external_conversation_id,
                 channel=message.channel,
                 unavailable=True,
-                failure_reason=generated.error.message,
+                failure_reason="応答を確定できませんでした。",
             )
 
-        terminal_result = _terminal_result(
-            message,
-            context.chat_type,
-            generated.value.tool_calls,
-        )
-        if terminal_result is not None:
-            return terminal_result
-
+        continuation = generated.value.continuation
         for tool_call in generated.value.tool_calls[:3]:
             execution = await self._tool_executor.execute(
                 ToolExecutionContext(
@@ -198,6 +190,7 @@ class AIConversationResponseGenerator(ResponseGenerator):
                 system_instruction=compose_system_instruction(assembled.value),
                 tool_definitions=assembled.value.tool_definitions,
                 tool_results=list(tool_results),
+                continuation=continuation,
             )
             if is_err(generated):
                 return ConversationResult(
@@ -207,13 +200,6 @@ class AIConversationResponseGenerator(ResponseGenerator):
                     unavailable=True,
                     failure_reason="応答を確定できませんでした。",
                 )
-            terminal_result = _terminal_result(
-                message,
-                context.chat_type,
-                generated.value.tool_calls,
-            )
-            if terminal_result is not None:
-                return terminal_result
             if generated.value.tool_calls:
                 return ConversationResult(
                     message_id=message.message_id,
@@ -228,57 +214,3 @@ class AIConversationResponseGenerator(ResponseGenerator):
             channel=message.channel,
             contents=tuple(generated.value.contents),
         )
-
-
-def _terminal_result(
-    message: AcceptedMessage,
-    chat_type: ChatType,
-    tool_calls: list[ToolCall],
-) -> ConversationResult | None:
-    """Interpret a channel send tool as the terminal conversation output.
-
-    Channel delivery remains the responsibility of ``DeliverConversationResult``.
-    This keeps model-facing send tools useful without allowing the generic tool
-    executor to perform an external side effect.
-    """
-
-    if not tool_calls:
-        return None
-
-    expected_tool_name = "line.send" if chat_type is ChatType.LINE else "discord.send"
-    terminal_calls = [
-        tool_call
-        for tool_call in tool_calls
-        if tool_call.tool_name in {"line.send", "discord.send"}
-    ]
-    if not terminal_calls:
-        return None
-
-    if len(tool_calls) != 1 or terminal_calls[0].tool_name != expected_tool_name:
-        return _unavailable_result(
-            message,
-            "送信toolは応答の終端で単独使用する必要があります。",
-        )
-
-    contents = normalize_reply_contents(terminal_calls[0].arguments)
-    if contents is None:
-        return _unavailable_result(
-            message,
-            "送信toolのcontentsが空です。",
-        )
-    return ConversationResult(
-        message_id=message.message_id,
-        external_conversation_id=message.external_conversation_id,
-        channel=message.channel,
-        contents=tuple(contents),
-    )
-
-
-def _unavailable_result(message: AcceptedMessage, reason: str) -> ConversationResult:
-    return ConversationResult(
-        message_id=message.message_id,
-        external_conversation_id=message.external_conversation_id,
-        channel=message.channel,
-        unavailable=True,
-        failure_reason=reason,
-    )

@@ -21,7 +21,7 @@ _DEFAULT_MODEL_ORDER = (
     "gpt-5.6-luna",
     "gpt-5.5",
     "gpt-5.4",
-    "gemini-3.5-flash",
+    "gemini-3.6-flash",
     "gemini-3.1-pro-preview",
     "gemini-3.1-flash-lite",
     "gemini-2.5-pro",

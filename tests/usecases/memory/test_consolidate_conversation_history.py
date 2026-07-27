@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.contracts.messages.agent_profile import AgentProfileBundle
+from app.contracts.messages.ai_continuation import AIContinuation
 from app.contracts.messages.character_definition import CharacterDefinition
 from app.contracts.messages.chat_history import ChatHistoryItem
 from app.contracts.messages.chat_type import ChatType
@@ -441,8 +442,10 @@ class _FakeAIService(IAIService):
         system_instruction: str | None = None,
         tool_definitions: list[ToolDefinition] | None = None,
         tool_results: list[ToolResultContext] | None = None,
+        continuation: AIContinuation | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
         del prompt, history, system_instruction, tool_definitions, tool_results
+        del continuation
         payload = {
             "sections": [
                 {

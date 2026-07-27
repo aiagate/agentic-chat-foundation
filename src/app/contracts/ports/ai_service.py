@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from flow_res import Result
 
+from app.contracts.messages.ai_continuation import AIContinuation
 from app.contracts.messages.chat_history import ChatHistoryItem
 from app.contracts.messages.generated_content import GeneratedContent
 from app.contracts.messages.tool_contracts import ToolDefinition
@@ -34,6 +35,7 @@ class IAIService(ABC):
         system_instruction: str | None = None,
         tool_definitions: list[ToolDefinition] | None = None,
         tool_results: list[ToolResultContext] | None = None,
+        continuation: AIContinuation | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
         """Generate structured content from prompt and history."""
         pass

@@ -5,11 +5,6 @@ from __future__ import annotations
 from app.contracts.messages.tool_contracts import ToolDefinition
 from app.contracts.ports.tool_catalog import IToolCatalog
 
-_MESSAGE_CONTENTS_DESCRIPTION = (
-    "Response texts divided into natural conversational message units. "
-    "Each item is delivered as one separate message to the tool destination."
-)
-
 
 class StaticToolCatalog(IToolCatalog):
     """Stable tool definitions surfaced to the agent runtime."""
@@ -69,62 +64,6 @@ class StaticToolCatalog(IToolCatalog):
                 side_effect="read",
                 timeout_seconds=20,
                 max_calls_per_run=4,
-            ),
-            "line.send": ToolDefinition(
-                name="line.send",
-                description="Send messages to the current LINE conversation.",
-                arguments_schema={
-                    "type": "object",
-                    "properties": {
-                        "contents": {
-                            "type": "array",
-                            "description": _MESSAGE_CONTENTS_DESCRIPTION,
-                            "items": {"type": "string"},
-                        },
-                    },
-                    "required": ["contents"],
-                    "additionalProperties": False,
-                },
-                result_schema={
-                    "type": "object",
-                    "properties": {
-                        "content_count": {"type": "integer"},
-                    },
-                    "required": ["content_count"],
-                    "additionalProperties": True,
-                },
-                capability_scope=["message:send:line"],
-                side_effect="send_message",
-                timeout_seconds=15,
-                max_calls_per_run=1,
-            ),
-            "discord.send": ToolDefinition(
-                name="discord.send",
-                description="Send messages to the current Discord channel.",
-                arguments_schema={
-                    "type": "object",
-                    "properties": {
-                        "contents": {
-                            "type": "array",
-                            "description": _MESSAGE_CONTENTS_DESCRIPTION,
-                            "items": {"type": "string"},
-                        },
-                    },
-                    "required": ["contents"],
-                    "additionalProperties": False,
-                },
-                result_schema={
-                    "type": "object",
-                    "properties": {
-                        "content_count": {"type": "integer"},
-                    },
-                    "required": ["content_count"],
-                    "additionalProperties": True,
-                },
-                capability_scope=["message:send:discord"],
-                side_effect="send_message",
-                timeout_seconds=15,
-                max_calls_per_run=1,
             ),
         }
 

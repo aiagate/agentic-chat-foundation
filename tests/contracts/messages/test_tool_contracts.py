@@ -8,7 +8,6 @@ from app.contracts.messages import (
     SearchToolArguments,
     ToolCall,
     ToolResultContext,
-    normalize_reply_contents,
 )
 
 
@@ -22,21 +21,6 @@ def test_search_tool_arguments_shape() -> None:
     assert arguments.query == "ollama web search"
     assert arguments.max_results == 3
     assert arguments.source_request_id == "req-1"
-
-
-def test_reply_contents_preserve_message_units_and_line_breaks() -> None:
-    arguments = {
-        "contents": [
-            "first message",
-            "second message\nwith a paragraph line break",
-        ]
-    }
-
-    assert normalize_reply_contents(arguments) == arguments["contents"]
-
-
-def test_reply_contents_require_the_plural_argument() -> None:
-    assert normalize_reply_contents({"content": "legacy message"}) is None
 
 
 def test_tool_result_context_uses_tool_call_id() -> None:
@@ -83,7 +67,7 @@ def test_generated_content_uses_tool_calls_as_the_only_tool_request_shape() -> N
 @pytest.mark.parametrize(
     "payload",
     [
-        [{"id": "call_1", "name": "line.send", "arguments": {}}],
+        [{"id": "call_1", "name": "unknown", "arguments": {}}],
         [{"contents": [], "tool_calls": []}],
         {"contents": "single string"},
     ],

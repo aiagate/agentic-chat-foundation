@@ -123,11 +123,11 @@ async def test_terminal_send_tool_is_not_executed_by_adapter(
     web_search_service: IWebSearchService,
 ) -> None:
     result = await _executor(memory_service, web_search_service).execute(
-        _context("discord.send", {"contents": ["hello"]})
+        _context("unknown_tool", {})
     )
 
     assert is_err(result)
-    assert result.error.message == "Unsupported tool: discord.send"
+    assert result.error.message == "Unsupported tool: unknown_tool"
 
 
 def _memory_read_result() -> MemoryReadResult:

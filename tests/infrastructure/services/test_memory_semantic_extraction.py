@@ -12,6 +12,7 @@ import pytest
 from flow_res import Ok, Result, is_ok
 
 from app.contracts.messages.agent_profile import AgentProfileBundle
+from app.contracts.messages.ai_continuation import AIContinuation
 from app.contracts.messages.character_definition import CharacterDefinition
 from app.contracts.messages.chat_history import ChatHistoryItem
 from app.contracts.messages.chat_type import ChatType
@@ -50,8 +51,10 @@ class _FakeAIService(IAIService):
         system_instruction: str | None = None,
         tool_definitions: list[ToolDefinition] | None = None,
         tool_results: list[ToolResultContext] | None = None,
+        continuation: AIContinuation | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
         del prompt, history, system_instruction, tool_definitions, tool_results
+        del continuation
         payload = {
             "sections": [
                 {
@@ -96,6 +99,7 @@ class _RecordingAIService(_FakeAIService):
         system_instruction: str | None = None,
         tool_definitions: list[ToolDefinition] | None = None,
         tool_results: list[ToolResultContext] | None = None,
+        continuation: AIContinuation | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
         self.last_prompt = prompt
         self.last_system_instruction = system_instruction
@@ -105,6 +109,7 @@ class _RecordingAIService(_FakeAIService):
             system_instruction,
             tool_definitions,
             tool_results,
+            continuation,
         )
 
 
@@ -120,8 +125,9 @@ class _RetryingAIService(IAIService):
         system_instruction: str | None = None,
         tool_definitions: list[ToolDefinition] | None = None,
         tool_results: list[ToolResultContext] | None = None,
+        continuation: AIContinuation | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
-        del history, tool_definitions, tool_results
+        del history, tool_definitions, tool_results, continuation
         self.prompts.append(prompt)
         self.system_instructions.append(system_instruction)
 
@@ -178,8 +184,9 @@ class _AlwaysInvalidAIService(IAIService):
         system_instruction: str | None = None,
         tool_definitions: list[ToolDefinition] | None = None,
         tool_results: list[ToolResultContext] | None = None,
+        continuation: AIContinuation | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
-        del history, tool_definitions, tool_results
+        del history, tool_definitions, tool_results, continuation
         self.prompts.append(prompt)
         self.system_instructions.append(system_instruction)
         return Ok(
@@ -260,8 +267,10 @@ class _RelationshipAIService(IAIService):
         system_instruction: str | None = None,
         tool_definitions: list[ToolDefinition] | None = None,
         tool_results: list[ToolResultContext] | None = None,
+        continuation: AIContinuation | None = None,
     ) -> Result[GeneratedContent, AIServiceError]:
         del prompt, history, system_instruction, tool_definitions, tool_results
+        del continuation
         payload = {
             "sections": [],
             "entity_patches": [],
