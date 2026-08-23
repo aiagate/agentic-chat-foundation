@@ -2,18 +2,27 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
-from app.contracts.messages.tool_use import ToolUseRequest
+from app.contracts.messages.agentic import AgentEnvelope
+from app.contracts.messages.ai_continuation import AIContinuation
+from app.contracts.messages.tool_contracts import ToolCall
 
 
-class GeneratedContent(BaseModel):
+class GeneratedContent(AgentEnvelope):
     """Structured AI output for chat generation."""
 
     model_config = ConfigDict(extra="forbid")
 
-    contents: list[str] = Field(description="Generated assistant response texts.")
-    tool_use_request: ToolUseRequest | None = Field(
+    contents: list[str] = Field(
+        default_factory=list,
+        description="Generated assistant response texts.",
+    )
+    tool_calls: list[ToolCall] = Field(
+        default_factory=list,
+        description="Canonical tool calls requested by the model.",
+    )
+    continuation: AIContinuation | None = Field(
         default=None,
-        description="Optional external tool request.",
+        description="Short-lived opaque state for continuing a provider tool turn.",
     )

@@ -13,12 +13,14 @@ from alembic import context
 
 # Import all ORM models here for autogenerate to discover them
 from app.infrastructure.orm_models import (
+    AgentTurnORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
+    AutonomousTopicTurnORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
+    CharacterRelationshipORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
     ChatORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
-    DiscordChatORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
-    LineChatORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
-    TeamMembershipORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
-    TeamORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
-    UserORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
+    DiscussionMessageORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
+    MemoryIndexDocumentORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
+    RelationshipSignalEventORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
+    RelationshipSignalSourceORM,  # pyright: ignore[reportUnusedImport] # noqa: F401
 )
 
 # this is the Alembic Config object

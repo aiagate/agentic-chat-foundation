@@ -1,20 +1,21 @@
-"""Repository interfaces for domain layer."""
+"""ドメイン層のリポジトリ契約。"""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum, auto
-from typing import Any, overload
 
 from flow_res import Result
 
-from app.domain.queries.chat_history_query import IChatHistoryQuery
-from app.domain.queries.raw_chat_log_query import IRawChatLogQuery
+from app.contracts.messages.relationship import PersistedRelationshipSignal
+from app.domain.aggregates.character_relationship import CharacterRelationship
 
 
 class RepositoryErrorType(Enum):
-    """Enum for repository error types."""
+    """リポジトリエラーの種別。"""
 
     NOT_FOUND = auto()
     UNEXPECTED = auto()
@@ -22,138 +23,91 @@ class RepositoryErrorType(Enum):
     ALREADY_EXISTS = auto()
 
 
-@dataclass(frozen=True)
+@dataclass
 class RepositoryError(Exception):
-    """Represents a specific error from a repository."""
+    """リポジトリ層から返すエラー情報。"""
 
     type: RepositoryErrorType
     message: str
 
 
-class IRepository[T](ABC):
-    """Repository interface for add and delete operations.
+@dataclass(frozen=True, slots=True)
+class ChatRecordReference:
+    """Stable identity and owner of an already persisted chat row."""
 
-    Use this when you need to add or delete entities without ID-based retrieval.
-    Does not require knowledge of ID type.
+    message_id: str
+    user_id: str
+    order_key: int
+    is_new: bool = True
 
-    Type Parameters:
-        T: Entity type (e.g., User, Order)
-    """
+
+class IChatRecordRepository(ABC):
+    """チャット正本の書き込み・重複確認契約。"""
 
     @abstractmethod
-    async def add(self, entity: T) -> Result[T, RepositoryError]:
-        """Add new entity.
-
-        Returns ALREADY_EXISTS error if entity already exists in the database.
-        """
+    async def add_message(
+        self,
+        *,
+        character_id: str,
+        user_id: str,
+        channel: str,
+        external_conversation_id: str,
+        external_participant_id: str,
+        external_message_id: str | None,
+        role: str,
+        message_content: Mapping[str, object],
+        channel_metadata: Mapping[str, object],
+    ) -> Result[ChatRecordReference, RepositoryError]:
+        """チャンネルに依存しないチャットレコードを追加する。"""
         pass
 
     @abstractmethod
-    async def update(self, entity: T) -> Result[T, RepositoryError]:
-        """Update existing entity.
-
-        Returns NOT_FOUND error if entity doesn't exist in the database.
-        """
-        pass
-
-    @abstractmethod
-    async def delete(self, entity: T) -> Result[None, RepositoryError]:
-        """Delete entity."""
+    async def find_by_external_message_id(
+        self,
+        *,
+        channel: str,
+        external_message_id: str,
+    ) -> Result[ChatRecordReference | None, RepositoryError]:
+        """外部メッセージIDから既存の正本IDを取得する。"""
         pass
 
 
-class IRepositoryWithId[T, K](IRepository[T], ABC):
-    """Repository interface with ID-based get operation.
-
-    Extends IRepository[T] with get_by_id operation.
-    Use this when you need to retrieve entities by ID.
-
-    Type Parameters:
-        T: Entity type (e.g., User, Order)
-        K: Primary key type (e.g., int, str, UserId)
-    """
+class IMemoryConsolidatedChatSourceRepository(ABC):
+    """memory生成へ取り込まれたchat行のprojection書き込み契約。"""
 
     @abstractmethod
-    async def get_by_id(self, id: K) -> Result[T, RepositoryError]:
-        """Get entity by ID."""
+    async def mark_consolidated(
+        self,
+        chat_ids: list[str],
+        *,
+        consolidated_at: datetime,
+    ) -> Result[int, RepositoryError]:
+        """指定chat IDをmemory処理済みとして記録する。"""
+
         pass
 
 
-class IUnitOfWork(ABC):
-    """Unit of Work interface for transaction management."""
-
-    @overload
-    def GetRepository[T](self, entity_type: type[T]) -> IRepository[T]:
-        """Get repository for add and delete operations.
-
-        Args:
-            entity_type: The domain entity type (e.g., User)
-
-        Returns:
-            Repository instance with add and delete operations
-        """
-        ...
-
-    @overload
-    def GetRepository[T, K](
-        self, entity_type: type[T], key_type: type[K]
-    ) -> IRepositoryWithId[T, K]:
-        """Get repository with ID-based get operation.
-
-        Args:
-            entity_type: The domain entity type (e.g., User)
-            key_type: The primary key type (e.g., int, str, UserId)
-
-        Returns:
-            Repository instance with all operations (add, delete, get_by_id)
-        """
-        ...
+class ICharacterRelationshipRepository(ABC):
+    """Persistence boundary for relationship state and signal evidence."""
 
     @abstractmethod
-    def GetRepository[T, K](
-        self, entity_type: type[T], key_type: type[K] | None = None
-    ) -> IRepository[T] | IRepositoryWithId[T, K]:
-        """Get repository for entity type.
+    async def record_provisional(
+        self,
+        signal: PersistedRelationshipSignal,
+    ) -> Result[CharacterRelationship, RepositoryError]:
+        """Idempotently record one immediate signal and recalculate affection."""
 
-        This method is overloaded:
-        - GetRepository(User) -> IRepository[User] (add, delete)
-        - GetRepository(User, UserId) -> IRepositoryWithId[User, UserId] (add, delete, get_by_id)
-
-        Args:
-            entity_type: The domain entity type
-            key_type: Optional primary key type
-
-        Returns:
-            Repository instance
-        """
         pass
 
     @abstractmethod
-    async def commit(self) -> Result[None, RepositoryError]:
-        """Commit the transaction."""
-        pass
+    async def reconcile_confirmed(
+        self,
+        *,
+        character_id: str,
+        user_id: str,
+        evaluated_chat_ids: list[str],
+        signals: list[PersistedRelationshipSignal],
+    ) -> Result[CharacterRelationship, RepositoryError]:
+        """Replace overlapping provisional evidence with confirmed signals."""
 
-    @abstractmethod
-    async def rollback(self) -> None:
-        """Rollback the transaction."""
-        pass
-
-    @abstractmethod
-    def GetChatHistoryQuery(self) -> IChatHistoryQuery:
-        """Get the chat history query."""
-        pass
-
-    @abstractmethod
-    def GetRawChatLogQuery(self) -> IRawChatLogQuery:
-        """Get the raw chat log query."""
-        pass
-
-    @abstractmethod
-    async def __aenter__(self) -> IUnitOfWork:
-        """Enter async context manager."""
-        pass
-
-    @abstractmethod
-    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        """Exit async context manager with auto-commit/rollback."""
         pass

@@ -1,7 +1,9 @@
 """Database configuration and session management."""
 
 import json
+import os
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import (
@@ -22,6 +24,17 @@ def _json_serializer(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False)
 
 
+def sqlalchemy_echo_enabled() -> bool:
+    """Return whether SQLAlchemy statement logging was explicitly enabled."""
+
+    return os.getenv("SQLALCHEMY_ECHO", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def init_db(database_url: str, **engine_kwargs: Any) -> None:
     """Initialize database engine and session factory."""
     global _engine, _session_factory
@@ -40,6 +53,20 @@ def get_engine() -> AsyncEngine:
     if _engine is None:
         raise RuntimeError("Database not initialized. Call init_db() first.")
     return _engine
+
+
+def get_sqlite_database_path() -> Path | None:
+    """Return the configured SQLite database file path, if any."""
+
+    if _engine is None:
+        return None
+    url = _engine.url
+    if not url.drivername.startswith("sqlite"):
+        return None
+    database = url.database
+    if database is None or database in {":memory:", ""}:
+        return None
+    return Path(database)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession]:

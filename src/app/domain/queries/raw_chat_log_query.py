@@ -1,4 +1,4 @@
-"""Query interface for raw chat log retrieval."""
+"""長期記憶整理用の生ログ取得クエリ契約。"""
 
 from __future__ import annotations
 
@@ -9,15 +9,15 @@ from typing import TYPE_CHECKING, Any
 
 from flow_res import Result
 
-from app.domain.value_objects.chat_type import ChatType
+from app.contracts.messages.chat_type import ChatType
 
 if TYPE_CHECKING:
     from app.domain.repositories.interfaces import RepositoryError
 
 
 @dataclass(frozen=True, slots=True)
-class RawChatLog:
-    """Raw chat log row from SQL storage."""
+class LongTermMemorySourceItem:
+    """意味圧縮の入力になる生ログ1件。"""
 
     id: str
     user_id: str
@@ -25,29 +25,32 @@ class RawChatLog:
     chat_type: ChatType
     message_content: dict[str, Any]
     created_at: datetime | None
+    character_id: str
 
 
 class IRawChatLogQuery(ABC):
-    """Query interface for retrieving raw chat logs."""
+    """長期記憶整理向けの生ログ取得契約。"""
 
     @abstractmethod
-    async def list_raw_chat_log_user_ids(
+    async def list_pending_memory_user_ids(
         self,
+        character_id: str,
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 1000,
     ) -> Result[list[str], RepositoryError]:
-        """Get distinct user IDs that have raw chat logs in a time window."""
+        """対象ログを持つユーザーIDの一覧を取得する。"""
         pass
 
     @abstractmethod
-    async def get_raw_chat_logs(
+    async def get_pending_memory_source_items(
         self,
+        character_id: str,
         user_id: str,
         chat_type: ChatType,
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 1000,
-    ) -> Result[list[RawChatLog], RepositoryError]:
-        """Get raw chat logs for a user scope and optional time window."""
+    ) -> Result[list[LongTermMemorySourceItem], RepositoryError]:
+        """指定ユーザーと時間範囲の生ログを取得する。"""
         pass

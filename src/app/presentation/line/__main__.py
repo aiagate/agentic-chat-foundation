@@ -1,10 +1,10 @@
+import json
 import logging
 import os
 import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from pprint import pformat
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
@@ -16,19 +16,18 @@ from linebot.v3.messaging import (
     AsyncApiClient,
     AsyncMessagingApi,
     Configuration,
-    ReplyMessageRequest,
-    TextMessage,
+    MarkMessagesAsReadByTokenRequest,
 )
 from linebot.v3.webhook import WebhookParser
-from linebot.v3.webhooks import MessageEvent, TextMessageContent
-from linebot.v3.webhooks.models.user_source import UserSource
 
 from app import container
-from app.contracts.messages.chat_events import LINE_CHAT_REPLY_READY_TOPIC
-from app.contracts.ports.event_bus import IEventBus
-from app.infrastructure.database import init_db
-from app.presentation.line.line_reply_sender import send_line_reply
-from app.usecases.chat.save_line_chat import SaveLineChatCommand
+from app.contracts.messages.conversation import IncomingMessage
+from app.infrastructure.database import init_db, sqlalchemy_echo_enabled
+from app.presentation.conversation_flow import ConversationFlow
+from app.presentation.line.line_conversation_sender import LineConversationResultSender
+from app.usecases.conversation.accept_incoming_message import (
+    AcceptIncomingMessageCommand,
+)
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -47,13 +46,13 @@ def load_environment() -> None:
     # .env.local が存在すれば優先的に読み込む（開発環境用）
     env_local = root_dir / ".env.local"
     if env_local.exists():
-        load_dotenv(env_local)
+        load_dotenv(env_local, override=True)
         return
 
     # .env ファイルを読み込む（本番環境用）
     env_file = root_dir / ".env"
     if env_file.exists():
-        load_dotenv(env_file)
+        load_dotenv(env_file, override=True)
 
 
 # 環境変数を読み込む
@@ -75,21 +74,14 @@ parser = WebhookParser(channel_secret)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    db_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./bot.db")
-    init_db(db_url, echo=True)
-    injector = Injector([container.configure])
-    Mediator.initialize(injector)
-
     async_api_client = AsyncApiClient(configuration)
     app.state.line_bot_api = AsyncMessagingApi(async_api_client)
-    app.state.event_bus = injector.get(IEventBus)
-    await app.state.event_bus.subscribe(
-        LINE_CHAT_REPLY_READY_TOPIC,
-        lambda payload: send_line_reply(app.state.line_bot_api, payload),
-    )
-    await app.state.event_bus.start()
+    db_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./bot.db")
+    init_db(db_url, echo=sqlalchemy_echo_enabled())
+
+    injector = Injector([container.configure])
+    app.state.conversation_flow = injector.get(ConversationFlow)
     yield
-    await app.state.event_bus.stop()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -101,59 +93,127 @@ async def handle_callback(request: Request):
 
     body = await request.body()
     body = body.decode()
+    raw_payload = json.loads(body)
+    raw_events = raw_payload.get("events", [])
 
     try:
-        parsed = parser.parse(body, signature)
+        if not parser.signature_validator.validate(body, signature):
+            raise InvalidSignatureError("Invalid signature")
     except InvalidSignatureError as e:
         raise HTTPException(status_code=400, detail="Invalid signature") from e
 
     line_bot_api = request.app.state.line_bot_api
 
-    events = parsed if isinstance(parsed, list) else (parsed.events or [])
+    for index, raw_event in enumerate(raw_events):
+        if not isinstance(raw_event, dict):
+            logger.info("Skipping non-dict LINE event payload: %s", raw_event)
+            continue
+        raw_source = raw_event.get("source")
+        if not isinstance(raw_source, dict):
+            raw_source = {}
 
-    for event in events:
-        logger.info(f"Received event: {event}")
-        logger.info(f"{pformat(vars(event))}")
+        logger.info(
+            "Received LINE raw event: event_index=%s event_type=%s source_type=%s",
+            index,
+            raw_event.get("type"),
+            raw_source.get("type"),
+        )
+        logger.info(
+            "LINE event details: event_index=%s event_type=%s source_type=%s "
+            "message_type=%s webhook_event_id=%s",
+            index,
+            raw_event.get("type"),
+            raw_source.get("type"),
+            (
+                raw_event.get("message", {}).get("type")
+                if isinstance(raw_event.get("message"), dict)
+                else None
+            ),
+            raw_event.get("webhookEventId"),
+        )
 
-        match event:
-            case MessageEvent():
-                logger.info(f"Received message event: {event.message}")
-                if isinstance(event.message, TextMessageContent):
-                    logger.info(f"Received text message: {event.message}")
+        if raw_event.get("type") != "message":
+            logger.info("Received non-message LINE event, skipping")
+            continue
 
-                    if isinstance(event.source, UserSource):
-                        user_id = event.source.user_id
+        message = raw_event.get("message")
+        if not isinstance(message, dict):
+            logger.info("Skipping LINE message event with invalid message payload")
+            continue
 
-                        if user_id is None:
-                            logger.warning("User ID is None in UserSource")
-                            continue
+        read_token = message.get("markAsReadToken")
+        if isinstance(read_token, str) and read_token:
+            logger.info(
+                "Marking LINE message as read: event_index=%s source_type=%s",
+                index,
+                raw_source.get("type"),
+            )
+            try:
+                await line_bot_api.mark_messages_as_read_by_token(
+                    MarkMessagesAsReadByTokenRequest(markAsReadToken=read_token)
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to mark LINE message as read; continuing message handling: "
+                    "event_index=%s",
+                    index,
+                )
+        else:
+            logger.info(
+                "LINE message has no markAsReadToken; continuing message handling: "
+                "event_index=%s",
+                index,
+            )
 
-                        save_result = await Mediator.send_async(
-                            SaveLineChatCommand(
-                                user_id=user_id,
-                                content=event.message.text,
-                            )
-                        )
+        content = message.get("text")
+        if not isinstance(content, str) or not content.strip():
+            logger.info("Skipping LINE message without text content")
+            continue
 
-                        if is_err(save_result):
-                            await line_bot_api.reply_message(
-                                ReplyMessageRequest(
-                                    replyToken=event.reply_token or "",
-                                    messages=[
-                                        TextMessage(
-                                            text="メッセージの保存に失敗しました。",
-                                            quickReply=None,
-                                            quoteToken=None,
-                                        )
-                                    ],
-                                    notificationDisabled=False,
-                                )
-                            )
-                            return
-                return "OK"
-            case _:
-                logger.info(f"Received non-message event: {event}")
-                return "OK"
+        user_id = raw_source.get("userId")
+        if not isinstance(user_id, str) or not user_id:
+            logger.info("Skipping LINE message without userId")
+            continue
+
+        source_type = raw_source.get("type")
+        if source_type != "user":
+            logger.info("Skipping LINE non-1:1 source: source_type=%s", source_type)
+            continue
+        conversation_id = user_id
+        destination = user_id
+        incoming = IncomingMessage(
+            channel="line",
+            external_conversation_id=conversation_id,
+            external_participant_id=user_id,
+            text=content,
+            external_message_id=(
+                raw_event.get("webhookEventId")
+                if isinstance(raw_event.get("webhookEventId"), str)
+                else None
+            ),
+            metadata={
+                "source_type": str(source_type or "user"),
+                "destination": destination,
+            },
+        )
+        flow = getattr(request.app.state, "conversation_flow", None)
+        if flow is None:
+            await Mediator.send_async(AcceptIncomingMessageCommand(incoming))
+            result = None
+        else:
+            result = await flow.process(
+                incoming,
+                LineConversationResultSender(app.state.line_bot_api, destination),
+            )
+        if result is not None and is_err(result):
+            logger.error(
+                "Failed to process LINE message: event_index=%s source_type=%s "
+                "external_message_id=%s error=%s",
+                index,
+                raw_source.get("type"),
+                incoming.external_message_id,
+                result.error.message,
+            )
 
     return "OK"
 
@@ -161,7 +221,11 @@ async def handle_callback(request: Request):
 def start() -> None:
     import uvicorn
 
-    uvicorn.run("app.presentation.line.__main__:app", reload=True)
+    uvicorn.run(
+        "app.presentation.line.__main__:app",
+        host="0.0.0.0",
+        reload=True,
+    )
 
 
 if __name__ == "__main__":

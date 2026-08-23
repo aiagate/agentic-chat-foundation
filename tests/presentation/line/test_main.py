@@ -1,19 +1,20 @@
 """Tests for LINE entrypoint helpers."""
 
+import json
 from importlib import import_module
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from flow_res import Err, Ok
 
-from app.usecases.result import ErrorType, UseCaseError
+from app.usecases.conversation.accept_incoming_message import (
+    AcceptIncomingMessageCommand,
+)
 
 
 def _load_line_main(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("LINE_CHANNEL_SECRET", "secret")
     monkeypatch.setenv("LINE_CHANNEL_ACCESS_TOKEN", "token")
-    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///./bot.db")
     module_name = "app.presentation.line.__main__"
     import sys
 
@@ -22,122 +23,100 @@ def _load_line_main(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.anyio
-async def test_handle_callback_saves_message(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test LINE webhook handling on a successful save."""
+async def test_handle_callback_marks_message_as_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test LINE webhook handling on a successful read receipt."""
     line_main = _load_line_main(monkeypatch)
 
-    class FakeUserSource:
-        def __init__(self, user_id: str) -> None:
-            self.user_id = user_id
-
-    class FakeTextMessageContent:
-        def __init__(self, text: str) -> None:
-            self.id = "msg-1"
-            self.text = text
-            self.emojis = None
-            self.quoted_message_id = None
-            self.mark_as_read_token = None
-
-    class FakeMessageEvent:
-        def __init__(
-            self,
-            message: FakeTextMessageContent,
-            source: FakeUserSource,
-            reply_token: str,
-        ) -> None:
-            self.message = message
-            self.source = source
-            self.reply_token = reply_token
-
-    fake_event = FakeMessageEvent(
-        message=FakeTextMessageContent("hello"),
-        source=FakeUserSource("u1"),
-        reply_token="reply-token",
-    )
-
-    monkeypatch.setattr(line_main, "MessageEvent", FakeMessageEvent)
-    monkeypatch.setattr(line_main, "TextMessageContent", FakeTextMessageContent)
-    monkeypatch.setattr(line_main, "UserSource", FakeUserSource)
-    monkeypatch.setattr(line_main.parser, "parse", Mock(return_value=[fake_event]))
     monkeypatch.setattr(
-        line_main.Mediator, "send_async", AsyncMock(return_value=Ok(None))
+        line_main.parser.signature_validator, "validate", Mock(return_value=True)
     )
+    monkeypatch.setattr(
+        line_main.Mediator, "send_async", AsyncMock(return_value=Mock())
+    )
+    monkeypatch.setattr(line_main, "is_err", Mock(return_value=False))
 
     line_bot_api = AsyncMock()
+    line_bot_api.mark_messages_as_read_by_token = AsyncMock(return_value=None)
     request = SimpleNamespace(
         headers={"X-Line-Signature": "signature"},
-        body=AsyncMock(return_value=b"body"),
+        body=AsyncMock(
+            return_value=json.dumps(
+                {
+                    "events": [
+                        {
+                            "type": "message",
+                            "replyToken": "reply-token",
+                            "source": {"type": "user", "userId": "u1"},
+                            "message": {
+                                "type": "text",
+                                "text": "hello",
+                                "markAsReadToken": "read-token",
+                            },
+                        }
+                    ]
+                }
+            ).encode(),
+        ),
         app=SimpleNamespace(state=SimpleNamespace(line_bot_api=line_bot_api)),
     )
 
     result = await line_main.handle_callback(request)
 
     assert result == "OK"
-    line_bot_api.reply_message.assert_not_awaited()
+    line_bot_api.mark_messages_as_read_by_token.assert_awaited_once()
+    request_model = line_bot_api.mark_messages_as_read_by_token.await_args.args[0]
+    assert request_model.mark_as_read_token == "read-token"
     line_main.Mediator.send_async.assert_awaited_once()
+    accept_command = line_main.Mediator.send_async.await_args.args[0]
+    assert isinstance(accept_command, AcceptIncomingMessageCommand)
+    assert accept_command.message.external_participant_id == "u1"
+    assert accept_command.message.text == "hello"
 
 
 @pytest.mark.anyio
-async def test_handle_callback_replies_on_save_error(
+async def test_handle_callback_saves_message_without_read_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test LINE webhook error handling when save fails."""
+    """A missing read token must not prevent durable message handling."""
     line_main = _load_line_main(monkeypatch)
 
-    class FakeUserSource:
-        def __init__(self, user_id: str) -> None:
-            self.user_id = user_id
-
-    class FakeTextMessageContent:
-        def __init__(self, text: str) -> None:
-            self.id = "msg-1"
-            self.text = text
-            self.emojis = None
-            self.quoted_message_id = None
-            self.mark_as_read_token = None
-
-    class FakeMessageEvent:
-        def __init__(
-            self,
-            message: FakeTextMessageContent,
-            source: FakeUserSource,
-            reply_token: str,
-        ) -> None:
-            self.message = message
-            self.source = source
-            self.reply_token = reply_token
-
-    fake_event = FakeMessageEvent(
-        message=FakeTextMessageContent("hello"),
-        source=FakeUserSource("u1"),
-        reply_token="reply-token",
-    )
-
-    monkeypatch.setattr(line_main, "MessageEvent", FakeMessageEvent)
-    monkeypatch.setattr(line_main, "TextMessageContent", FakeTextMessageContent)
-    monkeypatch.setattr(line_main, "UserSource", FakeUserSource)
-    monkeypatch.setattr(line_main.parser, "parse", Mock(return_value=[fake_event]))
     monkeypatch.setattr(
-        line_main.Mediator,
-        "send_async",
-        AsyncMock(
-            return_value=Err(
-                UseCaseError(
-                    type=ErrorType.UNEXPECTED,
-                    message="save failed",
-                )
-            )
-        ),
+        line_main.parser.signature_validator, "validate", Mock(return_value=True)
     )
+    monkeypatch.setattr(
+        line_main.Mediator, "send_async", AsyncMock(return_value=Mock())
+    )
+    monkeypatch.setattr(line_main, "is_err", Mock(return_value=False))
 
     line_bot_api = AsyncMock()
+    line_bot_api.mark_messages_as_read_by_token = AsyncMock(return_value=None)
     request = SimpleNamespace(
         headers={"X-Line-Signature": "signature"},
-        body=AsyncMock(return_value=b"body"),
+        body=AsyncMock(
+            return_value=json.dumps(
+                {
+                    "events": [
+                        {
+                            "type": "message",
+                            "replyToken": "reply-token",
+                            "source": {"type": "user", "userId": "u1"},
+                            "message": {"type": "text", "text": "hello"},
+                        }
+                    ]
+                }
+            ).encode(),
+        ),
         app=SimpleNamespace(state=SimpleNamespace(line_bot_api=line_bot_api)),
     )
 
     result = await line_main.handle_callback(request)
 
-    assert result is None
-    line_bot_api.reply_message.assert_awaited_once()
+    assert result == "OK"
+    line_bot_api.mark_messages_as_read_by_token.assert_not_awaited()
+    line_main.Mediator.send_async.assert_awaited_once()
+    accept_command = line_main.Mediator.send_async.await_args.args[0]
+    assert isinstance(accept_command, AcceptIncomingMessageCommand)
+    assert accept_command.message.external_participant_id == "u1"
+    assert accept_command.message.text == "hello"

@@ -7,10 +7,10 @@ from dataclasses import dataclass
 
 from flow_res import Result
 
-from app.contracts.messages.memory_context import MemoryContextPack
+from app.contracts.messages.memory_context import MemoryContextPack, MemoryReadResult
 
 
-@dataclass(frozen=True)
+@dataclass
 class MemoryServiceError(Exception):
     """Represents a memory service failure."""
 
@@ -21,22 +21,19 @@ class MemoryServiceError(Exception):
 
 
 class IMemoryService(ABC):
-    """Interface for memory retrieval and persistence."""
+    """Interface for memory retrieval."""
 
     @abstractmethod
-    async def retrieve(
+    async def build_context(
         self,
-        query: str,
         user_id: str,
     ) -> Result[MemoryContextPack, MemoryServiceError]:
-        """Return a user-scoped context pack with assembled prompt context."""
+        """Return a user-scoped compact manifest for prompt injection."""
 
     @abstractmethod
-    async def add_log(
+    async def read_memory(
         self,
+        memory_id: str,
         user_id: str,
-        role: str,
-        content: str,
-        metadata: dict[str, str],
-    ) -> Result[None, MemoryServiceError]:
-        """Persist a raw memory log."""
+    ) -> Result[MemoryReadResult, MemoryServiceError]:
+        """Resolve one full memory document addressed by memory_id."""

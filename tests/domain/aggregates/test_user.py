@@ -1,72 +1,21 @@
-"""Tests for domain models."""
+import pytest
 
-from datetime import UTC, datetime
-
-from flow_res import is_err
-
-from app.domain.aggregates.user import User
-from app.domain.value_objects import DisplayName, Email
+from app.domain.aggregates.user import User, UserChannelIdentity
 
 
-def test_create_user_with_empty_name_raises_error() -> None:
-    """Test that creating a User with an empty display name returns Err."""
-    result = DisplayName.from_primitive("")
-    assert is_err(result)
-    assert "Display name cannot be empty" in str(result.error)
+def test_user_requires_a_valid_ulid() -> None:
+    identity = UserChannelIdentity("discord", "external-user")
+
+    with pytest.raises(ValueError, match="valid ULID"):
+        User(id="x" * 26, identities=(identity,))
 
 
-def test_user_change_email() -> None:
-    """Test that the change_email method updates the user's email."""
-    user = User.register(
-        display_name=DisplayName.from_primitive("Test User").expect(
-            "DisplayName.from_primitive should succeed for valid display name"
-        ),
-        email=Email.from_primitive("old@example.com").expect(
-            "Email.from_primitive should succeed for valid email"
-        ),
+def test_user_accepts_a_valid_ulid() -> None:
+    identity = UserChannelIdentity("discord", "external-user")
+
+    user = User(
+        id="01J00000000000000000000000",
+        identities=(identity,),
     )
-    user.change_email(
-        Email.from_primitive("new@example.com").expect(
-            "Email.from_primitive should succeed for valid email"
-        )
-    )
-    assert user.email.to_primitive() == "new@example.com"
 
-
-def test_user_creation_with_valid_data() -> None:
-    """Test creating a user with valid data."""
-    email = Email.from_primitive("alice@example.com").expect(
-        "Email.from_primitive should succeed for valid email"
-    )
-    display_name = DisplayName.from_primitive("Alice").expect(
-        "DisplayName.from_primitive should succeed for valid display name"
-    )
-    user = User.register(display_name=display_name, email=email)
-    assert user.display_name == display_name
-    assert user.email == email
-    assert isinstance(user.created_at, datetime)
-    assert isinstance(user.updated_at, datetime)
-
-
-def test_user_timestamps_use_utc() -> None:
-    """Test that user timestamps use UTC timezone."""
-    before = datetime.now(UTC)
-    user = User.register(
-        display_name=DisplayName.from_primitive("Test").expect(
-            "DisplayName.from_primitive should succeed for valid display name"
-        ),
-        email=Email.from_primitive("test@example.com").expect(
-            "Email.from_primitive should succeed for valid email"
-        ),
-    )
-    after = datetime.now(UTC)
-
-    assert before <= user.created_at <= after
-    assert before <= user.updated_at <= after
-
-
-def test_creation_with_invalid_email_returns_err() -> None:
-    """Test that creating user with invalid email raises ValueError."""
-    result = Email.from_primitive("invalid-email")
-    assert is_err(result)
-    assert "Invalid email format" in str(result.error)
+    assert user.id == "01J00000000000000000000000"

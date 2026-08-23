@@ -1,7 +1,14 @@
 services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: agentic-chat-foundation-cloudflared
+    command: tunnel run
+    env_file:
+      - .env.cloudflared
+
   postgres:
     image: postgres:16-alpine
-    container_name: discord-bot-template-postgres
+    container_name: agentic-chat-foundation-postgres
     environment:
       POSTGRES_DB: bot
       POSTGRES_USER: bot
@@ -16,18 +23,77 @@ services:
       timeout: 5s
       retries: 20
 
-  redis:
-    image: redis:7-alpine
-    container_name: discord-bot-template-redis
-    ports:
-      - "6379:6379"
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentic-chat-foundation-migrate
+    env_file:
+      - .env.local
+      - .env.docker
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["uv", "run", "--frozen", "--no-dev", "alembic", "upgrade", "head"]
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentic-chat-foundation-bot
+    env_file:
+      - .env.local
+      - .env.docker
     volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
+      - ./memory/profiles/users:/app/memory/profiles/users
+      - ./memory/timeline:/app/memory/timeline
+      - ./memory/entities:/app/memory/entities
+    command: ["uv", "run", "--frozen", "--no-dev", "start-bot"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  line:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentic-chat-foundation-line
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.local
+      - .env.docker
+    volumes:
+      - ./memory/profiles/users:/app/memory/profiles/users
+      - ./memory/timeline:/app/memory/timeline
+      - ./memory/entities:/app/memory/entities
+    command: ["uv", "run", "--frozen", "--no-dev", "start-line"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentic-chat-foundation-worker
+    env_file:
+      - .env.local
+      - .env.docker
+    volumes:
+      - ./memory/profiles/users:/app/memory/profiles/users
+      - ./memory/timeline:/app/memory/timeline
+      - ./memory/entities:/app/memory/entities
+    command: ["uv", "run", "--frozen", "--no-dev", "start-worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres-data:
-  redis-data:

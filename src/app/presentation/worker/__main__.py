@@ -6,13 +6,13 @@ import sys
 from collections.abc import Awaitable, Callable
 from datetime import datetime, time, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from flow_med import Mediator
 from injector import Injector
 
 from app import container
-from app.contracts.ports.event_bus import IEventBus
 from app.infrastructure.database import init_db
 from app.presentation.worker.registry import EventRegistry
 
@@ -29,11 +29,11 @@ def load_environment() -> None:
     root_dir = Path(__file__).parent.parent.parent.parent.parent
     env_local = root_dir / ".env.local"
     if env_local.exists():
-        load_dotenv(env_local)
+        load_dotenv(env_local, override=True)
         return
     env_file = root_dir / ".env"
     if env_file.exists():
-        load_dotenv(env_file)
+        load_dotenv(env_file, override=True)
 
 
 async def _run_periodic_task(
@@ -86,9 +86,14 @@ def _start_scheduled_tasks(
 ) -> list[asyncio.Task[None]]:
     """Start all scheduled worker tasks registered by decorators."""
 
-    current_time = now or datetime.now().astimezone()
     tasks: list[asyncio.Task[None]] = []
     for interval, task_func in registry.scheduled_tasks:
+        schedule_timezone = getattr(task_func, "schedule_timezone", None)
+        if not isinstance(schedule_timezone, ZoneInfo):
+            schedule_timezone = datetime.now().astimezone().tzinfo
+        current_time = now or datetime.now(schedule_timezone)
+        if now is not None and schedule_timezone is not None:
+            current_time = now.astimezone(schedule_timezone)
         schedule_run_time = getattr(task_func, "schedule_run_time", None)
         if not isinstance(schedule_run_time, time):
             schedule_run_time = None
@@ -123,27 +128,26 @@ async def main() -> None:
 
     # 1. データベースとDIコンテナの初期化
     db_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./bot.db")
-    init_db(db_url, echo=True)
+    init_db(db_url, echo=False)
 
     injector = Injector([container.configure])
 
     # Mediatorの初期化
     Mediator.initialize(injector)
 
-    # 2. EventBusの取得
-    event_bus = injector.get(IEventBus)
-
-    # 3. ハンドラーと定期タスクの登録
+    # 2. 定期タスクの登録
     import app.presentation.worker.handlers as _  # type: ignore[reportUnusedImport] # noqa: F401
     from app.presentation.worker.registry import registry
 
-    for topic, handler in registry.registered_handlers:
-        await event_bus.subscribe(topic, handler)
-        logger.info("Registered event handler for topic: %s", topic)
+    if os.getenv("WORKER_RUN_ONCE") == "1":
+        for _, task_func in registry.scheduled_tasks:
+            await task_func()
+        logger.info("Worker run-once completed.")
+        return
 
     _start_scheduled_tasks(registry)
 
-    logger.info("Worker process initialized and listening for events.")
+    logger.info("Worker process initialized for periodic memory organization.")
 
     # 4. 停止信号の処理
 
@@ -162,9 +166,6 @@ async def main() -> None:
             # add_signal_handler がサポートされていない環境（Windows等）
             pass
 
-    # 5. イベントバスの起動
-    await event_bus.start()
-
     try:
         # 停止信号を待機
         await stop_event.wait()
@@ -172,11 +173,16 @@ async def main() -> None:
         pass
     finally:
         logger.info("Shutting down Worker process...")
-        await event_bus.stop()
 
 
-if __name__ == "__main__":
+def start() -> None:
+    """Synchronous entry point for console scripts and Docker."""
+
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         pass
+
+
+if __name__ == "__main__":
+    start()

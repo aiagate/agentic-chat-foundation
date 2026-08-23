@@ -1,30 +1,36 @@
-"""ORM mapping registry initialization.
+"""Ensure the active SQLModel tables are imported before database setup."""
 
-This module registers all domain-to-ORM mappings at application startup.
-Import this module to ensure mappings are registered before using repositories.
-"""
-
-from app.domain.aggregates.chat import Chat, DiscordChat, LineChat
-from app.domain.aggregates.team import Team
-from app.domain.aggregates.team_membership import TeamMembership
-from app.domain.aggregates.user import User
-from app.infrastructure.orm_mapping import register_orm_mapping
-from app.infrastructure.orm_models.chat_orm import ChatORM, DiscordChatORM, LineChatORM
-from app.infrastructure.orm_models.team_membership_orm import TeamMembershipORM
-from app.infrastructure.orm_models.team_orm import TeamORM
-from app.infrastructure.orm_models.user_orm import UserORM
+from app.infrastructure.orm_models.chat_orm import ChatORM
+from app.infrastructure.orm_models.discussion_orm import (
+    AgentTurnORM,
+    AutonomousTopicTurnORM,
+    DiscussionMessageORM,
+)
+from app.infrastructure.orm_models.memory_consolidated_chat_source_orm import (
+    MemoryConsolidatedChatSourceORM,
+)
+from app.infrastructure.orm_models.memory_index_orm import MemoryIndexDocumentORM
+from app.infrastructure.orm_models.relationship_orm import (
+    CharacterRelationshipORM,
+    RelationshipSignalEventORM,
+    RelationshipSignalSourceORM,
+)
+from app.infrastructure.orm_models.user_orm import UserChannelIdentityORM, UserORM
 
 
 def init_orm_mappings() -> None:
-    """Initialize all ORM mappings.
-
-    This function should be called once at application startup,
-    before any repository operations.
-    """
-    register_orm_mapping(User, UserORM)
-    register_orm_mapping(Team, TeamORM)
-    register_orm_mapping(TeamMembership, TeamMembershipORM)
-    # Chat TPH mappings
-    register_orm_mapping(Chat, ChatORM)
-    register_orm_mapping(DiscordChat, DiscordChatORM)
-    register_orm_mapping(LineChat, LineChatORM)
+    """Import active projection models so SQLModel metadata is complete."""
+    # Import-only projection models must remain registered in SQLModel metadata.
+    _ = (
+        ChatORM,
+        DiscussionMessageORM,
+        AgentTurnORM,
+        AutonomousTopicTurnORM,
+        MemoryConsolidatedChatSourceORM,
+        MemoryIndexDocumentORM,
+        UserORM,
+        UserChannelIdentityORM,
+        CharacterRelationshipORM,
+        RelationshipSignalEventORM,
+        RelationshipSignalSourceORM,
+    )

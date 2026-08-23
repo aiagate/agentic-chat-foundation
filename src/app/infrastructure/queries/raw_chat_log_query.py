@@ -5,14 +5,20 @@ from datetime import datetime
 from typing import Any, cast
 
 from flow_res import Err, Ok, Result
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.queries.raw_chat_log_query import IRawChatLogQuery, RawChatLog
+from app.contracts.messages.chat_type import ChatType
+from app.domain.queries.raw_chat_log_query import (
+    IRawChatLogQuery,
+    LongTermMemorySourceItem,
+)
 from app.domain.repositories.interfaces import RepositoryError, RepositoryErrorType
-from app.domain.value_objects.chat_type import ChatType
 from app.infrastructure.orm_models.chat_orm import ChatORM
+from app.infrastructure.orm_models.memory_consolidated_chat_source_orm import (
+    MemoryConsolidatedChatSourceORM,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +29,9 @@ class SQLAlchemyRawChatLogQuery(IRawChatLogQuery):
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def list_raw_chat_log_user_ids(
+    async def list_pending_memory_user_ids(
         self,
+        character_id: str,
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 1000,
@@ -33,7 +40,14 @@ class SQLAlchemyRawChatLogQuery(IRawChatLogQuery):
         try:
             table = cast(Any, ChatORM).__table__
             statement = (
-                select(table.c.user_id).distinct().where(table.c.user_id.is_not(None))
+                select(table.c.user_id)
+                .distinct()
+                .where(
+                    table.c.character_id == character_id,
+                    ~exists().where(
+                        MemoryConsolidatedChatSourceORM.chat_id == table.c.id
+                    ),
+                )
             )
             if since is not None:
                 statement = statement.where(table.c.created_at >= since)
@@ -53,20 +67,23 @@ class SQLAlchemyRawChatLogQuery(IRawChatLogQuery):
                 )
             )
 
-    async def get_raw_chat_logs(
+    async def get_pending_memory_source_items(
         self,
+        character_id: str,
         user_id: str,
         chat_type: ChatType,
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 1000,
-    ) -> Result[list[RawChatLog], RepositoryError]:
+    ) -> Result[list[LongTermMemorySourceItem], RepositoryError]:
         """Get raw chat logs for the given user scope and time window."""
         try:
             table = cast(Any, ChatORM).__table__
             conditions: list[Any] = [
+                table.c.character_id == character_id,
                 table.c.user_id == user_id,
-                table.c.type == chat_type.to_primitive(),
+                table.c.channel == chat_type.to_primitive().lower(),
+                ~exists().where(MemoryConsolidatedChatSourceORM.chat_id == table.c.id),
             ]
             if since is not None:
                 conditions.append(table.c.created_at >= since)
@@ -82,9 +99,10 @@ class SQLAlchemyRawChatLogQuery(IRawChatLogQuery):
             result = await self._session.execute(statement)
             orm_items = list(result.scalars().all())
             raw_logs = [
-                RawChatLog(
+                LongTermMemorySourceItem(
                     id=item.id or "",
-                    user_id=item.user_id or "",
+                    character_id=item.character_id,
+                    user_id=user_id,
                     role=item.role or "",
                     chat_type=chat_type,
                     message_content=item.message_content,

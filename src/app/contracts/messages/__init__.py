@@ -1,57 +1,176 @@
-"""Application messages."""
+"""Application messages and agentic trace DTOs."""
 
-from app.contracts.messages.chat_events import (
-    CHAT_SEARCH_COMPLETED_TOPIC,
-    CHAT_SEARCH_REQUESTED_TOPIC,
-    DISCORD_CHAT_REPLY_READY_TOPIC,
-    DISCORD_CHAT_SAVED_TOPIC,
-    LINE_CHAT_REPLY_READY_TOPIC,
-    LINE_CHAT_SAVED_TOPIC,
-    build_chat_search_completed_payload,
-    build_chat_search_requested_payload,
-    build_discord_chat_saved_payload,
-    build_line_chat_saved_payload,
-    build_reply_ready_payload,
-    reply_topic_for,
+from app.contracts.messages.agent_profile import (
+    AgentProfileBundle,
+    render_agent_persona_context,
+)
+from app.contracts.messages.agent_turn_context import AgentTurnContext
+from app.contracts.messages.agentic import (
+    AgentEnvelope,
+)
+from app.contracts.messages.ai_continuation import AIContinuation
+from app.contracts.messages.character_definition import (
+    CharacterDefinition,
+)
+from app.contracts.messages.chat_history import ChatHistoryItem, ChatHistoryWindow
+from app.contracts.messages.chat_type import ChatType
+from app.contracts.messages.conversation import (
+    AcceptedMessage,
+    ConversationResult,
+    DeliveryResult,
+    IncomingMessage,
+)
+from app.contracts.messages.conversation_context import (
+    ConversationContext,
+    render_conversation_context,
+)
+from app.contracts.messages.discussion import (
+    AgentTurnDecision,
+    AgentTurnDisposition,
+    AgentTurnRecord,
+    AutonomousTopicActivity,
+    AutonomousTopicContext,
+    AutonomousTopicTurnRecord,
+    DiscussionActivity,
+    DiscussionAuthorKind,
+    DiscussionContextMessage,
+    DiscussionHistoryItem,
+    DiscussionParticipantContext,
+    DiscussionTurnContext,
+    IncomingDiscussionMessage,
+    ObservedDiscussionMessage,
+    PrivateReflection,
+    SentDiscussionMessage,
+    TopicStimulus,
 )
 from app.contracts.messages.generated_content import GeneratedContent
+from app.contracts.messages.llm_request_context import (
+    LLMRequestContext,
+    build_agent_system_prompt,
+    compose_system_instruction,
+    render_agent_prompt,
+)
+from app.contracts.messages.memory_consolidation import (
+    MemoryChangeSet,
+    MemoryConsolidationResult,
+)
 from app.contracts.messages.memory_context import (
     MemoryContextPack,
     MemoryEntity,
+    MemoryManifestItem,
     MemoryProfile,
+    MemoryReadResult,
     MemoryTimelineEntry,
 )
-from app.contracts.messages.retrieved_context import (
-    RetrievedContext,
-    RetrievedContextItem,
+from app.contracts.messages.memory_index import (
+    MemoryIndexDocument,
+    MemoryIndexRecord,
+    MemorySearchFilters,
+    MemorySearchResult,
 )
-from app.contracts.messages.tool_use import (
+from app.contracts.messages.memory_semantic_extraction import (
+    LongTermMemoryChatLog,
+    MemoryEntityPatch,
+    MemoryEvidence,
+    MemoryProfilePatch,
+    MemorySemanticExtractionRequest,
+    MemorySemanticExtractionResult,
+    MemoryTimelineSectionPatch,
+)
+from app.contracts.messages.relationship import (
+    CharacterRelationshipDefinition,
+    RelationshipBehaviorDirective,
+    RelationshipSignalCandidate,
+    RelationshipSignalKind,
+    RelationshipStateView,
+)
+from app.contracts.messages.tool_contracts import (
     SearchToolArguments,
-    ToolName,
-    ToolUseRequest,
+    ToolArguments,
+    ToolCall,
+    ToolContinuation,
+    ToolDefinition,
+    ToolExecutionResult,
+    ToolExecutionStatus,
+    ToolSideEffect,
+)
+from app.contracts.messages.tool_result_context import ToolResultContext
+from app.contracts.messages.web_search_result import (
+    WebSearchResult,
+    WebSearchResultItem,
 )
 
 __all__ = [
-    "DISCORD_CHAT_REPLY_READY_TOPIC",
-    "DISCORD_CHAT_SAVED_TOPIC",
+    "AgentEnvelope",
+    "AIContinuation",
+    "AgentTurnDecision",
+    "AgentTurnDisposition",
+    "AgentTurnRecord",
+    "AutonomousTopicActivity",
+    "AutonomousTopicContext",
+    "AutonomousTopicTurnRecord",
+    "AgentTurnContext",
+    "AgentProfileBundle",
+    "ConversationContext",
+    "CharacterDefinition",
+    "ChatType",
+    "AcceptedMessage",
+    "ConversationResult",
+    "DeliveryResult",
+    "DiscussionActivity",
+    "DiscussionAuthorKind",
+    "DiscussionContextMessage",
+    "DiscussionHistoryItem",
+    "DiscussionParticipantContext",
+    "DiscussionTurnContext",
+    "IncomingMessage",
+    "IncomingDiscussionMessage",
+    "ObservedDiscussionMessage",
+    "PrivateReflection",
+    "CharacterRelationshipDefinition",
+    "RelationshipBehaviorDirective",
+    "RelationshipSignalCandidate",
+    "RelationshipSignalKind",
+    "RelationshipStateView",
+    "render_agent_persona_context",
+    "render_conversation_context",
+    "ChatHistoryItem",
+    "ChatHistoryWindow",
     "GeneratedContent",
+    "LLMRequestContext",
     "MemoryContextPack",
+    "MemoryChangeSet",
+    "MemoryConsolidationResult",
+    "MemoryIndexDocument",
+    "MemoryIndexRecord",
+    "MemorySearchFilters",
+    "MemorySearchResult",
     "MemoryEntity",
+    "MemoryManifestItem",
+    "MemoryEntityPatch",
+    "MemoryEvidence",
     "MemoryProfile",
+    "MemoryProfilePatch",
+    "MemoryReadResult",
     "MemoryTimelineEntry",
-    "CHAT_SEARCH_COMPLETED_TOPIC",
-    "CHAT_SEARCH_REQUESTED_TOPIC",
-    "LINE_CHAT_REPLY_READY_TOPIC",
-    "LINE_CHAT_SAVED_TOPIC",
-    "RetrievedContext",
-    "RetrievedContextItem",
+    "MemorySemanticExtractionRequest",
+    "MemorySemanticExtractionResult",
+    "LongTermMemoryChatLog",
+    "MemoryTimelineSectionPatch",
+    "ToolArguments",
+    "ToolCall",
+    "ToolContinuation",
+    "ToolDefinition",
+    "ToolExecutionResult",
+    "ToolExecutionStatus",
     "SearchToolArguments",
-    "ToolName",
-    "ToolUseRequest",
-    "build_chat_search_completed_payload",
-    "build_chat_search_requested_payload",
-    "build_discord_chat_saved_payload",
-    "build_line_chat_saved_payload",
-    "build_reply_ready_payload",
-    "reply_topic_for",
+    "SentDiscussionMessage",
+    "TopicStimulus",
+    "ToolSideEffect",
+    "ToolResultContext",
+    "WebSearchResultItem",
+    "WebSearchResult",
+    "build_agent_system_prompt",
+    "compose_system_instruction",
+    "render_agent_prompt",
 ]

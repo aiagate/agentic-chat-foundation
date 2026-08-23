@@ -1,69 +1,45 @@
+"""User identity aggregate for conversation ownership."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from dataclasses import dataclass
 
-from app.domain.value_objects import DisplayName, Email, UserId, Version
+from ulid import ULID
 
 
-@dataclass(kw_only=True, slots=True)
+@dataclass(frozen=True, slots=True)
+class UserChannelIdentity:
+    """One provider identity owned by a user."""
+
+    channel: str
+    external_participant_id: str
+
+    def __post_init__(self) -> None:
+        channel = self.channel.strip().lower()
+        participant_id = self.external_participant_id.strip()
+        if channel not in {"discord", "line"}:
+            raise ValueError(f"Unsupported user identity channel: {self.channel}")
+        if not participant_id:
+            raise ValueError("External participant id cannot be empty")
+        object.__setattr__(self, "channel", channel)
+        object.__setattr__(self, "external_participant_id", participant_id)
+
+
+@dataclass(frozen=True, slots=True)
 class User:
-    """User aggregate root.
+    """Conversation owner shared by one or more channel identities."""
 
-    Implements IAuditable: timestamps are infrastructure concerns but exposed
-    as read-only fields for auditing and display purposes. The repository layer
-    automatically manages created_at and updated_at.
+    id: str
+    identities: tuple[UserChannelIdentity, ...]
 
-    Implements IVersionable: optimistic locking via version field, which is
-    automatically managed by the repository layer during updates.
-    """
-
-    _id: UserId = field(
-        init=False,
-        default_factory=lambda: UserId.generate().expect(
-            "UserId.generate should succeed"
-        ),
-    )
-    _display_name: DisplayName
-    _email: Email
-    _version: Version = field(init=False, default_factory=lambda: Version(0))
-    _created_at: datetime = field(init=False, default_factory=lambda: datetime.now(UTC))
-    _updated_at: datetime = field(init=False, default_factory=lambda: datetime.now(UTC))
-
-    @classmethod
-    def register(cls, display_name: DisplayName, email: Email) -> User:
-        """ユーザーを登録するファクトリメソッド"""
-        return User(_display_name=display_name, _email=email)
-
-    @property
-    def id(self) -> UserId:
-        return self._id
-
-    @property
-    def display_name(self) -> DisplayName:
-        return self._display_name
-
-    @property
-    def email(self) -> Email:
-        return self._email
-
-    @property
-    def version(self) -> Version:
-        return self._version
-
-    @property
-    def created_at(self) -> datetime:
-        return self._created_at
-
-    @property
-    def updated_at(self) -> datetime:
-        return self._updated_at
-
-    def change_email(self, new_email: Email) -> User:
-        """メールアドレスを変更するドメインロジック
-
-        Note: updated_at is automatically managed by the repository layer.
-        """
-        self._email = new_email
-
-        return self
+    def __post_init__(self) -> None:
+        if not self.id.strip():
+            raise ValueError("User id must not be empty")
+        try:
+            ULID.from_str(self.id)
+        except ValueError as exc:
+            raise ValueError("User id must be a valid ULID") from exc
+        if not self.identities:
+            raise ValueError("User must have at least one channel identity")
+        if len(set(self.identities)) != len(self.identities):
+            raise ValueError("User channel identities must be unique")

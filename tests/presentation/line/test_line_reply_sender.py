@@ -33,3 +33,25 @@ async def test_send_line_reply_pushes_message() -> None:
     assert isinstance(second_request.messages[0], TextMessage)
     assert first_request.messages[0].text == "hello"
     assert second_request.messages[0].text == "world"
+
+
+@pytest.mark.anyio
+async def test_send_line_reply_skips_blank_contents() -> None:
+    """Test that blank reply chunks are ignored."""
+
+    line_bot_api = AsyncMock(spec=AsyncMessagingApi)
+    line_bot_api.push_message = AsyncMock(return_value=None)
+
+    await send_line_reply(
+        line_bot_api,
+        {
+            "user_id": "U123",
+            "contents": ["hello", "", "   ", "\n", "world"],
+        },
+    )
+
+    assert line_bot_api.push_message.await_count == 2
+    first_request = line_bot_api.push_message.await_args_list[0].args[0]
+    second_request = line_bot_api.push_message.await_args_list[1].args[0]
+    assert first_request.messages[0].text == "hello"
+    assert second_request.messages[0].text == "world"

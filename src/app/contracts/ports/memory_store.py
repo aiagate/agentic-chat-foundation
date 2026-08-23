@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -12,8 +12,30 @@ class IMemoryStore(Protocol):
 
     root: Path
 
-    def agent_profile_path(self) -> Path:
-        """Return the global agent profile path."""
+    def agent_profile_part_path(
+        self,
+        part: str,
+        *,
+        character_id: str,
+    ) -> Path:
+        """Return one agent profile bundle file path."""
+        ...
+
+    def read_agent_profile_part(
+        self,
+        part: str,
+        *,
+        character_id: str,
+    ) -> str:
+        """Read one raw agent profile bundle part."""
+        ...
+
+    def agent_relationship_definition_path(self, character_id: str) -> Path:
+        """Return the character relationship YAML path."""
+        ...
+
+    def read_agent_relationship_definition(self, character_id: str) -> str:
+        """Read one character relationship YAML definition."""
         ...
 
     def user_profile_path(self, user_id: str) -> Path:
@@ -24,18 +46,14 @@ class IMemoryStore(Protocol):
         """Return a user-scoped entity path."""
         ...
 
-    def raw_timeline_path(
+    def section_timeline_path(
         self,
         *,
         user_id: str,
-        occurred_at: datetime,
-        role: str,
+        day: date,
+        section_slug: str,
     ) -> Path:
-        """Return a new user-scoped raw timeline path."""
-        ...
-
-    def daily_timeline_path(self, *, user_id: str, day: date) -> Path:
-        """Return the user-scoped daily summary path."""
+        """Return the user-scoped section summary path."""
         ...
 
     def iter_timeline_paths(self, user_id: str) -> list[Path]:

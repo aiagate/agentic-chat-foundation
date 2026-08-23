@@ -1,8 +1,18 @@
-"""Domain aggregate roots and business entities."""
+"""Domain aggregates."""
 
-from app.domain.aggregates.chat import Chat, DiscordChat, LineChat
-from app.domain.aggregates.team import Team
-from app.domain.aggregates.team_membership import TeamMembership
-from app.domain.aggregates.user import User
+from app.domain.aggregates.character_relationship import (
+    CharacterRelationship,
+    RelationshipStageId,
+    RelationshipStageRange,
+    resolve_relationship_stage,
+)
+from app.domain.aggregates.user import User, UserChannelIdentity
 
-__all__ = ["Chat", "DiscordChat", "LineChat", "Team", "TeamMembership", "User"]
+__all__ = [
+    "CharacterRelationship",
+    "RelationshipStageId",
+    "RelationshipStageRange",
+    "User",
+    "UserChannelIdentity",
+    "resolve_relationship_stage",
+]

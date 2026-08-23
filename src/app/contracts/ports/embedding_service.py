@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from flow_res import Result
 
 
-@dataclass(frozen=True)
+@dataclass
 class EmbeddingServiceError(Exception):
     """Represents an embedding service failure."""
 

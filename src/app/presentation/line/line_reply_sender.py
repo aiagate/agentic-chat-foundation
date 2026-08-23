@@ -43,9 +43,10 @@ async def send_line_reply(
 def _normalize_contents(payload: Mapping[str, object]) -> list[str]:
     contents = payload.get("contents")
     if isinstance(contents, list):
-        return [str(content) for content in contents if content]
+        normalized = [
+            str(content).strip() for content in contents if str(content).strip()
+        ]
+        if normalized:
+            return normalized
 
-    content = payload.get("content")
-    if content:
-        return [str(content)]
     return []

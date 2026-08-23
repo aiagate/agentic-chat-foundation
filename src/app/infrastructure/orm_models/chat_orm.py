@@ -1,42 +1,79 @@
-"""ORM models for Chat with Table Per Hierarchy (TPH) inheritance."""
+"""Persistence model for channel-neutral conversation messages."""
 
 from datetime import datetime
-from typing import Any, ClassVar
+from typing import Any
 
-from sqlalchemy import JSON, Column, DateTime, String, func
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Column,
+    DateTime,
+    ForeignKey,
+    Sequence,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlmodel import Field, SQLModel
 
 
 class ChatORM(SQLModel, table=True):
-    """Base ORM model for Chat using Table Per Hierarchy (TPH).
+    """A row in the raw conversation log.
 
-    This is the database representation using single-table inheritance pattern.
-    The 'type' column is the discriminator that determines which concrete class
-    (DiscordChatORM or LineChatORM) an instance represents.
-
-    Never expose this directly to use cases or domain layer.
+    Incoming and outgoing messages share the same shape.  Channel adapters keep
+    their provider-specific identifiers in ``channel_metadata`` instead of
+    adding nullable columns or ORM subclasses for every provider.
     """
 
     __tablename__ = "chats"  # type: ignore[reportAssignmentType]
 
     id: str | None = Field(default=None, primary_key=True, max_length=26)
-    type: str = Field(
-        sa_column=Column(String(20), nullable=False, index=True)
-    )  # Discriminator for polymorphic identity
-    user_id: str | None = Field(
+    character_id: str = Field(
+        default="shirasagi-reina",
+        max_length=100,
+        sa_column=Column(String(100), nullable=False, index=True),
+    )
+    channel: str = Field(sa_column=Column(String(20), nullable=False, index=True))
+    external_conversation_id: str = Field(
+        max_length=255,
+        sa_column=Column(String(255), nullable=False, index=True),
+    )
+    external_participant_id: str = Field(
+        max_length=255,
+        sa_column=Column(String(255), nullable=False, index=True),
+    )
+    user_id: str = Field(
+        max_length=26,
+        sa_column=Column(
+            String(26),
+            ForeignKey("users.id", ondelete="RESTRICT"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    accepted_sequence: int = Field(
+        sa_column=Column(
+            BigInteger,
+            Sequence("chat_acceptance_sequence"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    # Provider message id is present for inbound messages and NULL for replies.
+    external_message_id: str | None = Field(
         default=None,
         max_length=255,
-        sa_column=Column(String(255), nullable=True, index=True),
+        sa_column=Column(String(255), nullable=True),
     )
-    role: str | None = Field(
-        default=None,
+    role: str = Field(
         max_length=32,
-        sa_column=Column(String(32), nullable=True, index=True),
+        sa_column=Column(String(32), nullable=False, index=True),
     )
-    message_content: dict[str, Any] = Field(
-        sa_column=Column(JSON, nullable=False),
+    message_content: dict[str, Any] = Field(sa_column=Column(JSON, nullable=False))
+    channel_metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column(JSON, nullable=False, default=dict),
     )
-    version: int = Field(default=0)
     created_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
@@ -46,17 +83,10 @@ class ChatORM(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )
 
-    # Discord-specific fields (nullable for LINE chats)
-    discord_guild_id: str | None = Field(default=None, max_length=255)
-    discord_channel_id: str | None = Field(default=None, max_length=255)
-
-    # LINE-specific fields (nullable for Discord chats)
-    line_user_id: str | None = Field(default=None, max_length=255)
-    line_group_id: str | None = Field(default=None, max_length=255)
-    line_room_id: str | None = Field(default=None, max_length=255)
-
-    __mapper_args__: ClassVar[dict[str, object]] = {}
-
-
-DiscordChatORM = ChatORM
-LineChatORM = ChatORM
+    __table_args__ = (
+        UniqueConstraint(
+            "channel",
+            "external_message_id",
+            name="uq_chats_channel_external_message_id",
+        ),
+    )

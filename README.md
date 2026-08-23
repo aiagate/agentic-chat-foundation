@@ -1,299 +1,90 @@
-# discord-bot-template
+# agentic-chat-foundation
 
-## 概要
+`agentic-chat-foundation` は、外部の会話チャネルからの入力を受け付け、対話相手との継続的な会話と
+長期記憶を扱う agentic chat application foundation です。
 
-**※現在製作中のプロジェクトです。予期せぬバグ、不具合などが含まれる可能性があります。**
+単純な chatbot の雛形ではなく、会話の受付、応答作成、結果の通知、長期記憶の整理を
+それぞれの業務境界で扱うための土台として作られています。
 
-このプロジェクトは、Discord Botの開発を効率化するためのテンプレートです。
-非同期処理、依存性注入、クリーンアーキテクチャを採用し、拡張性と保守性を重視した設計になっています。
+このプロジェクトは現在開発中です。実装、ドキュメント、移行計画は継続的に更新されています。
 
-## 特徴
+## 何を作るためのものか
 
-### 1. **非同期処理の活用**
+このリポジトリは、次のようなアプリケーションを作るためのテンプレートです。
 
-- `asyncio`を使用して非同期処理を実現。
-- 高速かつ効率的な処理を可能にする設計。
+- 外部の会話チャネルを通じた1対1のテキスト会話
+- 現在の会話、過去の交流から整理された長期記憶、必要な外部情報を用いた応答作成
+- 利用者のメッセージの受付、記録、応答、結果の通知
+- 会話から人物像、出来事、対象・関係を長期記憶として整理すること
+- 複数チャネル上の利用者識別子を一人の利用者へ結び付けること
 
-### 2. **依存性注入 (DI)**
+## 主な能力
 
-- `injector`ライブラリを使用して依存性注入を実現。
-- テスト容易性とモジュール間の疎結合を実現。
+- 外部の会話チャネルを通じた1対1のテキスト会話
+- 現在の会話、過去の交流から整理された長期記憶、必要な外部情報を用いた応答作成
+- 利用者のメッセージの受付、記録、応答、結果の通知
+- 会話から人物像、出来事、対象・関係を長期記憶として整理すること
+- 複数チャネル上の利用者識別子を一人の利用者へ結び付け、利用者の境界を守ること
+- 独立起動した複数のDiscord Botが、共有DBを使わず同じチャンネルで議論すること
 
-### 3. **Mediatorパターンの採用**
+会話の受付、応答作成、結果の通知は一つの要求に対する論理的な流れとして扱います。
+長期記憶の整理は、利用者の応答とは異なる定期的な契機から行います。
 
-- `flow-med`ライブラリを使用してMediatorパターンを実現。
-- リクエストとハンドラーの分離により、コードの可読性と拡張性を向上。
+## 設計の中心
 
-### 4. **クリーンアーキテクチャ**
+このプロジェクトは、外部入口、業務ユースケース、ドメイン概念、技術アダプタを分離する
+アーキテクチャを基調にしています。依存方向と境界の詳細は
+[アーキテクチャ概要](docs/architecture/architecture-overview.md)で定義します。
 
-- ユースケース層 (`usecases/`) とドメイン層 (`domain/`) を明確に分離。
-- ビジネスロジックとインフラストラクチャの独立性を確保。
-- ドメイン層 (`domain/`) とインフラストラクチャ層 (`infrastructure/`) を完全分離。
+## 応答作成
 
-### 5. **データベース統合**
+受付済みメッセージについて、会話履歴、長期記憶、対話相手の設定、必要な外部情報を用いて
+応答を作成します。応答を作成または届けられない場合は、応答不能の結果として扱います。
 
-- **SQLModel + Alembic**: 型安全なORM とマイグレーション管理。
-- **非同期データベース**: aiosqlite による非同期SQLite操作。
-- **クリーンアーキテクチャ準拠**: ORMモデルとドメイン集約を分離。
-- **自動マイグレーション**: Alembicによるスキーマバージョン管理。
+## Memory
 
-### 6. **コグ (Cog) によるコマンド管理**
+Memory は会話履歴と長期記憶を分けて扱います。会話履歴は意味を変えない記録、長期記憶は
+将来の対話に有用な意味を整理した結果です。長期記憶には人物像、出来事、対象・関係を含め、
+それぞれに根拠と不確実性を持たせます。
 
-- `discord.ext.commands`のCogを使用してコマンドをモジュール化。
-- Botの機能を簡単に拡張可能。
+外部情報は現在の応答の根拠として扱い、取得しただけで長期記憶へ加えません。
+複数チャネル上の識別子を同じ利用者へ結び付けた場合も、会話履歴と長期記憶は同じ利用者の境界で扱います。
 
-### 7. **FastAPI 統合 (Web API)**
+## ドキュメント
 
-- Discord Botと並行して動作するREST API。
-- 共通のユースケースを再利用し、外部システムとの連携が可能。
-- Swagger UI によるインタラクティブなドキュメント。
+業務上の説明は `docs/product/` と `docs/architecture/`、技術リファレンスは
+`docs/infrastructure/` 配下に分かれています。
 
-### 8. **型安全性**
+### 業務・設計
 
-- Pythonの型ヒントを活用し、静的解析ツールによるエラー検出を強化。
+- [ユースケース知識バンドル](docs/product/application-use-cases/index.md)
+- [ユビキタス言語バンドル](docs/product/ubiquitous-language/index.md)
+- [Discord公開議論バンドル](docs/product/discussion/index.md)
+- [アーキテクチャ概要](docs/architecture/architecture-overview.md)
 
-### 9. **テスト環境の整備**
+### 技術リファレンス
 
-- `pytest`と`pytest-asyncio`を使用したテスト環境を構築。
-- `pytest-cov`によるコードカバレッジ測定。
-- インメモリSQLiteを使用した高速なテスト実行。
+- [Domain 実装ガイド](docs/domain/domain-implementation-guide.md)
+- [ドメイン図](docs/domain/domain-diagram.md)
+- [Memory Markdown Schema バンドル](docs/infrastructure/memory-markdown-schema/index.md)
+- [User Identity Mapping](docs/infrastructure/user-identity-mapping.md)
+- [Autonomous Discord Discussion](docs/infrastructure/discord-autonomous-discussion.md)
+- [Memory Write Flow](docs/infrastructure/memory-write-flow.md)
+- [Relationship System](docs/infrastructure/relationship-system.md)
+- [Database Migrations](docs/infrastructure/database-migrations.md)
 
-### 10. **コード品質管理**
+## 開発時の前提
 
-- `Ruff`: 高速なコードフォーマッターとリンター。
-- `Pyright`: 厳格な型チェック (strict モード)。
-- `pre-commit`: Git コミット前の自動チェック。
-
-## ディレクトリ構成
-
-```text
-.
-├── src/app/                           # アプリケーション本体
-│   ├── api/                       # Web API層
-│   │   ├── __main__.py            # APIエントリーポイント (start-api)
-│   │   └── routers/               # APIルーター
-│   ├── bot/                       # Discord Bot層
-│   │   ├── __main__.py            # Botエントリーポイント (start-bot)
-│   │   └── cogs/                  # Cogモジュール
-│   ├── container.py               # DIコンテナ設定
-│   ├── domain/                    # ドメイン層
-│   │   ├── aggregates/            # ドメイン集約 (user.py, team.py)
-│   │   ├── interfaces/            # 抽象インターフェース
-│   │   ├── repositories/          # リポジトリインターフェース
-│   │   └── value_objects/         # 値オブジェクト
-│   ├── infrastructure/            # インフラストラクチャ層
-│   │   ├── database.py            # DB設定・セッション管理
-│   │   ├── orm_models/            # ORMモデル (user_orm.py, team_orm.py)
-│   │   └── repositories/          # リポジトリ実装
-│   └── usecases/                  # ユースケース層
-│       ├── users/                 # ユーザー関連ユースケース
-│       └── teams/                 # チーム関連ユースケース
-├── alembic/                       # Alembicマイグレーション
-│   └── versions/                  # マイグレーションファイル
-├── docs/                          # ドキュメント
-├── tests/                         # テストコード
-├── .pre-commit-config.yaml        # Pre-commit設定
-├── pyproject.toml                 # プロジェクト設定
-└── README.md                      # このファイル
-```
-
-## 必要な環境
-
-- Python 3.13 以上
-- パッケージ管理 [uv](https://github.com/astral-sh/uv)
-- 必要な依存関係は`pyproject.toml`に記載されています。
-
-## セットアップ
-
-1. 仮想環境を作成:
-
-   ```bash
-   uv venv -p 3.13 .venv
-   source .venv/bin/activate  # Windows(PS)の場合は .venv\Scripts\activate
-   ```
-
-2. 依存関係をインストール:
-
-   ```bash
-   uv sync
-   ```
-
-3. Pre-commit フックをインストール:
-
-   ```bash
-   uv run pre-commit install
-   ```
-
-4. 環境変数を設定:
-
-   `.env.example`を`.env`または`.env.local`にコピーして編集:
-
-   ```bash
-   # .env.local を作成
-   cp .env.example .env.local
-   ```
-
-   `.env.local`の内容を編集:
-
-   ```bash
-   # Discord Bot トークン（必須）
-   DISCORD_BOT_TOKEN=your_discord_bot_token_here
-
-   # データベースURL（オプション、デフォルト: sqlite+aiosqlite:///./bot.db）
-   DATABASE_URL=sqlite+aiosqlite:///./bot.db
-   ```
-
-5. データベースマイグレーションを実行:
-
-   ```bash
-   # マイグレーション適用
-   uv run alembic upgrade head
-
-   # マイグレーション状態確認
-   uv run alembic current
-   ```
-
-6. アプリケーションを起動:
-
-   Discord Botを起動:
-
-   ```bash
-   uv run start-bot
-   ```
-
-   または、Web APIサーバーを起動:
-
-   ```bash
-   uv run start-api
-   ```
-
-## データベース管理
-
-### マイグレーション操作
+起動と運用は Docker Compose を前提にしています。
+コード変更後はコンテナを再ビルドして再起動します。
 
 ```bash
-# スキーマ変更後、マイグレーションを自動生成
-uv run alembic revision --autogenerate -m "Add new field"
-
-# マイグレーション適用
-uv run alembic upgrade head
-
-# 1つ前に戻す
-uv run alembic downgrade -1
-
-# 現在のマイグレーション確認
-uv run alembic current
-
-# マイグレーション履歴表示
-uv run alembic history
+docker compose up --build -d
 ```
 
-### データベース構造
+依存管理と検証コマンドは `uv` を使います。
+詳細な開発ルールは [AGENTS.md](AGENTS.md) と `docs/` の各設計文書を参照してください。
 
-- **使用DB**: SQLite (開発時) / PostgreSQL (本番推奨)
-- **ORM**: SQLModel
-- **マイグレーション**: Alembic
-- **非同期対応**: aiosqlite
+## License
 
-## テスト実行
-
-```bash
-# 全テスト実行
-uv run pytest
-
-# カバレッジ付きで実行
-uv run pytest --cov=app --cov-report=term-missing
-
-# 特定のテストファイルのみ実行
-uv run pytest tests/infrastructure/test_repositories.py
-
-# 詳細な出力
-uv run pytest -v
-```
-
-## コード品質チェック
-
-```bash
-# フォーマット
-uv run ruff format .
-
-# リントチェック
-uv run ruff check .
-
-# リント自動修正
-uv run ruff check . --fix
-
-# 型チェック
-uv run pyright
-
-# 全チェック実行
-uv run ruff format . && \
-uv run ruff check . --fix && \
-uv run pyright && \
-uv run pytest
-```
-
-## 利用可能なDiscordコマンド
-
-### ユーザー管理 (Users)
-
-- `!users get <user_id>`: ユーザー情報を取得
-- `!users create <name> <email>`: 新規ユーザーを作成
-
-### チーム管理 (Teams)
-
-- `!teams get <team_id>`: チーム情報を取得
-- `!teams create <name>`: 新規チームを作成
-- `!teams update <team_id> <new_name>`: チーム名を更新
-- `!teams join <team_id> <user_id>`: チームに参加 (即時)
-- `!teams request <team_id> <user_id>`: チーム参加リクエストを送信
-
-### メンバーシップ管理 (Memberships)
-
-- `!memberships approve <membership_id>`: 参加リクエストを承認
-- `!memberships leave <membership_id>`: チームから脱退
-- `!memberships role <membership_id> <role>`: メンバーのロールを変更
-
-## アーキテクチャ
-
-このテンプレートは以下のレイヤーで構成されています：
-
-```text
-┌─────────────────────────────────────┐  ┌─────────────────────────────────────┐
-│    Presentation Layer (Web API)     │  │  Presentation Layer (Discord Bot)   │
-│           (FastAPI)                 │  │          (discord.py)               │
-└──────────────────┬──────────────────┘  └──────────────────┬──────────────────┘
-                   │                                        │
-┌──────────────────▼────────────────────────────────────────▼──────────────────┐
-│                        Application Layer (UseCases)                          │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                         Domain Layer (Aggregates)                            │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                     Infrastructure Layer (Repository)                        │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
-
-### 依存関係の方向
-
-- 上位層から下位層への依存のみ許可
-- ドメイン層はインフラストラクチャに依存しない
-- リポジトリパターンで永続化を抽象化
-
-### 詳細ドキュメント
-
-プロジェクトの詳細なドキュメントは `docs/` ディレクトリにあります：
-
-- **[アーキテクチャ設計](docs/ARCHITECTURE.md)** - システム全体のアーキテクチャ詳細
-- **[Domain層実装ガイド](docs/domain/DOMAIN_IMPLEMENTATION_GUIDE.md)** - ドメインモデルの実装方法
-- **[課題・改善点リスト](docs/ISSUES_AND_IMPROVEMENTS.md)** - 技術的な課題と改善提案
-
-## TODO
-
-- Domain層の拡充（より多くの集約の追加）
-- 複数データベースソリューションへの対応（PostgreSQL、MySQL等）
-- 認証、認可の仕組みの導入
-- イベントソーシング対応
-
-## ライセンス
-
-このプロジェクトは[MITライセンス](LICENSE)の下で公開されています。
+This project is licensed under the [MIT License](LICENSE).
