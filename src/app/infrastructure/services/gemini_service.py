@@ -325,7 +325,9 @@ class GeminiService(IAIService):
                 raise GeminiResponseError("Gemini returned invalid structured output")
             return Ok(GeneratedContent(contents=parsed_content.contents))
         except GeminiResponseError as e:
-            logger.warning("Gemini response rejected: model=%s reason=%s", self._model, e)
+            logger.warning(
+                "Gemini response rejected: model=%s reason=%s", self._model, e
+            )
             return Err(
                 AIServiceError(
                     "Gemini returned an incomplete response.",
